@@ -1,0 +1,67 @@
+.app {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+  text-align: left;
+}
+
+.app h1 {
+  margin: 0;
+  font-size: 2rem;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  margin: 0.25rem 0 2rem;
+  opacity: 0.65;
+  font-size: 0.95rem;
+}
+
+.card {
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+}
+
+.card.ok {
+  border-left-color: #2e9e5b;
+}
+
+.card.error {
+  border-left-color: #d64545;
+}
+
+.card.loading {
+  border-left-color: rgba(128, 128, 128, 0.5);
+}
+
+.headline {
+  margin: 0 0 0.75rem;
+  font-weight: 600;
+}
+
+.detail {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+
+.card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1.25rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.card dt {
+  opacity: 0.6;
+}
+
+.card dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
