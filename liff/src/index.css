@@ -12,7 +12,9 @@
   --mono: ui-monospace, Consolas, monospace;
 
   font: 16px/155% var(--sans);
-  color-scheme: light dark;
+  /* Light only. Pinning this (rather than `light dark`) also keeps native
+     controls light for users whose phone is in dark mode. */
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
@@ -21,16 +23,6 @@
   -moz-osx-font-smoothing: grayscale;
   /* The in-app browser lets a double-tap zoom the layout; this keeps taps as taps. */
   touch-action: manipulation;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --card-bg: #1f2028;
-  }
 }
 
 body {

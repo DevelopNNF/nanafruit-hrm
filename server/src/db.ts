@@ -1,5 +1,11 @@
 import pg from 'pg'
 
+// A `date` column is a calendar day: no time, no zone. Left alone, pg parses it
+// into a Date at local midnight, and anything that later reads it in UTC lands
+// on the previous day for TZs behind UTC. Hand back the raw 'YYYY-MM-DD' text
+// instead, which is exactly what the API contract wants anyway.
+pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value)
+
 // One pool for the whole process. Connection details come from the standard
 // PG* env vars, which node-postgres reads on its own.
 export const pool = new pg.Pool({
@@ -7,6 +13,28 @@ export const pool = new pg.Pool({
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
 })
+
+/**
+ * Runs `fn` inside a single transaction on a dedicated client, committing on
+ * return and rolling back on throw. Needed wherever one request writes both
+ * employees and employment_details, so a half-written employee can't survive.
+ */
+export async function withTransaction<T>(
+  fn: (client: pg.PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await fn(client)
+    await client.query('COMMIT')
+    return result
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
+}
 
 export type DbStatus = {
   database: string

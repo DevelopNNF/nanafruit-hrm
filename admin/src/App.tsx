@@ -1,70 +1,41 @@
-import { useEffect, useState } from 'react'
-import type { HealthOk, HealthResponse } from '@hrm/shared'
+import {
+  createBrowserRouter,
+  Navigate,
+  RouterProvider,
+  useParams,
+} from 'react-router-dom'
+import { AppLayout } from './components/AppLayout'
+import { EmployeeListPage } from './pages/EmployeeListPage'
+import { EmployeeFormPage } from './pages/EmployeeFormPage'
+import { HealthPage } from './pages/HealthPage'
 import './App.css'
 
-type State =
-  | { phase: 'loading' }
-  | { phase: 'ok'; data: HealthOk }
-  | { phase: 'error'; message: string }
-
-function App() {
-  const [state, setState] = useState<State>({ phase: 'loading' })
-
-  useEffect(() => {
-    const controller = new AbortController()
-
-    async function check() {
-      try {
-        const res = await fetch('/api/health', { signal: controller.signal })
-        const body = (await res.json()) as HealthResponse
-        if (!res.ok || body.status === 'error') {
-          throw new Error(
-            body.status === 'error' ? body.message : `HTTP ${res.status}`,
-          )
-        }
-        setState({ phase: 'ok', data: body })
-      } catch (err) {
-        if (controller.signal.aborted) return
-        setState({
-          phase: 'error',
-          message: err instanceof Error ? err.message : 'request failed',
-        })
-      }
-    }
-
-    void check()
-    return () => controller.abort()
-  }, [])
-
-  return (
-    <main className="app">
-      <h1>HRM</h1>
-      <p className="subtitle">Admin/HR · connectivity check: admin → server → PostgreSQL</p>
-
-      <div className={`card ${state.phase}`}>
-        {state.phase === 'loading' && <p>Checking…</p>}
-
-        {state.phase === 'ok' && (
-          <>
-            <p className="headline">All three layers connected</p>
-            <dl>
-              <dt>Database</dt>
-              <dd>{state.data.database}</dd>
-              <dt>Server time</dt>
-              <dd>{new Date(state.data.serverTime).toLocaleString()}</dd>
-            </dl>
-          </>
-        )}
-
-        {state.phase === 'error' && (
-          <>
-            <p className="headline">Not connected</p>
-            <p className="detail">{state.message}</p>
-          </>
-        )}
-      </div>
-    </main>
-  )
+/**
+ * The same element type backs both form routes, so React would otherwise keep
+ * one instance alive across them and carry the previous employee's draft over.
+ * Keying on the id forces a fresh mount per employee, and for "new".
+ */
+function KeyedEmployeeForm() {
+  const { id } = useParams()
+  return <EmployeeFormPage key={id ?? 'new'} />
 }
 
-export default App
+// /employees/new is matched before /employees/:id so "new" is never read as an id.
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <AppLayout />,
+    children: [
+      { index: true, element: <Navigate to="/employees" replace /> },
+      { path: 'employees', element: <EmployeeListPage /> },
+      { path: 'employees/new', element: <KeyedEmployeeForm /> },
+      { path: 'employees/:id', element: <KeyedEmployeeForm /> },
+      { path: 'health', element: <HealthPage /> },
+      { path: '*', element: <Navigate to="/employees" replace /> },
+    ],
+  },
+])
+
+export default function App() {
+  return <RouterProvider router={router} />
+}

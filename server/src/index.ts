@@ -3,6 +3,7 @@ import express from 'express'
 import cors from 'cors'
 import { pool } from './db.js'
 import { healthRouter } from './routes/health.js'
+import { employeesRouter } from './routes/employees.js'
 
 const app = express()
 
@@ -18,6 +19,7 @@ const allowedOrigins = (
 app.use(cors({ origin: allowedOrigins }))
 app.use(express.json())
 app.use('/api', healthRouter)
+app.use('/api', employeesRouter)
 
 const port = Number(process.env.PORT) || 3000
 const server = app.listen(port, () => {
