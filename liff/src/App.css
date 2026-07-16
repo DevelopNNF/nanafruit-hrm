@@ -1,0 +1,93 @@
+/* Single column, full-bleed: this only ever renders on a phone. */
+.app {
+  max-width: 30rem;
+  margin: 0 auto;
+}
+
+.profile {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.profile img {
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.greeting {
+  font-size: 0.8rem;
+  opacity: 0.65;
+}
+
+.name {
+  font-weight: 600;
+  color: var(--text-h);
+  /* Display names are user-supplied and can be arbitrarily long. */
+  overflow-wrap: anywhere;
+}
+
+.subtitle {
+  margin: 0.25rem 0 1.5rem;
+  opacity: 0.65;
+  font-size: 0.9rem;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 1rem 1.15rem;
+}
+
+.card.ok {
+  border-left-color: var(--ok);
+}
+
+.card.error {
+  border-left-color: var(--error);
+}
+
+.card.loading {
+  border-left-color: var(--muted);
+}
+
+.headline {
+  margin-bottom: 0.75rem;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.detail {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  opacity: 0.65;
+}
+
+.card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.card dt {
+  opacity: 0.6;
+}
+
+.card dd {
+  margin: 0;
+  font-family: var(--mono);
+  color: var(--text-h);
+  overflow-wrap: anywhere;
+}

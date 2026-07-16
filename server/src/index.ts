@@ -6,7 +6,16 @@ import { healthRouter } from './routes/health.js'
 
 const app = express()
 
-app.use(cors({ origin: process.env.CORS_ORIGIN ?? 'http://localhost:5173' }))
+// Two frontends now: admin (5173) and liff (5174). Comma-separated so deploys
+// can name both real origins without a code change.
+const allowedOrigins = (
+  process.env.CORS_ORIGIN ?? 'http://localhost:5173,http://localhost:5174'
+)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+
+app.use(cors({ origin: allowedOrigins }))
 app.use(express.json())
 app.use('/api', healthRouter)
 

@@ -1,0 +1,62 @@
+:root {
+  --text: #6b6375;
+  --text-h: #08060d;
+  --bg: #fff;
+  --border: #e5e4e7;
+  --card-bg: #fbfbfa;
+  --ok: #06c755;
+  --error: #d64545;
+  --muted: rgba(128, 128, 128, 0.5);
+
+  --sans: system-ui, 'Segoe UI', Roboto, 'Noto Sans Thai', sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  font: 16px/155% var(--sans);
+  color-scheme: light dark;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* The in-app browser lets a double-tap zoom the layout; this keeps taps as taps. */
+  touch-action: manipulation;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #9ca3af;
+    --text-h: #f3f4f6;
+    --bg: #16171d;
+    --border: #2e303a;
+    --card-bg: #1f2028;
+  }
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  /* svh, not vh: the LINE in-app browser's chrome changes the viewport height
+     as it scrolls, and vh would leave a gap under the fold. */
+  min-height: 100svh;
+  box-sizing: border-box;
+  padding: 1.25rem 1rem;
+  /* viewport-fit=cover in index.html lets the page under the notch and home
+     indicator, so pad back out by whatever the device reserves. */
+  padding-top: max(1.25rem, env(safe-area-inset-top));
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+}
+
+h1 {
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-h);
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}

@@ -1,5 +1,5 @@
 {
-  "name": "client",
+  "name": "admin",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "typecheck": "tsc -b --noEmit",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@hrm/shared": "*",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

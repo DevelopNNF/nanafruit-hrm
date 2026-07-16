@@ -1,0 +1,19 @@
+{
+  "name": "hrm",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "shared",
+    "admin",
+    "liff",
+    "server"
+  ],
+  "scripts": {
+    "dev:admin": "npm run dev -w admin",
+    "dev:liff": "npm run dev -w liff",
+    "dev:server": "npm run dev -w server",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

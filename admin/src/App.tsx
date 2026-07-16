@@ -1,15 +1,10 @@
 import { useEffect, useState } from 'react'
+import type { HealthOk, HealthResponse } from '@hrm/shared'
 import './App.css'
-
-type Health = {
-  status: 'ok'
-  database: string
-  serverTime: string
-}
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; data: Health }
+  | { phase: 'ok'; data: HealthOk }
   | { phase: 'error'; message: string }
 
 function App() {
@@ -21,9 +16,13 @@ function App() {
     async function check() {
       try {
         const res = await fetch('/api/health', { signal: controller.signal })
-        const body = await res.json()
-        if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`)
-        setState({ phase: 'ok', data: body as Health })
+        const body = (await res.json()) as HealthResponse
+        if (!res.ok || body.status === 'error') {
+          throw new Error(
+            body.status === 'error' ? body.message : `HTTP ${res.status}`,
+          )
+        }
+        setState({ phase: 'ok', data: body })
       } catch (err) {
         if (controller.signal.aborted) return
         setState({
@@ -40,7 +39,7 @@ function App() {
   return (
     <main className="app">
       <h1>HRM</h1>
-      <p className="subtitle">Connectivity check: client → server → PostgreSQL</p>
+      <p className="subtitle">Admin/HR · connectivity check: admin → server → PostgreSQL</p>
 
       <div className={`card ${state.phase}`}>
         {state.phase === 'loading' && <p>Checking…</p>}
