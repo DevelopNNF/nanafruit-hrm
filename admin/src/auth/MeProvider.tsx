@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { AuthUser } from '@hrm/shared'
 import { getMe } from '../api/me'
+import { alert, alertDetail, muted } from '../styles'
 import { MeContext } from './meContext'
 
 type State =
@@ -35,18 +36,24 @@ export function MeProvider({ children }: { children: ReactNode }) {
 
   if (state.phase === 'loading') {
     return (
-      <div className="auth-screen">
-        <p>กำลังโหลด…</p>
-      </div>
+      <AuthScreen>
+        <div className="mx-auto mb-4 size-6 animate-spin rounded-full border-2 border-slate-200 border-t-navy" />
+        <p className={muted}>กำลังโหลดข้อมูลผู้ใช้…</p>
+      </AuthScreen>
     )
   }
 
   if (state.phase === 'error') {
     return (
-      <div className="auth-screen">
-        <h1>เชื่อมต่อระบบไม่สำเร็จ</h1>
-        <p className="detail">{state.message}</p>
-      </div>
+      <AuthScreen>
+        <h1 className="mb-3">เชื่อมต่อระบบไม่สำเร็จ</h1>
+        <p className="mb-4 text-sm text-slate-500">
+          ลองโหลดหน้านี้ใหม่ หากยังไม่ได้กรุณาติดต่อฝ่าย IT
+        </p>
+        <div className={`${alert('danger')} text-left`}>
+          <p className={alertDetail}>{state.message}</p>
+        </div>
+      </AuthScreen>
     )
   }
 
@@ -55,16 +62,23 @@ export function MeProvider({ children }: { children: ReactNode }) {
   // takes a token but no role — it can still answer this person.
   if (state.me.kind === 'admin' && state.me.roles.length === 0) {
     return (
-      <div className="auth-screen">
-        <h1>ยังไม่ได้รับสิทธิ์</h1>
-        <p className="hint">
+      <AuthScreen>
+        <h1 className="mb-3">ยังไม่ได้รับสิทธิ์</h1>
+        <p className="text-sm text-slate-500">
           บัญชี {state.me.upn} เข้าสู่ระบบได้ แต่ยังไม่ได้รับสิทธิ์ใช้งาน HRM
           กรุณาติดต่อฝ่าย IT เพื่อขอสิทธิ์
         </p>
-      </div>
+      </AuthScreen>
     )
   }
 
   return <MeContext value={state.me}>{children}</MeContext>
 }
 
+/** Rendered before the layout exists — these own the whole viewport rather
+ *  than sitting inside .content. */
+function AuthScreen({ children }: { children: ReactNode }) {
+  return (
+    <div className="m-auto max-w-md p-8 text-center">{children}</div>
+  )
+}

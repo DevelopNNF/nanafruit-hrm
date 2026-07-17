@@ -1,91 +1,68 @@
-:root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+@import 'tailwindcss';
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+/* Design tokens. Everything else in this app is a Tailwind utility class —
+   these are the values that don't already exist in Tailwind's default
+   palette: the navy brand and the dark sidebar surface it sits on. Neutrals,
+   status colours, radii and shadows all come straight from Tailwind's
+   defaults (slate/green/red/amber, rounded-md/lg, shadow-sm/md/lg). */
+@theme {
+  --color-navy: #123262;
+  --color-navy-hover: #0d2549;
+  --color-shell: #0f2647;
+  --color-shell-active: #16345e;
+  --color-shell-fg: #e8eef7;
+  --color-shell-fg-dim: #9db0cc;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  /* Light only. Pinning this (rather than `light dark`) also keeps native
-     controls — selects, the date picker — light on a dark-themed OS. */
-  color-scheme: light;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  /* Thai first: these ship with Windows/macOS, so the UI renders in the right
+     face without waiting on a webfont. */
+  --font-sans: 'Noto Sans Thai', 'IBM Plex Sans Thai', system-ui, 'Segoe UI', Roboto,
+    sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
 
-  @media (max-width: 1024px) {
-    font-size: 16px;
+  /* Where the sidebar has room to stand up as a rail. Below it, it lies down
+     as a top bar — Tailwind's own `md`/`lg` steps don't land here. */
+  --breakpoint-shell: 56.25rem;
+}
+
+@layer base {
+  html {
+    /* Light only. Pinning this (rather than `light dark`) also keeps native
+       controls — selects, the date picker — light on a dark-themed OS. */
+    color-scheme: light;
+    font-size: 17px;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
   }
-}
 
-/* An app shell, not a centred landing page: the sidebar needs the full width,
-   and each page caps its own content instead. */
-#root {
-  width: 100%;
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
+  body {
+    @apply bg-slate-100 text-slate-600 antialiased;
   }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
+
+  /* An app shell, not a centred landing page: the sidebar needs the full
+     width, and each page caps its own content instead. */
+  #root {
+    @apply flex min-h-svh w-full flex-col;
   }
-}
-p {
-  margin: 0;
-}
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
+  h1,
+  h2,
+  h3 {
+    @apply font-semibold tracking-tight text-slate-900;
+  }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+  h1 {
+    @apply text-2xl;
+  }
+  h2 {
+    @apply text-base;
+  }
+  h3 {
+    @apply text-sm;
+  }
+
+  /* Focus is drawn once, here, so every control gets the same ring without
+     each one remembering to ask. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    @apply rounded-md outline-2 outline-offset-2 outline-navy;
+  }
 }

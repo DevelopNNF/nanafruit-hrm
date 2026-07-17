@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { HealthOk, HealthResponse } from '@hrm/shared'
+import { alert, alertDetail, alertTitle, card, cardHead, eyebrow, fluidGrid, pageHead, spec, specDd, specDt, subtitle } from '../styles'
 
 type State =
   | { phase: 'loading' }
@@ -37,35 +38,50 @@ export function HealthPage() {
 
   return (
     <>
-      <header className="page-head">
+      <header className={pageHead}>
         <div>
+          <p className={eyebrow}>ระบบ</p>
           <h1>สถานะระบบ</h1>
-          <p className="subtitle">connectivity check: admin → server → PostgreSQL</p>
+          <p className={subtitle}>connectivity check: admin → server → PostgreSQL</p>
         </div>
       </header>
 
-      <div className={`card ${state.phase}`}>
-        {state.phase === 'loading' && <p>Checking…</p>}
+      {state.phase === 'loading' && (
+        <div className={alert()}>
+          <p className={alertTitle()}>กำลังตรวจสอบ…</p>
+        </div>
+      )}
 
-        {state.phase === 'ok' && (
-          <>
-            <p className="headline">All three layers connected</p>
-            <dl>
-              <dt>Database</dt>
-              <dd>{state.data.database}</dd>
-              <dt>Server time</dt>
-              <dd>{new Date(state.data.serverTime).toLocaleString()}</dd>
-            </dl>
-          </>
-        )}
+      {state.phase === 'error' && (
+        <div className={alert('danger')}>
+          <p className={alertTitle('danger')}>เชื่อมต่อไม่ได้</p>
+          <p className={alertDetail}>{state.message}</p>
+        </div>
+      )}
 
-        {state.phase === 'error' && (
-          <>
-            <p className="headline">Not connected</p>
-            <p className="detail">{state.message}</p>
-          </>
-        )}
-      </div>
+      {state.phase === 'ok' && (
+        <>
+          <div className={alert('ok')}>
+            <p className={alertTitle()}>เชื่อมต่อครบทั้งสามชั้น</p>
+          </div>
+
+          <div className={fluidGrid('20rem')}>
+            <section className={card}>
+              <header className={cardHead}>
+                <h2>รายละเอียด</h2>
+              </header>
+              <dl className={spec}>
+                <dt className={specDt}>Database</dt>
+                <dd className={specDd}>{state.data.database}</dd>
+                <dt className={specDt}>Server time</dt>
+                <dd className={specDd}>
+                  {new Date(state.data.serverTime).toLocaleString('th-TH')}
+                </dd>
+              </dl>
+            </section>
+          </div>
+        </>
+      )}
     </>
   )
 }

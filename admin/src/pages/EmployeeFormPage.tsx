@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
@@ -14,6 +15,20 @@ import {
 } from '../api/employees'
 import { LinkCodeCard } from '../components/LinkCodeCard'
 import { useCanWrite } from '../auth/meContext'
+import {
+  alert,
+  alertDetail,
+  alertTitle,
+  button,
+  card,
+  eyebrow,
+  fieldControl,
+  fieldLabel,
+  muted,
+  pageHead,
+  requiredMark,
+  subtitle,
+} from '../styles'
 
 /** Local calendar date as YYYY-MM-DD. toISOString would shift the day west of UTC. */
 function today(): string {
@@ -37,6 +52,9 @@ const emptyDraft: EmployeeInput = {
     jobTitle: '',
   },
 }
+
+const fieldGrid = 'grid gap-x-5 gap-y-4 grid-cols-[repeat(auto-fit,minmax(13rem,1fr))]'
+const sectionTitle = 'mb-5 border-b border-slate-200 pb-3 text-xs font-bold tracking-wider text-slate-500 uppercase'
 
 export function EmployeeFormPage() {
   const params = useParams()
@@ -129,50 +147,66 @@ export function EmployeeFormPage() {
   // read-only, because reading is exactly what their role is for.
   if (isNew && !canWrite) return <Navigate to="/employees" replace />
 
-  if (loading) return <p className="muted">กำลังโหลด…</p>
+  if (loading) return <p className={muted}>กำลังโหลด…</p>
 
   return (
     <>
-      <header className="page-head">
+      <header className={pageHead}>
         <div>
+          <p className={eyebrow}>
+            <Link
+              className="inline-flex items-center gap-1.5 text-slate-500 no-underline normal-case tracking-normal hover:text-navy"
+              to="/employees"
+            >
+              <ArrowLeft size={13} />
+              กลับไปรายชื่อพนักงาน
+            </Link>
+          </p>
           <h1>{isNew ? 'เพิ่มพนักงาน' : canWrite ? 'แก้ไขข้อมูลพนักงาน' : 'ข้อมูลพนักงาน'}</h1>
-          <p className="subtitle">
-            {isNew ? 'Employee Master' : `รหัส ${draft.employeeCode}`}
+          <p className={subtitle}>
+            {isNew ? 'กรอกข้อมูลให้ครบทุกช่องที่มีเครื่องหมาย *' : `รหัส ${draft.employeeCode}`}
           </p>
         </div>
       </header>
 
       {!canWrite && (
-        <div className="card form-card">
-          <p className="muted">สิทธิ์ของคุณดูข้อมูลได้อย่างเดียว จึงแก้ไขข้อมูลนี้ไม่ได้</p>
+        <div className={alert('info')}>
+          <p className={alertTitle()}>โหมดอ่านอย่างเดียว</p>
+          <p className={muted}>สิทธิ์ของคุณดูข้อมูลได้อย่างเดียว จึงแก้ไขข้อมูลนี้ไม่ได้</p>
         </div>
       )}
 
       {error && (
-        <div className="card error">
-          <p className="headline">บันทึกไม่สำเร็จ</p>
-          <p className="detail">{error}</p>
+        <div className={alert('danger')}>
+          <p className={alertTitle('danger')}>บันทึกไม่สำเร็จ</p>
+          <p className={alertDetail}>{error}</p>
         </div>
       )}
 
-      <form onSubmit={(e) => void handleSubmit(e)}>
+      <form className="max-w-3xl" onSubmit={(e) => void handleSubmit(e)}>
         {/* One fieldset rather than a `disabled` on each control: a field added
             later is read-only by default instead of by remembering. */}
-        <fieldset disabled={!canWrite}>
-          <section className="card form-card">
-            <h2>Basic information</h2>
-            <div className="field-grid">
-              <label>
-                <span>Employee Code *</span>
+        <fieldset disabled={!canWrite} className="min-w-0 border-0 p-0">
+          <section className={`${card} mb-4`}>
+            <h2 className={sectionTitle}>ข้อมูลพื้นฐาน (Basic information)</h2>
+            <div className={fieldGrid}>
+              <label className={fieldLabel}>
+                <span>
+                  รหัสพนักงาน <span className={requiredMark}>*</span>
+                </span>
                 <input
                   required
+                  className={fieldControl}
                   value={draft.employeeCode}
                   onChange={(e) => setBasic('employeeCode', e.target.value)}
                 />
               </label>
-              <label>
-                <span>คำนำหน้า *</span>
+              <label className={fieldLabel}>
+                <span>
+                  คำนำหน้า <span className={requiredMark}>*</span>
+                </span>
                 <select
+                  className={fieldControl}
                   value={draft.title}
                   onChange={(e) =>
                     setBasic('title', e.target.value as EmployeeInput['title'])
@@ -185,41 +219,54 @@ export function EmployeeFormPage() {
                   ))}
                 </select>
               </label>
-              <label>
-                <span>ชื่อ (ไทย) *</span>
+              <label className={fieldLabel}>
+                <span>
+                  ชื่อ (ไทย) <span className={requiredMark}>*</span>
+                </span>
                 <input
                   required
+                  className={fieldControl}
                   value={draft.firstNameTh}
                   onChange={(e) => setBasic('firstNameTh', e.target.value)}
                 />
               </label>
-              <label>
-                <span>นามสกุล (ไทย) *</span>
+              <label className={fieldLabel}>
+                <span>
+                  นามสกุล (ไทย) <span className={requiredMark}>*</span>
+                </span>
                 <input
                   required
+                  className={fieldControl}
                   value={draft.lastNameTh}
                   onChange={(e) => setBasic('lastNameTh', e.target.value)}
                 />
               </label>
-              <label>
-                <span>First name (EN) *</span>
+              <label className={fieldLabel}>
+                <span>
+                  ชื่อ (EN) <span className={requiredMark}>*</span>
+                </span>
                 <input
                   required
+                  className={fieldControl}
                   value={draft.firstNameEn}
                   onChange={(e) => setBasic('firstNameEn', e.target.value)}
                 />
               </label>
-              <label>
-                <span>Last name (EN) *</span>
+              <label className={fieldLabel}>
+                <span>
+                  นามสกุล (EN) <span className={requiredMark}>*</span>
+                </span>
                 <input
                   required
+                  className={fieldControl}
                   value={draft.lastNameEn}
                   onChange={(e) => setBasic('lastNameEn', e.target.value)}
                 />
               </label>
-              <label>
+              <label className={fieldLabel}>
                 <span>ชื่อเล่น</span>
                 <input
+                  className={fieldControl}
                   value={draft.nickname ?? ''}
                   onChange={(e) => setBasic('nickname', e.target.value || null)}
                 />
@@ -227,12 +274,15 @@ export function EmployeeFormPage() {
             </div>
           </section>
 
-          <section className="card form-card">
-            <h2>Employment information</h2>
-            <div className="field-grid">
-              <label>
-                <span>Employee Status *</span>
+          <section className={`${card} mb-4`}>
+            <h2 className={sectionTitle}>ข้อมูลการจ้างงาน (Employment information)</h2>
+            <div className={fieldGrid}>
+              <label className={fieldLabel}>
+                <span>
+                  สถานะการจ้างงาน <span className={requiredMark}>*</span>
+                </span>
                 <select
+                  className={fieldControl}
                   value={draft.employment.status}
                   onChange={(e) =>
                     setEmployment(
@@ -248,18 +298,24 @@ export function EmployeeFormPage() {
                   ))}
                 </select>
               </label>
-              <label>
-                <span>Hire Date *</span>
+              <label className={fieldLabel}>
+                <span>
+                  วันที่จ้าง <span className={requiredMark}>*</span>
+                </span>
                 <input
                   required
                   type="date"
+                  className={fieldControl}
                   value={draft.employment.hireDate}
                   onChange={(e) => setEmployment('hireDate', e.target.value)}
                 />
               </label>
-              <label>
-                <span>Employment Type *</span>
+              <label className={fieldLabel}>
+                <span>
+                  ประเภทการจ้าง <span className={requiredMark}>*</span>
+                </span>
                 <select
+                  className={fieldControl}
                   value={draft.employment.employmentType}
                   onChange={(e) =>
                     setEmployment(
@@ -275,10 +331,13 @@ export function EmployeeFormPage() {
                   ))}
                 </select>
               </label>
-              <label>
-                <span>Job Title *</span>
+              <label className={fieldLabel}>
+                <span>
+                  Job Title <span className={requiredMark}>*</span>
+                </span>
                 <input
                   required
+                  className={fieldControl}
                   value={draft.employment.jobTitle}
                   onChange={(e) => setEmployment('jobTitle', e.target.value)}
                 />
@@ -287,13 +346,17 @@ export function EmployeeFormPage() {
           </section>
         </fieldset>
 
+        {/* Outside the form: issuing a code is its own action against a saved
+            employee, and a button inside a form would submit it. */}
+        {id !== null && canWrite && <LinkCodeCard employeeId={id} />}
+
         {canWrite ? (
-          <div className="form-actions">
-            <button className="button primary" type="submit" disabled={saving}>
+          <div className="flex items-center gap-2.5 pt-1">
+            <button className={button('primary')} type="submit" disabled={saving}>
               {saving ? 'กำลังบันทึก…' : 'บันทึก'}
             </button>
             <button
-              className="button"
+              className={button()}
               type="button"
               onClick={() => void navigate('/employees')}
               disabled={saving}
@@ -302,7 +365,7 @@ export function EmployeeFormPage() {
             </button>
             {!isNew && (
               <button
-                className="button danger"
+                className={button('danger')}
                 type="button"
                 onClick={() => void handleDelete()}
                 disabled={saving}
@@ -312,9 +375,9 @@ export function EmployeeFormPage() {
             )}
           </div>
         ) : (
-          <div className="form-actions">
+          <div className="flex items-center gap-2.5 pt-1">
             <button
-              className="button"
+              className={button()}
               type="button"
               onClick={() => void navigate('/employees')}
             >
@@ -323,10 +386,6 @@ export function EmployeeFormPage() {
           </div>
         )}
       </form>
-
-      {/* Outside the form: issuing a code is its own action against a saved
-          employee, and a button inside a form would submit it. */}
-      {id !== null && canWrite && <LinkCodeCard employeeId={id} />}
     </>
   )
 }
