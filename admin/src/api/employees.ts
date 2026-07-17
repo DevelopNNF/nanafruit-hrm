@@ -1,44 +1,26 @@
 import type {
-  ApiError,
   Employee,
   EmployeeInput,
   EmployeeListResponse,
   EmployeeResponse,
+  LinkCodeResponse,
 } from '@hrm/shared'
-
-/**
- * Unwraps a response, turning any non-2xx into a thrown Error carrying the
- * server's own message so callers can show it verbatim.
- */
-async function unwrap<T>(res: Response): Promise<T> {
-  if (res.ok) return (await res.json()) as T
-
-  let message = `HTTP ${res.status}`
-  try {
-    const body = (await res.json()) as ApiError
-    if (body.message) message = body.message
-  } catch {
-    // Non-JSON error body (a proxy error page, say) — the status is all we have.
-  }
-  throw new Error(message)
-}
-
-const jsonHeaders = { 'Content-Type': 'application/json' }
+import { apiFetch, jsonHeaders, unwrap } from './client'
 
 export async function listEmployees(signal?: AbortSignal): Promise<Employee[]> {
-  const res = await fetch('/api/employees', { signal })
+  const res = await apiFetch('/api/employees', { signal })
   const body = await unwrap<EmployeeListResponse>(res)
   return body.employees
 }
 
 export async function getEmployee(id: number, signal?: AbortSignal): Promise<Employee> {
-  const res = await fetch(`/api/employees/${id}`, { signal })
+  const res = await apiFetch(`/api/employees/${id}`, { signal })
   const body = await unwrap<EmployeeResponse>(res)
   return body.employee
 }
 
 export async function createEmployee(input: EmployeeInput): Promise<Employee> {
-  const res = await fetch('/api/employees', {
+  const res = await apiFetch('/api/employees', {
     method: 'POST',
     headers: jsonHeaders,
     body: JSON.stringify(input),
@@ -51,7 +33,7 @@ export async function updateEmployee(
   id: number,
   input: EmployeeInput
 ): Promise<Employee> {
-  const res = await fetch(`/api/employees/${id}`, {
+  const res = await apiFetch(`/api/employees/${id}`, {
     method: 'PUT',
     headers: jsonHeaders,
     body: JSON.stringify(input),
@@ -60,8 +42,19 @@ export async function updateEmployee(
   return body.employee
 }
 
+/**
+ * Issues a one-time code for the employee to claim their record in liff/.
+ *
+ * The plaintext code is in this response and nowhere else — the server stores
+ * only a hash — so a caller that drops it has to issue another one.
+ */
+export async function createLinkCode(id: number): Promise<LinkCodeResponse> {
+  const res = await apiFetch(`/api/employees/${id}/link-code`, { method: 'POST' })
+  return unwrap<LinkCodeResponse>(res)
+}
+
 export async function deleteEmployee(id: number): Promise<void> {
-  const res = await fetch(`/api/employees/${id}`, { method: 'DELETE' })
+  const res = await apiFetch(`/api/employees/${id}`, { method: 'DELETE' })
   // 204: nothing to unwrap, but a failure still needs to surface.
   if (!res.ok) await unwrap<never>(res)
 }

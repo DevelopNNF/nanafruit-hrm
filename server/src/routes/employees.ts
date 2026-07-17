@@ -3,73 +3,42 @@ import type { Request, Response } from 'express'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
+  ROLES,
   TITLES,
-  type ApiError,
   type Employee,
   type EmployeeInput,
   type EmployeeListResponse,
+  type AuthUser,
   type EmployeeResponse,
+  type LinkCodeResponse,
 } from '@hrm/shared'
+import { LINK_CODE_TTL_MS, generateLinkCode, hashLinkCode } from '../auth/linkCode.js'
 import { pool, withTransaction } from '../db.js'
+import { requireRole } from '../auth/middleware.js'
+import { recordAudit } from '../audit.js'
+import { fail, handleUnexpected } from '../http.js'
+import {
+  SELECT_EMPLOYEE,
+  findEmployeeById,
+  rowToEmployee,
+  type EmployeeRow,
+} from '../employeeQueries.js'
 
 export const employeesRouter = Router()
 
-// Shape of a row from the employees ⋈ employment_details join. Every employment
-// column is nullable here only because the LEFT JOIN says so — see rowToEmployee.
-type EmployeeRow = {
-  id: string // bigint: pg hands these back as strings to avoid precision loss
-  employee_code: string
-  title: string
-  first_name_th: string
-  last_name_th: string
-  first_name_en: string
-  last_name_en: string
-  nickname: string | null
-  status: string | null
-  hire_date: string | null // 'YYYY-MM-DD' — see the DATE type parser in db.ts
-  employment_type: string | null
-  job_title: string | null
-}
+// Reading the staff list is what every HRM role is for, so any of them will do.
+// Changing it is not: Viewer stops here. Both sit in front of the handlers
+// rather than inside them so that a new route cannot forget to ask.
+const canRead = requireRole(...ROLES)
+const canWrite = requireRole('HRM.HR', 'HRM.Admin')
 
-const SELECT_EMPLOYEE = `
-  SELECT e.id, e.employee_code, e.title,
-         e.first_name_th, e.last_name_th, e.first_name_en, e.last_name_en,
-         e.nickname,
-         d.status, d.hire_date, d.employment_type, d.job_title
-  FROM employees e
-  LEFT JOIN employment_details d ON d.employee_id = e.id
-`
-
-function rowToEmployee(row: EmployeeRow): Employee {
-  // The LEFT JOIN types these as nullable, but every write goes through a
-  // transaction that inserts both halves, and the FK cascades on delete. A null
-  // here means the data was tampered with outside the API, so fail loudly
-  // rather than invent an employment record.
-  if (
-    row.status === null ||
-    row.hire_date === null ||
-    row.employment_type === null ||
-    row.job_title === null
-  ) {
-    throw new Error(`employee ${row.id} has no employment_details row`)
-  }
-
-  return {
-    id: Number(row.id),
-    employeeCode: row.employee_code,
-    title: row.title as Employee['title'],
-    firstNameTh: row.first_name_th,
-    lastNameTh: row.last_name_th,
-    firstNameEn: row.first_name_en,
-    lastNameEn: row.last_name_en,
-    nickname: row.nickname,
-    employment: {
-      status: row.status as Employee['employment']['status'],
-      hireDate: row.hire_date,
-      employmentType: row.employment_type as Employee['employment']['employmentType'],
-      jobTitle: row.job_title,
-    },
-  }
+/**
+ * The caller, for the audit log. canWrite has already established that they are
+ * an admin — this narrows the type and turns a wiring mistake into a 500 rather
+ * than an audit entry attributed to nobody.
+ */
+function actorOf(req: Request): AuthUser | null {
+  return req.auth ?? null
 }
 
 type ParseResult<T> = { ok: true; value: T } | { ok: false; message: string }
@@ -194,18 +163,7 @@ function isUniqueViolation(err: unknown): boolean {
   )
 }
 
-function fail(res: Response, status: number, message: string): void {
-  const body: ApiError = { status: 'error', message }
-  res.status(status).json(body)
-}
-
-/** Every route funnels its unexpected errors here so none of them leak a stack trace. */
-function handleUnexpected(res: Response, err: unknown): void {
-  console.error(err)
-  fail(res, 500, err instanceof Error ? err.message : 'unexpected database error')
-}
-
-employeesRouter.get('/employees', async (_req: Request, res: Response) => {
+employeesRouter.get('/employees', canRead, async (_req: Request, res: Response) => {
   try {
     const { rows } = await pool.query<EmployeeRow>(
       `${SELECT_EMPLOYEE} ORDER BY e.employee_code`
@@ -217,25 +175,25 @@ employeesRouter.get('/employees', async (_req: Request, res: Response) => {
   }
 })
 
-employeesRouter.get('/employees/:id', async (req: Request, res: Response) => {
+employeesRouter.get('/employees/:id', canRead, async (req: Request, res: Response) => {
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
 
   try {
-    const { rows } = await pool.query<EmployeeRow>(`${SELECT_EMPLOYEE} WHERE e.id = $1`, [
-      id,
-    ])
-    const row = rows[0]
-    if (!row) return fail(res, 404, `no employee with id ${id}`)
+    const employee = await findEmployeeById(id)
+    if (!employee) return fail(res, 404, `no employee with id ${id}`)
 
-    const body: EmployeeResponse = { employee: rowToEmployee(row) }
+    const body: EmployeeResponse = { employee }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
   }
 })
 
-employeesRouter.post('/employees', async (req: Request, res: Response) => {
+employeesRouter.post('/employees', canWrite, async (req: Request, res: Response) => {
+  const actor = actorOf(req)
+  if (!actor) return fail(res, 500, 'server misconfigured')
+
   const parsed = parseEmployeeInput(req.body)
   if (!parsed.ok) return fail(res, 400, parsed.message)
   const input = parsed.value
@@ -274,6 +232,13 @@ employeesRouter.post('/employees', async (req: Request, res: Response) => {
         ]
       )
 
+      await recordAudit(client, {
+        actor,
+        action: 'employee.create',
+        entityId: Number(created.id),
+        detail: { employeeCode: input.employeeCode },
+      })
+
       return { ...input, id: Number(created.id) } satisfies Employee
     })
 
@@ -289,7 +254,10 @@ employeesRouter.post('/employees', async (req: Request, res: Response) => {
 
 // PUT, not PATCH: the body is a complete employee, so this replaces rather than
 // merges. Partial updates can get their own PATCH if a caller ever needs one.
-employeesRouter.put('/employees/:id', async (req: Request, res: Response) => {
+employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Response) => {
+  const actor = actorOf(req)
+  if (!actor) return fail(res, 500, 'server misconfigured')
+
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
 
@@ -332,6 +300,13 @@ employeesRouter.put('/employees/:id', async (req: Request, res: Response) => {
           input.employment.jobTitle,
         ]
       )
+
+      await recordAudit(client, {
+        actor,
+        action: 'employee.update',
+        entityId: id,
+        detail: { employeeCode: input.employeeCode },
+      })
       return true
     })
 
@@ -347,14 +322,98 @@ employeesRouter.put('/employees/:id', async (req: Request, res: Response) => {
   }
 })
 
-employeesRouter.delete('/employees/:id', async (req: Request, res: Response) => {
+// Issues a one-time code the employee types into liff/ to claim their record.
+// A write, and an identity-granting one, so canWrite rather than canRead.
+employeesRouter.post(
+  '/employees/:id/link-code',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    const actor = actorOf(req)
+    if (actor?.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+
+    const code = generateLinkCode()
+    const expiresAt = new Date(Date.now() + LINK_CODE_TTL_MS)
+
+    try {
+      const result = await withTransaction(async (client) => {
+        // FOR UPDATE: two HR users issuing at once would otherwise both read
+        // "not linked" and both hand out a code for the same person.
+        const { rows } = await client.query<{ line_user_id: string | null }>(
+          'SELECT line_user_id FROM employees WHERE id = $1 FOR UPDATE',
+          [id]
+        )
+        const employee = rows[0]
+        if (!employee) return 'not-found' as const
+        // Handing out a code for an employee who already has a LINE account
+        // would only ever be the first half of taking their record away from
+        // them. Unlinking is a deliberate act and does not have a route yet.
+        if (employee.line_user_id !== null) return 'already-linked' as const
+
+        await client.query(
+          `INSERT INTO employee_link_codes (code_hash, employee_id, expires_at, created_by)
+           VALUES ($1, $2, $3, $4)`,
+          [hashLinkCode(code), id, expiresAt, actor.upn]
+        )
+
+        // No code in the detail — the audit log would then be holding a live
+        // credential in plaintext, which is the thing the hash above avoids.
+        await recordAudit(client, {
+          actor,
+          action: 'employee.link_code_issued',
+          entityId: id,
+          detail: { expiresAt: expiresAt.toISOString() },
+        })
+        return 'issued' as const
+      })
+
+      if (result === 'not-found') return fail(res, 404, `no employee with id ${id}`)
+      if (result === 'already-linked') {
+        return fail(res, 409, `employee ${id} is already linked to a LINE account`)
+      }
+
+      // The only time the plaintext code exists outside HR's screen. The row
+      // holds a hash, so a second GET could not reproduce this if it wanted to.
+      const body: LinkCodeResponse = { code, expiresAt: expiresAt.toISOString() }
+      res.status(201).json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+employeesRouter.delete('/employees/:id', canWrite, async (req: Request, res: Response) => {
+  const actor = actorOf(req)
+  if (!actor) return fail(res, 500, 'server misconfigured')
+
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
 
   try {
-    // employment_details goes with it via ON DELETE CASCADE.
-    const { rowCount } = await pool.query('DELETE FROM employees WHERE id = $1', [id])
-    if (rowCount === 0) return fail(res, 404, `no employee with id ${id}`)
+    const deleted = await withTransaction(async (client) => {
+      // employment_details and any link codes go with it via ON DELETE CASCADE.
+      // RETURNING catches the employee code on its way out: a moment later there
+      // is nowhere left to read it from, and it is the only thing that makes the
+      // audit entry mean anything to whoever reads it.
+      const { rows } = await client.query<{ employee_code: string }>(
+        'DELETE FROM employees WHERE id = $1 RETURNING employee_code',
+        [id]
+      )
+      const row = rows[0]
+      if (!row) return false
+
+      await recordAudit(client, {
+        actor,
+        action: 'employee.delete',
+        entityId: id,
+        detail: { employeeCode: row.employee_code },
+      })
+      return true
+    })
+
+    if (!deleted) return fail(res, 404, `no employee with id ${id}`)
     res.status(204).end()
   } catch (err) {
     handleUnexpected(res, err)

@@ -4,6 +4,7 @@ import liff from '@line/liff'
 import './index.css'
 import App from './App.tsx'
 import BootFailure from './BootFailure.tsx'
+import { startSession } from './api/auth.ts'
 
 const root = createRoot(document.getElementById('root')!)
 
@@ -25,9 +26,21 @@ async function boot() {
     return
   }
 
+  const idToken = liff.getIDToken()
+  if (!idToken) {
+    throw new Error(
+      'LINE returned no ID token — the LIFF app needs the openid scope in the LINE Developers Console'
+    )
+  }
+
+  // Done before the first render, not in an effect: the app has nothing to show
+  // until it knows whether this person has a record, and doing it here means no
+  // component ever renders a "loading who you are" state.
+  const session = await startSession(idToken)
+
   root.render(
     <StrictMode>
-      <App />
+      <App idToken={idToken} initialSession={session} />
     </StrictMode>,
   )
 }

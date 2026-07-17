@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import type { Employee } from '@hrm/shared'
 import { listEmployees } from '../api/employees'
+import { useCanWrite } from '../auth/meContext'
 
 type State =
   | { phase: 'loading' }
@@ -11,6 +12,7 @@ type State =
 export function EmployeeListPage() {
   const [state, setState] = useState<State>({ phase: 'loading' })
   const navigate = useNavigate()
+  const canWrite = useCanWrite()
 
   useEffect(() => {
     const controller = new AbortController()
@@ -35,9 +37,11 @@ export function EmployeeListPage() {
           <h1>พนักงาน</h1>
           <p className="subtitle">Employee Master</p>
         </div>
-        <Link className="button primary" to="/employees/new">
-          + เพิ่มพนักงาน
-        </Link>
+        {canWrite && (
+          <Link className="button primary" to="/employees/new">
+            + เพิ่มพนักงาน
+          </Link>
+        )}
       </header>
 
       {state.phase === 'loading' && <p className="muted">กำลังโหลด…</p>}
@@ -52,7 +56,9 @@ export function EmployeeListPage() {
       {state.phase === 'ok' && state.employees.length === 0 && (
         <div className="card empty">
           <p className="headline">ยังไม่มีพนักงานในระบบ</p>
-          <p className="muted">กด “เพิ่มพนักงาน” เพื่อเริ่มต้น</p>
+          <p className="muted">
+            {canWrite ? 'กด “เพิ่มพนักงาน” เพื่อเริ่มต้น' : 'สิทธิ์ของคุณดูข้อมูลได้อย่างเดียว'}
+          </p>
         </div>
       )}
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import liff from '@line/liff'
-import type { HealthOk, HealthResponse } from '@hrm/shared'
+import type { Employee, LineSessionResponse } from '@hrm/shared'
+import { LinkScreen } from './LinkScreen'
 import './App.css'
 
 type Profile = {
@@ -8,51 +9,26 @@ type Profile = {
   pictureUrl?: string
 }
 
-type State =
-  | { phase: 'loading' }
-  | { phase: 'ok'; data: HealthOk }
-  | { phase: 'error'; message: string }
+type Props = {
+  idToken: string
+  /** null when LINE knows this person but no employee record claims them yet. */
+  initialSession: LineSessionResponse | null
+}
 
-function App() {
+function EmployeeHome({ employee }: { employee: Employee }) {
   const [profile, setProfile] = useState<Profile | null>(null)
-  const [state, setState] = useState<State>({ phase: 'loading' })
 
   useEffect(() => {
     // Display only. Anything the server is asked to trust has to come from
     // liff.getIDToken() and be verified against LINE server-side — a client can
     // claim any profile it likes, so this name is decoration, not identity.
+    // The name below it, in the card, is the one the server vouches for.
     liff.getProfile().then(
       (p) => setProfile({ displayName: p.displayName, pictureUrl: p.pictureUrl }),
       () => {
         // Decoration failing to load is not worth surfacing.
       },
     )
-  }, [])
-
-  useEffect(() => {
-    const controller = new AbortController()
-
-    async function check() {
-      try {
-        const res = await fetch('/api/health', { signal: controller.signal })
-        const body = (await res.json()) as HealthResponse
-        if (!res.ok || body.status === 'error') {
-          throw new Error(
-            body.status === 'error' ? body.message : `HTTP ${res.status}`,
-          )
-        }
-        setState({ phase: 'ok', data: body })
-      } catch (err) {
-        if (controller.signal.aborted) return
-        setState({
-          phase: 'error',
-          message: err instanceof Error ? err.message : 'request failed',
-        })
-      }
-    }
-
-    void check()
-    return () => controller.abort()
   }, [])
 
   return (
@@ -70,32 +46,39 @@ function App() {
       )}
 
       <h1>HRM</h1>
-      <p className="subtitle">LIFF · สำหรับพนักงานและหัวหน้างาน</p>
+      <p className="subtitle">ข้อมูลพนักงานของคุณ</p>
 
-      <div className={`card ${state.phase}`}>
-        {state.phase === 'loading' && <p>กำลังตรวจสอบ…</p>}
-
-        {state.phase === 'ok' && (
-          <>
-            <p className="headline">เชื่อมต่อครบทุกชั้นแล้ว</p>
-            <dl>
-              <dt>Database</dt>
-              <dd>{state.data.database}</dd>
-              <dt>Server time</dt>
-              <dd>{new Date(state.data.serverTime).toLocaleString('th-TH')}</dd>
-            </dl>
-          </>
-        )}
-
-        {state.phase === 'error' && (
-          <>
-            <p className="headline">เชื่อมต่อไม่สำเร็จ</p>
-            <p className="detail">{state.message}</p>
-          </>
-        )}
+      <div className="card ok">
+        <p className="headline">
+          {employee.title}
+          {employee.firstNameTh} {employee.lastNameTh}
+        </p>
+        <dl>
+          <dt>รหัสพนักงาน</dt>
+          <dd>{employee.employeeCode}</dd>
+          <dt>ตำแหน่ง</dt>
+          <dd>{employee.employment.jobTitle}</dd>
+          <dt>ประเภท</dt>
+          <dd>{employee.employment.employmentType}</dd>
+          <dt>วันที่เริ่มงาน</dt>
+          <dd>{employee.employment.hireDate}</dd>
+          <dt>สถานะ</dt>
+          <dd>{employee.employment.status}</dd>
+        </dl>
       </div>
     </main>
   )
+}
+
+function App({ idToken, initialSession }: Props) {
+  const [session, setSession] = useState(initialSession)
+
+  // Linking succeeds straight into a session, so the link screen hands one back
+  // and this swaps over — no reload, no second trip through boot().
+  if (session === null) {
+    return <LinkScreen idToken={idToken} onLinked={setSession} />
+  }
+  return <EmployeeHome employee={session.employee} />
 }
 
 export default App

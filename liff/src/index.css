@@ -7,6 +7,10 @@
   --ok: #06c755;
   --error: #d64545;
   --muted: rgba(128, 128, 128, 0.5);
+  /* LINE green. Same value as --ok and deliberately a separate token: one means
+     "this went well", the other means "press this", and they will not always
+     want to move together. */
+  --accent: #06c755;
 
   --sans: system-ui, 'Segoe UI', Roboto, 'Noto Sans Thai', sans-serif;
   --mono: ui-monospace, Consolas, monospace;
