@@ -122,7 +122,9 @@ export function AppLayout() {
             type="button"
             className={`${button('ghost')} px-2.5 py-1.5 shell:w-full shell:px-3.5 shell:py-2`}
             // Naming the account for the same reason the API client does: the
-            // active one is not guaranteed to be set.
+            // active one is not guaranteed to be set. The redirect to Entra's
+            // end-session endpoint that this would otherwise trigger is
+            // suppressed globally — see onRedirectNavigate in msal.ts.
             onClick={() => void instance.logoutRedirect({ account: getSignedInAccount() })}
           >
             <LogOut size={16} />

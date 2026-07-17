@@ -35,7 +35,20 @@ const config: Configuration = {
     redirectUri: window.location.origin,
     // Without this, signing out leaves the user on a Microsoft page. Same
     // registration requirement as redirectUri — it must be listed there too.
+    // Unused when logout is stopped short by onRedirectNavigate below, but
+    // still required by MSAL's config validation.
     postLogoutRedirectUri: window.location.origin,
+    // MSAL calls this with the URL it's about to navigate to, for both login
+    // and logout. Login must go through — that's the sign-in flow. Logout
+    // must not: its target is Entra's tenant-wide end-session endpoint, which
+    // tears down the *shared* AAD SSO cookie and signs the user out of
+    // Outlook, the Azure portal, and anything else sharing this browser's
+    // Microsoft session, not just this app. Returning false here only skips
+    // that navigation — logoutRedirect has already cleared this app's local
+    // MSAL cache by the time this runs, which is the whole of what "logged
+    // out of HRM" needs to mean, since there's no server-side session to
+    // invalidate either.
+    onRedirectNavigate: (url) => !url.includes('/oauth2/v2.0/logout'),
   },
   cache: {
     // sessionStorage, not localStorage: closing the tab ends the session, and
