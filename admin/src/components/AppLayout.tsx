@@ -1,6 +1,15 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useState } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
-import { Activity, LayoutDashboard, LogOut, Users, type LucideIcon } from 'lucide-react'
+import {
+  Activity,
+  ChevronDown,
+  Database,
+  LayoutDashboard,
+  LogOut,
+  Users,
+  type LucideIcon,
+} from 'lucide-react'
 import type { Role } from '@hrm/shared'
 import { useMe } from '../auth/meContext'
 import { getSignedInAccount } from '../auth/msal'
@@ -13,11 +22,32 @@ const ROLE_LABELS: Record<Role, string> = {
   'HRM.Viewer': 'ผู้ดูข้อมูล',
 }
 
-const NAV: { to: string; label: string; icon: LucideIcon }[] = [
-  { to: '/dashboard', label: 'ภาพรวม', icon: LayoutDashboard },
-  { to: '/employees', label: 'พนักงาน', icon: Users },
-  { to: '/health', label: 'สถานะระบบ', icon: Activity },
+type NavItem =
+  | { type: 'link'; to: string; label: string; icon: LucideIcon }
+  | { type: 'group'; label: string; icon: LucideIcon; children: { to: string; label: string }[] }
+
+// "Master" is a group rather than a link: it holds no page of its own, only
+// the master-data sub-pages nested under it. Job is the first; more master
+// tables (master_* in the database) join this list as they're built.
+const NAV: NavItem[] = [
+  { type: 'link', to: '/dashboard', label: 'ภาพรวม', icon: LayoutDashboard },
+  { type: 'link', to: '/employees', label: 'พนักงาน', icon: Users },
+  {
+    type: 'group',
+    label: 'Master',
+    icon: Database,
+    children: [{ to: '/master/jobs', label: 'ตำแหน่งงาน (Job)' }],
+  },
+  { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },
 ]
+
+const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+  [
+    'flex flex-none items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
+    isActive
+      ? 'bg-shell-active font-semibold text-white'
+      : 'text-shell-fg-dim hover:bg-white/6 hover:text-shell-fg',
+  ].join(' ')
 
 /** First letters of the first two words — the avatar stand-in. Thai names have
  *  no case, so this is a glyph, not an acronym. */
@@ -32,12 +62,38 @@ function initials(name: string): string {
 export function AppLayout() {
   const { instance } = useMsal()
   const me = useMe()
+  const location = useLocation()
 
   // MeProvider has already turned "no roles" into its own screen, so anyone
   // rendering here holds at least one.
   const roles = me.kind === 'admin' ? me.roles : []
   const name = me.kind === 'admin' ? me.name : ''
   const upn = me.kind === 'admin' ? me.upn : ''
+
+  // Open by default whenever the current page is one of its children, so a
+  // hard refresh on /master/jobs doesn't land on a collapsed group hiding the
+  // very page it's showing.
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
+    const initial = new Set<string>()
+    for (const item of NAV) {
+      if (
+        item.type === 'group' &&
+        item.children.some((child) => location.pathname.startsWith(child.to))
+      ) {
+        initial.add(item.label)
+      }
+    }
+    return initial
+  })
+
+  function toggleGroup(label: string) {
+    setOpenGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(label)) next.delete(label)
+      else next.add(label)
+      return next
+    })
+  }
 
   return (
     <div className="flex flex-1 flex-col shell:flex-row">
@@ -69,23 +125,42 @@ export function AppLayout() {
             text-shell-fg-dim/70 uppercase shell:block">
             เมนูหลัก
           </p>
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                [
-                  'flex flex-none items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
-                  isActive
-                    ? 'bg-shell-active font-semibold text-white'
-                    : 'text-shell-fg-dim hover:bg-white/6 hover:text-shell-fg',
-                ].join(' ')
-              }
-            >
-              <item.icon size={17} className="flex-none opacity-90" />
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
+          {NAV.map((item) =>
+            item.type === 'link' ? (
+              <NavLink key={item.to} to={item.to} className={navLinkClass}>
+                <item.icon size={17} className="flex-none opacity-90" />
+                <span>{item.label}</span>
+              </NavLink>
+            ) : (
+              <div key={item.label} className="flex flex-none flex-col shell:w-full">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(item.label)}
+                  aria-expanded={openGroups.has(item.label)}
+                  className="flex flex-none items-center gap-2.5 rounded-md px-3 py-2.5 text-sm
+                    text-shell-fg-dim transition-colors hover:bg-white/6 hover:text-shell-fg"
+                >
+                  <item.icon size={17} className="flex-none opacity-90" />
+                  <span>{item.label}</span>
+                  <ChevronDown
+                    size={15}
+                    className={`ml-auto flex-none transition-transform ${
+                      openGroups.has(item.label) ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+                {openGroups.has(item.label) && (
+                  <div className="ml-3.5 flex flex-col gap-0.5 border-l border-white/10 py-0.5 pl-2.5">
+                    {item.children.map((child) => (
+                      <NavLink key={child.to} to={child.to} className={navLinkClass}>
+                        <span>{child.label}</span>
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          )}
         </nav>
 
         <div className="ml-auto flex items-center gap-2 shell:ml-0 shell:mt-auto shell:flex-col

@@ -6,6 +6,7 @@ import {
   EMPLOYMENT_TYPES,
   TITLES,
   type EmployeeInput,
+  type Job,
 } from '@hrm/shared'
 import {
   createEmployee,
@@ -13,6 +14,7 @@ import {
   getEmployee,
   updateEmployee,
 } from '../api/employees'
+import { listJobs } from '../api/jobs'
 import { LinkCodeCard } from '../components/LinkCodeCard'
 import { useCanWrite } from '../auth/meContext'
 import {
@@ -48,8 +50,10 @@ const emptyDraft: EmployeeInput = {
   employment: {
     status: EMPLOYEE_STATUSES[0],
     hireDate: today(),
+    // 0 is not a real master_jobs id — it's the sentinel for "nothing picked
+    // yet", matched by the disabled placeholder option in the Job Title select.
+    jobId: 0,
     employmentType: EMPLOYMENT_TYPES[0],
-    jobTitle: '',
   },
 }
 
@@ -71,6 +75,35 @@ export function EmployeeFormPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // The title as of the last load — EmploymentDetailsInput (what `draft`
+  // holds) has no jobTitle field, so this is the only place the label for a
+  // deactivated job's option comes from.
+  const [loadedJobTitle, setLoadedJobTitle] = useState<string | null>(null)
+
+  type JobOptionsState =
+    | { phase: 'loading' }
+    | { phase: 'ok'; jobs: Job[] }
+    | { phase: 'error'; message: string }
+  const [jobOptions, setJobOptions] = useState<JobOptionsState>({ phase: 'loading' })
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    // Any role can read master_jobs (same canRead as employees), so this loads
+    // regardless of canWrite — a viewer sees the same options a form submit would.
+    listJobs(controller.signal)
+      .then((jobs) => setJobOptions({ phase: 'ok', jobs: jobs.filter((job) => job.isActive) }))
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setJobOptions({
+          phase: 'error',
+          message: err instanceof Error ? err.message : 'request failed',
+        })
+      })
+
+    return () => controller.abort()
+  }, [])
+
   useEffect(() => {
     if (id === null) return
     const controller = new AbortController()
@@ -90,6 +123,7 @@ export function EmployeeFormPage() {
           nickname: employee.nickname,
           employment: employee.employment,
         })
+        setLoadedJobTitle(employee.employment.jobTitle)
         setLoading(false)
       })
       .catch((err: unknown) => {
@@ -148,6 +182,13 @@ export function EmployeeFormPage() {
   if (isNew && !canWrite) return <Navigate to="/employees" replace />
 
   if (loading) return <p className={muted}>กำลังโหลด…</p>
+
+  const activeJobIds = jobOptions.phase === 'ok' ? jobOptions.jobs.map((j) => j.id) : []
+  // A saved employee can point at a job that's since been deactivated — kept
+  // selectable (labelled) rather than silently dropped out from under the
+  // draft on open.
+  const currentJobMissing =
+    draft.employment.jobId !== 0 && !activeJobIds.includes(draft.employment.jobId)
 
   return (
     <>
@@ -335,12 +376,33 @@ export function EmployeeFormPage() {
                 <span>
                   Job Title <span className={requiredMark}>*</span>
                 </span>
-                <input
+                <select
                   required
                   className={fieldControl}
-                  value={draft.employment.jobTitle}
-                  onChange={(e) => setEmployment('jobTitle', e.target.value)}
-                />
+                  disabled={jobOptions.phase === 'loading'}
+                  value={draft.employment.jobId}
+                  onChange={(e) => setEmployment('jobId', Number(e.target.value))}
+                >
+                  <option value={0} disabled>
+                    {jobOptions.phase === 'loading' ? 'กำลังโหลดตำแหน่งงาน…' : '— เลือกตำแหน่งงาน —'}
+                  </option>
+                  {currentJobMissing && (
+                    <option value={draft.employment.jobId}>
+                      {loadedJobTitle ?? `#${draft.employment.jobId}`} (ไม่พร้อมใช้งาน)
+                    </option>
+                  )}
+                  {jobOptions.phase === 'ok' &&
+                    jobOptions.jobs.map((job) => (
+                      <option key={job.id} value={job.id}>
+                        {job.jobTitle}
+                      </option>
+                    ))}
+                </select>
+                {jobOptions.phase === 'error' && (
+                  <span className="text-[0.7rem] text-red-700">
+                    โหลดรายการตำแหน่งงานไม่สำเร็จ: {jobOptions.message}
+                  </span>
+                )}
               </label>
             </div>
           </section>

@@ -73,11 +73,21 @@ export type EmploymentDetails = {
   /** Calendar date, `YYYY-MM-DD`. No time, no timezone. */
   hireDate: string
   employmentType: EmploymentType
+  /** FK to master_jobs.id. */
+  jobId: number
+  /** master_jobs.job_title as of now, joined in for display. Derived from
+   *  jobId, not writable directly — absent from EmploymentDetailsInput. */
   jobTitle: string
 }
 
+/** Body of the employment half of POST/PUT — jobTitle is read-only, so it's
+ *  the one field on EmploymentDetails that isn't also an input. */
+export type EmploymentDetailsInput = Omit<EmploymentDetails, 'jobTitle'>
+
 /** Body of POST /api/employees and PATCH /api/employees/:id */
-export type EmployeeInput = Omit<Employee, 'id'>
+export type EmployeeInput = Omit<Employee, 'id' | 'employment'> & {
+  employment: EmploymentDetailsInput
+}
 
 /** GET /api/employees */
 export type EmployeeListResponse = { employees: Employee[] }
@@ -144,6 +154,27 @@ export type LinkCodeResponse = {
   /** ISO 8601. */
   expiresAt: string
 }
+
+/* Job Master --------------------------------------------------------------- */
+
+/** A row in master_jobs. Row order in the list is the id's stand-in in the UI. */
+export type Job = {
+  id: number
+  jobTitle: string
+  jobDescription: string | null
+  /** HTML from the Work Instruction rich text editor, or null if left blank. */
+  workInstruction: string | null
+  isActive: boolean
+}
+
+/** Body of POST /api/jobs and PUT /api/jobs/:id */
+export type JobInput = Omit<Job, 'id'>
+
+/** GET /api/jobs */
+export type JobListResponse = { jobs: Job[] }
+
+/** GET /api/jobs/:id, POST, PUT */
+export type JobResponse = { job: Job }
 
 /* Health ------------------------------------------------------------------ */
 

@@ -21,6 +21,8 @@ export type AuditAction =
   | 'employee.delete'
   | 'employee.link_code_issued'
   | 'employee.line_linked'
+  | 'job.create'
+  | 'job.update'
 
 type Entry = {
   actor: AuthUser

@@ -5,7 +5,6 @@ import {
   EMPLOYMENT_TYPES,
   ROLES,
   TITLES,
-  type Employee,
   type EmployeeInput,
   type EmployeeListResponse,
   type AuthUser,
@@ -53,6 +52,11 @@ function requiredString(
   return trimmed === '' ? null : trimmed
 }
 
+function requiredPositiveInt(source: Record<string, unknown>, key: string): number | null {
+  const value = source[key]
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null
+}
+
 /** Hand-rolled rather than pulling in a schema library for one route. */
 function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
   if (typeof body !== 'object' || body === null) {
@@ -76,9 +80,9 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
     if (value === null) return { ok: false, message: `${key} is required` }
   }
 
-  const jobTitle = requiredString(emp, 'jobTitle')
-  if (jobTitle === null) {
-    return { ok: false, message: 'employment.jobTitle is required' }
+  const jobId = requiredPositiveInt(emp, 'jobId')
+  if (jobId === null) {
+    return { ok: false, message: 'employment.jobId is required and must be a positive integer' }
   }
 
   const title = requiredString(raw, 'title')
@@ -131,7 +135,7 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
         status: status as EmployeeInput['employment']['status'],
         hireDate,
         employmentType: employmentType as EmployeeInput['employment']['employmentType'],
-        jobTitle,
+        jobId,
       },
     },
   }
@@ -160,6 +164,12 @@ function parseId(value: string | string[] | undefined): number | null {
 function isUniqueViolation(err: unknown): boolean {
   return (
     typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505'
+  )
+}
+
+function isForeignKeyViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23503'
   )
 }
 
@@ -221,14 +231,14 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
 
       await client.query(
         `INSERT INTO employment_details
-           (employee_id, status, hire_date, employment_type, job_title)
+           (employee_id, status, hire_date, employment_type, job_id)
          VALUES ($1, $2, $3, $4, $5)`,
         [
           created.id,
           input.employment.status,
           input.employment.hireDate,
           input.employment.employmentType,
-          input.employment.jobTitle,
+          input.employment.jobId,
         ]
       )
 
@@ -239,7 +249,12 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
         detail: { employeeCode: input.employeeCode },
       })
 
-      return { ...input, id: Number(created.id) } satisfies Employee
+      // Re-read through the join rather than assembling the response from
+      // input: input no longer carries jobTitle, only the jobId it was traded
+      // in for, and this is the one place that resolves it.
+      const employee = await findEmployeeById(Number(created.id), client)
+      if (!employee) throw new Error('employee vanished between insert and read-back')
+      return employee
     })
 
     const body: EmployeeResponse = { employee }
@@ -247,6 +262,9 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
   } catch (err) {
     if (isUniqueViolation(err)) {
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
+    }
+    if (isForeignKeyViolation(err)) {
+      return fail(res, 400, `no job with id ${input.employment.jobId}`)
     }
     handleUnexpected(res, err)
   }
@@ -266,7 +284,7 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
   const input = parsed.value
 
   try {
-    const updated = await withTransaction(async (client) => {
+    const result = await withTransaction(async (client) => {
       const { rowCount } = await client.query(
         `UPDATE employees SET
            employee_code = $2, title = $3,
@@ -285,19 +303,19 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
           input.nickname,
         ]
       )
-      if (rowCount === 0) return false
+      if (rowCount === 0) return 'not-found' as const
 
       await client.query(
         `UPDATE employment_details SET
            status = $2, hire_date = $3, employment_type = $4,
-           job_title = $5, updated_at = now()
+           job_id = $5, updated_at = now()
          WHERE employee_id = $1`,
         [
           id,
           input.employment.status,
           input.employment.hireDate,
           input.employment.employmentType,
-          input.employment.jobTitle,
+          input.employment.jobId,
         ]
       )
 
@@ -307,16 +325,24 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
         entityId: id,
         detail: { employeeCode: input.employeeCode },
       })
-      return true
+
+      // Re-read through the join for the same reason as POST: input carries
+      // jobId, not the jobTitle the response needs.
+      const employee = await findEmployeeById(id, client)
+      if (!employee) throw new Error('employee vanished during update')
+      return employee
     })
 
-    if (!updated) return fail(res, 404, `no employee with id ${id}`)
+    if (result === 'not-found') return fail(res, 404, `no employee with id ${id}`)
 
-    const body: EmployeeResponse = { employee: { ...input, id } }
+    const body: EmployeeResponse = { employee: result }
     res.json(body)
   } catch (err) {
     if (isUniqueViolation(err)) {
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
+    }
+    if (isForeignKeyViolation(err)) {
+      return fail(res, 400, `no job with id ${input.employment.jobId}`)
     }
     handleUnexpected(res, err)
   }
