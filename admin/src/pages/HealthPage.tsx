@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { HealthOk, HealthResponse } from '@hrm/shared'
 import { alert, alertDetail, alertTitle, card, cardHead, eyebrow, fluidGrid, pageHead, spec, specDd, specDt, subtitle } from '../styles'
+import { apiUrl } from '../api/client'
 
 type State =
   | { phase: 'loading' }
@@ -15,7 +16,7 @@ export function HealthPage() {
 
     async function check() {
       try {
-        const res = await fetch('/api/health', { signal: controller.signal })
+        const res = await fetch(apiUrl('/api/health'), { signal: controller.signal })
         const body = (await res.json()) as HealthResponse
         if (!res.ok || body.status === 'error') {
           throw new Error(

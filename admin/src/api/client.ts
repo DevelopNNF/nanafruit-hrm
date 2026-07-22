@@ -5,6 +5,16 @@ import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import type { ApiError, ApiErrorCode } from '@hrm/shared'
 import { apiRequest, getMsalInstance, getSignedInAccount } from '../auth/msal'
 
+// Empty in dev: vite.config.ts proxies /api/* to localhost:3000, so a relative
+// path already lands on the server. In production admin and server sit on
+// different origins (Vercel vs Railway), so a relative path would resolve
+// against Vercel's own domain instead — hence a real base URL there.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+
+export function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`
+}
+
 /** A non-2xx from the API, carrying the server's own message and reason. */
 export class ApiRequestError extends Error {
   code: ApiErrorCode | undefined
@@ -52,7 +62,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   const token = await accessToken()
   const headers = new Headers(init.headers)
   headers.set('Authorization', `Bearer ${token}`)
-  return fetch(path, { ...init, headers })
+  return fetch(apiUrl(path), { ...init, headers })
 }
 
 /**
