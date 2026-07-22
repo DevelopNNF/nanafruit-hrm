@@ -7,6 +7,7 @@ import { healthRouter } from './routes/health.js'
 import { employeesRouter } from './routes/employees.js'
 import { jobsRouter } from './routes/jobs.js'
 import { shiftsRouter } from './routes/shifts.js'
+import { attendanceRouter } from './routes/attendance.js'
 import { meRouter } from './routes/me.js'
 import { authRouter } from './routes/auth.js'
 import { authenticate } from './auth/middleware.js'
@@ -59,6 +60,7 @@ app.use('/api', meRouter)
 app.use('/api', authenticate, employeesRouter)
 app.use('/api', authenticate, jobsRouter)
 app.use('/api', authenticate, shiftsRouter)
+app.use('/api', authenticate, attendanceRouter)
 
 const port = Number(process.env.PORT) || 3000
 const server = app.listen(port, () => {

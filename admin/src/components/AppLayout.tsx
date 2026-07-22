@@ -4,6 +4,7 @@ import { useMsal } from '@azure/msal-react'
 import {
   Activity,
   ChevronDown,
+  Clock,
   Database,
   LayoutDashboard,
   LogOut,
@@ -32,6 +33,7 @@ type NavItem =
 const NAV: NavItem[] = [
   { type: 'link', to: '/dashboard', label: 'ภาพรวม', icon: LayoutDashboard },
   { type: 'link', to: '/employees', label: 'พนักงาน', icon: Users },
+  { type: 'link', to: '/attendance', label: 'การลงเวลา', icon: Clock },
   {
     type: 'group',
     label: 'Master',

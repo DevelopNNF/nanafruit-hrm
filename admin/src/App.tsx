@@ -12,6 +12,7 @@ import { JobListPage } from './pages/JobListPage'
 import { JobFormPage } from './pages/JobFormPage'
 import { ShiftListPage } from './pages/ShiftListPage'
 import { ShiftFormPage } from './pages/ShiftFormPage'
+import { AttendanceListPage } from './pages/AttendanceListPage'
 import { HealthPage } from './pages/HealthPage'
 
 /**
@@ -45,6 +46,7 @@ const router = createBrowserRouter([
       { path: 'employees', element: <EmployeeListPage /> },
       { path: 'employees/new', element: <KeyedEmployeeForm /> },
       { path: 'employees/:id', element: <KeyedEmployeeForm /> },
+      { path: 'attendance', element: <AttendanceListPage /> },
       { path: 'master/jobs', element: <JobListPage /> },
       { path: 'master/jobs/new', element: <KeyedJobForm /> },
       { path: 'master/jobs/:id', element: <KeyedJobForm /> },

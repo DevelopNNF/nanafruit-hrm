@@ -119,6 +119,39 @@
   color: var(--error);
 }
 
+/* Attendance card ----------------------------------------------------------- */
+
+.attendance-card {
+  margin-bottom: 1.25rem;
+}
+
+.clock-button {
+  width: 100%;
+  padding: 0.9rem;
+  margin-top: 0.9rem;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  /* Thumb-sized: the primary action on this screen. */
+  min-height: 3rem;
+  cursor: pointer;
+  color: #fff;
+}
+
+.clock-button.check_in {
+  background: var(--accent);
+}
+
+.clock-button.check_out {
+  background: var(--text-h);
+}
+
+.clock-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .card dl {
   display: grid;
   grid-template-columns: auto 1fr;

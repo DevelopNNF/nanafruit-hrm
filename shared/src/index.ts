@@ -230,6 +230,81 @@ export type ShiftListResponse = { shifts: Shift[] }
 /** GET /api/shifts/:id, POST, PUT */
 export type ShiftResponse = { shift: Shift }
 
+/* Attendance ---------------------------------------------------------------- */
+
+/**
+ * Phase 1 of Time Attendance: a raw clock event, nothing derived from it yet.
+ * No "late"/"early"/OT here — that reads attendance_events against
+ * master_shifts and doesn't exist yet.
+ */
+export const ATTENDANCE_EVENT_TYPES = ['check_in', 'check_out'] as const
+export type AttendanceEventType = (typeof ATTENDANCE_EVENT_TYPES)[number]
+
+/**
+ * Where the event came from. One value today (the LIFF app, GPS-backed) —
+ * kept as a field rather than assumed so a later channel (QR, admin manual
+ * entry) is a new allowed value, not a schema change.
+ */
+export const ATTENDANCE_SOURCES = ['liff_gps'] as const
+export type AttendanceSource = (typeof ATTENDANCE_SOURCES)[number]
+
+/** A row in attendance_events. */
+export type AttendanceEvent = {
+  id: number
+  employeeId: number
+  eventType: AttendanceEventType
+  /** ISO 8601. Set by the server on receipt, never trusted from the client. */
+  eventTime: string
+  source: AttendanceSource
+  /** Both null together — absent whenever the browser had no fix or the
+   *  employee denied location permission; that never blocks the clock event. */
+  latitude: number | null
+  longitude: number | null
+  accuracyMeters: number | null
+  /** FK to master_shifts.id, snapshotting employment_details.shiftId as of
+   *  this event — null exactly when the employee had no shift assigned yet. */
+  shiftId: number | null
+  /** master_shifts.shift_name as of now, joined in for display. Null exactly
+   *  when shiftId is null. */
+  shiftName: string | null
+  /** OS/client info from the LIFF app, e.g. "ios inClient=true ua=...".
+   *  Debugging aid, not shown to the employee — see e.g. the LINE in-app
+   *  browser silently declining a geolocation permission it was never asked
+   *  to grant, which this is what would have named directly. */
+  deviceInfo: string | null
+}
+
+/** Body of POST /api/attendance/clock. employeeId, eventTime and shiftId are
+ *  not inputs — the server derives them from the caller's session and current
+ *  employment_details, never from the client. */
+export type AttendanceClockRequest = {
+  eventType: AttendanceEventType
+  latitude?: number | null
+  longitude?: number | null
+  accuracyMeters?: number | null
+  /** Free-form OS/client string the caller reports about itself — not
+   *  verified, so it's a debugging aid only, never something to branch logic
+   *  on server-side. */
+  deviceInfo?: string | null
+}
+
+/** POST /api/attendance/clock */
+export type AttendanceClockResponse = { event: AttendanceEvent }
+
+/** GET /api/attendance/me — null means this employee has no events yet. */
+export type AttendanceStatusResponse = { lastEvent: AttendanceEvent | null }
+
+/** An attendance event as admin/ sees it: the employee it belongs to, joined
+ *  in for display, since one caller's list spans every employee. */
+export type AttendanceListItem = AttendanceEvent & {
+  employeeCode: string
+  /** Thai full name, e.g. "นายสมชาย ใจดี" — display only, not an identifier. */
+  employeeName: string
+}
+
+/** GET /api/attendance */
+export type AttendanceListResponse = { events: AttendanceListItem[] }
+
 /* Health ------------------------------------------------------------------ */
 
 /** GET /api/health */
