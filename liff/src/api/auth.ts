@@ -4,11 +4,11 @@ import type {
   LineSessionRequest,
   LineSessionResponse,
 } from '@hrm/shared'
-import { ApiRequestError, jsonHeaders, setSessionToken, unwrap } from './client'
+import { ApiRequestError, apiUrl, jsonHeaders, setSessionToken, unwrap } from './client'
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   // No Authorization header: these are the two routes that exist to produce one.
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     method: 'POST',
     headers: jsonHeaders,
     body: JSON.stringify(body),

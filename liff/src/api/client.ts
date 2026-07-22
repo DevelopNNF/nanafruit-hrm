@@ -5,6 +5,16 @@
 
 import type { ApiError, ApiErrorCode } from '@hrm/shared'
 
+// Empty in dev: vite.config.ts proxies /api/* to localhost:3000, so a relative
+// path already lands on the server. In production this app and the server sit
+// on different origins, so a relative path would resolve against this app's
+// own domain instead — hence a real base URL there.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+
+export function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`
+}
+
 /** A non-2xx from the API, carrying the server's own message, code and status. */
 export class ApiRequestError extends Error {
   code: ApiErrorCode | undefined
@@ -32,7 +42,7 @@ export const jsonHeaders = { 'Content-Type': 'application/json' }
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers)
   if (sessionToken !== null) headers.set('Authorization', `Bearer ${sessionToken}`)
-  return fetch(path, { ...init, headers })
+  return fetch(apiUrl(path), { ...init, headers })
 }
 
 export async function unwrap<T>(res: Response): Promise<T> {
