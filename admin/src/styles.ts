@@ -36,10 +36,26 @@ export function button(variant: ButtonVariant = 'default'): string {
   }
 }
 
-type AlertTone = 'default' | 'ok' | 'danger' | 'info'
+export type AlertTone = 'default' | 'ok' | 'danger' | 'info'
 
 export function alert(tone: AlertTone = 'default'): string {
   const base = 'mb-5 rounded-lg border border-l-[3px] px-4 py-3.5'
+  switch (tone) {
+    case 'ok':
+      return `${base} border-slate-200 border-l-green-700 bg-white`
+    case 'danger':
+      return `${base} border-red-200 border-l-red-700 bg-red-50`
+    case 'info':
+      return `${base} border-navy/20 border-l-navy bg-navy/7`
+    default:
+      return `${base} border-slate-200 border-l-slate-300 bg-white`
+  }
+}
+
+/** Same palette as alert(), sized and shadowed for a floating toast instead of
+ *  an in-flow banner — no mb-5, react-hot-toast's own stack spacing owns that. */
+export function toastCard(tone: AlertTone = 'default'): string {
+  const base = 'rounded-lg border border-l-[3px] px-4 py-3.5 shadow-lg'
   switch (tone) {
     case 'ok':
       return `${base} border-slate-200 border-l-green-700 bg-white`

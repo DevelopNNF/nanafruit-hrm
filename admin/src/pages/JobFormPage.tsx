@@ -5,6 +5,7 @@ import type { JobInput } from '@hrm/shared'
 import { createJob, getJob, updateJob } from '../api/jobs'
 import { RichTextEditor } from '../components/RichTextEditor'
 import { useCanWrite } from '../auth/meContext'
+import { notify } from '../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -76,6 +77,7 @@ export function JobFormPage() {
     try {
       if (id === null) await createJob(draft)
       else await updateJob(id, draft)
+      notify.success(isNew ? 'เพิ่มตำแหน่งงานสำเร็จ' : 'บันทึกการแก้ไขสำเร็จ')
       void navigate('/master/jobs')
     } catch (err) {
       // Server-side rejections (duplicate title) land here — keep the user's

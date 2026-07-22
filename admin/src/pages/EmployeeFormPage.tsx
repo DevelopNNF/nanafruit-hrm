@@ -17,6 +17,7 @@ import {
 import { listJobs } from '../api/jobs'
 import { LinkCodeCard } from '../components/LinkCodeCard'
 import { useCanWrite } from '../auth/meContext'
+import { notify } from '../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -153,6 +154,7 @@ export function EmployeeFormPage() {
     try {
       if (id === null) await createEmployee(draft)
       else await updateEmployee(id, draft)
+      notify.success(isNew ? 'เพิ่มพนักงานสำเร็จ' : 'บันทึกการแก้ไขสำเร็จ')
       void navigate('/employees')
     } catch (err) {
       // Server-side rejections (duplicate code, bad enum) land here — keep the
@@ -169,6 +171,7 @@ export function EmployeeFormPage() {
     setError(null)
     try {
       await deleteEmployee(id)
+      notify.success('ลบพนักงานสำเร็จ')
       void navigate('/employees')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'delete failed')

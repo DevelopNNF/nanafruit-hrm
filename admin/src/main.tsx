@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MsalProvider } from '@azure/msal-react'
+import { Toaster } from 'react-hot-toast'
 import './index.css'
 import App from './App.tsx'
 import BootFailure from './BootFailure.tsx'
@@ -21,6 +22,7 @@ async function boot() {
         {/* AuthGate first: MeProvider needs a token to ask with. */}
         <AuthGate>
           <MeProvider>
+            <Toaster position="bottom-right" />
             <App />
           </MeProvider>
         </AuthGate>

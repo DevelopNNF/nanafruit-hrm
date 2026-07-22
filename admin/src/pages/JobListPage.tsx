@@ -4,6 +4,7 @@ import { Plus, Search } from 'lucide-react'
 import type { Job } from '@hrm/shared'
 import { listJobs, updateJob } from '../api/jobs'
 import { useCanWrite } from '../auth/meContext'
+import { notify } from '../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -29,7 +30,6 @@ function haystack(job: Job): string {
 export function JobListPage() {
   const [state, setState] = useState<State>({ phase: 'loading' })
   const [query, setQuery] = useState('')
-  const [toggleError, setToggleError] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<number | null>(null)
   const navigate = useNavigate()
   const canWrite = useCanWrite()
@@ -61,7 +61,6 @@ export function JobListPage() {
   // has, so it's one click here rather than a trip through the edit form.
   async function toggleActive(job: Job) {
     if (state.phase !== 'ok') return
-    setToggleError(null)
     setTogglingId(job.id)
     try {
       const updated = await updateJob(job.id, {
@@ -74,8 +73,9 @@ export function JobListPage() {
         phase: 'ok',
         jobs: state.jobs.map((j) => (j.id === updated.id ? updated : j)),
       })
+      notify.success(`${job.jobTitle} ${updated.isActive ? 'เปิด' : 'ปิด'}ใช้งานแล้ว`)
     } catch (err) {
-      setToggleError(err instanceof Error ? err.message : 'บันทึกไม่สำเร็จ')
+      notify.error('บันทึกไม่สำเร็จ', err instanceof Error ? err.message : undefined)
     } finally {
       setTogglingId(null)
     }
@@ -96,13 +96,6 @@ export function JobListPage() {
           </Link>
         )}
       </header>
-
-      {toggleError && (
-        <div className={alert('danger')}>
-          <p className={alertTitle('danger')}>บันทึกไม่สำเร็จ</p>
-          <p className={alertDetail}>{toggleError}</p>
-        </div>
-      )}
 
       {state.phase === 'loading' && <p className={muted}>กำลังโหลด…</p>}
 
