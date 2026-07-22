@@ -7,6 +7,7 @@ import {
   TITLES,
   type EmployeeInput,
   type Job,
+  type Shift,
 } from '@hrm/shared'
 import {
   createEmployee,
@@ -15,6 +16,7 @@ import {
   updateEmployee,
 } from '../api/employees'
 import { listJobs } from '../api/jobs'
+import { listShifts } from '../api/shifts'
 import { LinkCodeCard } from '../components/LinkCodeCard'
 import { useCanWrite } from '../auth/meContext'
 import { notify } from '../notifications/notify'
@@ -55,6 +57,9 @@ const emptyDraft: EmployeeInput = {
     // yet", matched by the disabled placeholder option in the Job Title select.
     jobId: 0,
     employmentType: EMPLOYMENT_TYPES[0],
+    // Unlike jobId, null is a real value here — shift assignment is optional —
+    // so it doubles as both "nothing picked yet" and "deliberately unset".
+    shiftId: null,
   },
 }
 
@@ -76,16 +81,23 @@ export function EmployeeFormPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // The title as of the last load — EmploymentDetailsInput (what `draft`
-  // holds) has no jobTitle field, so this is the only place the label for a
-  // deactivated job's option comes from.
+  // The title/name as of the last load — EmploymentDetailsInput (what `draft`
+  // holds) has no jobTitle/shiftName field, so this is the only place the
+  // label for a deactivated job's or shift's option comes from.
   const [loadedJobTitle, setLoadedJobTitle] = useState<string | null>(null)
+  const [loadedShiftName, setLoadedShiftName] = useState<string | null>(null)
 
   type JobOptionsState =
     | { phase: 'loading' }
     | { phase: 'ok'; jobs: Job[] }
     | { phase: 'error'; message: string }
   const [jobOptions, setJobOptions] = useState<JobOptionsState>({ phase: 'loading' })
+
+  type ShiftOptionsState =
+    | { phase: 'loading' }
+    | { phase: 'ok'; shifts: Shift[] }
+    | { phase: 'error'; message: string }
+  const [shiftOptions, setShiftOptions] = useState<ShiftOptionsState>({ phase: 'loading' })
 
   useEffect(() => {
     const controller = new AbortController()
@@ -97,6 +109,24 @@ export function EmployeeFormPage() {
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setJobOptions({
+          phase: 'error',
+          message: err instanceof Error ? err.message : 'request failed',
+        })
+      })
+
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    listShifts(controller.signal)
+      .then((shifts) =>
+        setShiftOptions({ phase: 'ok', shifts: shifts.filter((shift) => shift.isActive) })
+      )
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setShiftOptions({
           phase: 'error',
           message: err instanceof Error ? err.message : 'request failed',
         })
@@ -125,6 +155,7 @@ export function EmployeeFormPage() {
           employment: employee.employment,
         })
         setLoadedJobTitle(employee.employment.jobTitle)
+        setLoadedShiftName(employee.employment.shiftName)
         setLoading(false)
       })
       .catch((err: unknown) => {
@@ -192,6 +223,10 @@ export function EmployeeFormPage() {
   // draft on open.
   const currentJobMissing =
     draft.employment.jobId !== 0 && !activeJobIds.includes(draft.employment.jobId)
+
+  const activeShiftIds = shiftOptions.phase === 'ok' ? shiftOptions.shifts.map((s) => s.id) : []
+  const currentShiftMissing =
+    draft.employment.shiftId !== null && !activeShiftIds.includes(draft.employment.shiftId)
 
   return (
     <>
@@ -404,6 +439,37 @@ export function EmployeeFormPage() {
                 {jobOptions.phase === 'error' && (
                   <span className="text-[0.7rem] text-red-700">
                     โหลดรายการตำแหน่งงานไม่สำเร็จ: {jobOptions.message}
+                  </span>
+                )}
+              </label>
+              <label className={fieldLabel}>
+                <span>กะการทำงาน (Shift)</span>
+                <select
+                  className={fieldControl}
+                  disabled={shiftOptions.phase === 'loading'}
+                  value={draft.employment.shiftId ?? ''}
+                  onChange={(e) =>
+                    setEmployment('shiftId', e.target.value ? Number(e.target.value) : null)
+                  }
+                >
+                  <option value="">
+                    {shiftOptions.phase === 'loading' ? 'กำลังโหลดกะการทำงาน…' : '— ไม่ระบุกะ —'}
+                  </option>
+                  {currentShiftMissing && (
+                    <option value={draft.employment.shiftId ?? ''}>
+                      {loadedShiftName ?? `#${draft.employment.shiftId}`} (ไม่พร้อมใช้งาน)
+                    </option>
+                  )}
+                  {shiftOptions.phase === 'ok' &&
+                    shiftOptions.shifts.map((shift) => (
+                      <option key={shift.id} value={shift.id}>
+                        {shift.shiftName}
+                      </option>
+                    ))}
+                </select>
+                {shiftOptions.phase === 'error' && (
+                  <span className="text-[0.7rem] text-red-700">
+                    โหลดรายการกะการทำงานไม่สำเร็จ: {shiftOptions.message}
                   </span>
                 )}
               </label>

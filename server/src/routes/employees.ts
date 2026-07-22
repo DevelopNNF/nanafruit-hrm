@@ -57,6 +57,13 @@ function requiredPositiveInt(source: Record<string, unknown>, key: string): numb
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null
 }
 
+/** Absent and null both mean "no shift assigned". */
+function optionalPositiveInt(source: Record<string, unknown>, key: string): number | null | undefined {
+  const value = source[key]
+  if (value === null || value === undefined) return null
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
+}
+
 /** Hand-rolled rather than pulling in a schema library for one route. */
 function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
   if (typeof body !== 'object' || body === null) {
@@ -83,6 +90,11 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
   const jobId = requiredPositiveInt(emp, 'jobId')
   if (jobId === null) {
     return { ok: false, message: 'employment.jobId is required and must be a positive integer' }
+  }
+
+  const shiftId = optionalPositiveInt(emp, 'shiftId')
+  if (shiftId === undefined) {
+    return { ok: false, message: 'employment.shiftId must be a positive integer or null' }
   }
 
   const title = requiredString(raw, 'title')
@@ -136,6 +148,7 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
         hireDate,
         employmentType: employmentType as EmployeeInput['employment']['employmentType'],
         jobId,
+        shiftId,
       },
     },
   }
@@ -171,6 +184,19 @@ function isForeignKeyViolation(err: unknown): boolean {
   return (
     typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23503'
   )
+}
+
+/**
+ * job_id and shift_id are both FKs on employment_details, so a 23503 needs the
+ * constraint name to say which one actually failed rather than guessing.
+ * Postgres auto-names a column-level REFERENCES as `<table>_<column>_fkey`.
+ */
+function fkViolationField(err: unknown): 'job' | 'shift' | null {
+  const constraint =
+    typeof err === 'object' && err !== null ? (err as { constraint?: unknown }).constraint : null
+  if (constraint === 'employment_details_job_id_fkey') return 'job'
+  if (constraint === 'employment_details_shift_id_fkey') return 'shift'
+  return null
 }
 
 employeesRouter.get('/employees', canRead, async (_req: Request, res: Response) => {
@@ -231,14 +257,15 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
 
       await client.query(
         `INSERT INTO employment_details
-           (employee_id, status, hire_date, employment_type, job_id)
-         VALUES ($1, $2, $3, $4, $5)`,
+           (employee_id, status, hire_date, employment_type, job_id, shift_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
           created.id,
           input.employment.status,
           input.employment.hireDate,
           input.employment.employmentType,
           input.employment.jobId,
+          input.employment.shiftId,
         ]
       )
 
@@ -263,9 +290,10 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
     if (isUniqueViolation(err)) {
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
     }
-    if (isForeignKeyViolation(err)) {
-      return fail(res, 400, `no job with id ${input.employment.jobId}`)
-    }
+    const fkField = fkViolationField(err)
+    if (fkField === 'job') return fail(res, 400, `no job with id ${input.employment.jobId}`)
+    if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.employment.shiftId}`)
+    if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in employment')
     handleUnexpected(res, err)
   }
 })
@@ -308,7 +336,7 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
       await client.query(
         `UPDATE employment_details SET
            status = $2, hire_date = $3, employment_type = $4,
-           job_id = $5, updated_at = now()
+           job_id = $5, shift_id = $6, updated_at = now()
          WHERE employee_id = $1`,
         [
           id,
@@ -316,6 +344,7 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
           input.employment.hireDate,
           input.employment.employmentType,
           input.employment.jobId,
+          input.employment.shiftId,
         ]
       )
 
@@ -341,9 +370,10 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
     if (isUniqueViolation(err)) {
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
     }
-    if (isForeignKeyViolation(err)) {
-      return fail(res, 400, `no job with id ${input.employment.jobId}`)
-    }
+    const fkField = fkViolationField(err)
+    if (fkField === 'job') return fail(res, 400, `no job with id ${input.employment.jobId}`)
+    if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.employment.shiftId}`)
+    if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in employment')
     handleUnexpected(res, err)
   }
 })

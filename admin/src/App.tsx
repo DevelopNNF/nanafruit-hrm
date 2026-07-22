@@ -10,6 +10,8 @@ import { EmployeeListPage } from './pages/EmployeeListPage'
 import { EmployeeFormPage } from './pages/EmployeeFormPage'
 import { JobListPage } from './pages/JobListPage'
 import { JobFormPage } from './pages/JobFormPage'
+import { ShiftListPage } from './pages/ShiftListPage'
+import { ShiftFormPage } from './pages/ShiftFormPage'
 import { HealthPage } from './pages/HealthPage'
 
 /**
@@ -27,6 +29,11 @@ function KeyedJobForm() {
   return <JobFormPage key={id ?? 'new'} />
 }
 
+function KeyedShiftForm() {
+  const { id } = useParams()
+  return <ShiftFormPage key={id ?? 'new'} />
+}
+
 // /employees/new is matched before /employees/:id so "new" is never read as an id.
 const router = createBrowserRouter([
   {
@@ -41,6 +48,9 @@ const router = createBrowserRouter([
       { path: 'master/jobs', element: <JobListPage /> },
       { path: 'master/jobs/new', element: <KeyedJobForm /> },
       { path: 'master/jobs/:id', element: <KeyedJobForm /> },
+      { path: 'master/shifts', element: <ShiftListPage /> },
+      { path: 'master/shifts/new', element: <KeyedShiftForm /> },
+      { path: 'master/shifts/:id', element: <KeyedShiftForm /> },
       { path: 'health', element: <HealthPage /> },
       { path: '*', element: <Navigate to="/dashboard" replace /> },
     ],

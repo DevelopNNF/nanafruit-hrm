@@ -78,11 +78,19 @@ export type EmploymentDetails = {
   /** master_jobs.job_title as of now, joined in for display. Derived from
    *  jobId, not writable directly — absent from EmploymentDetailsInput. */
   jobTitle: string
+  /** FK to master_shifts.id. Nullable — not every employee has a shift
+   *  assigned yet, unlike jobId. */
+  shiftId: number | null
+  /** master_shifts.shift_name as of now, joined in for display. Derived from
+   *  shiftId, not writable directly — absent from EmploymentDetailsInput.
+   *  Null exactly when shiftId is null. */
+  shiftName: string | null
 }
 
-/** Body of the employment half of POST/PUT — jobTitle is read-only, so it's
- *  the one field on EmploymentDetails that isn't also an input. */
-export type EmploymentDetailsInput = Omit<EmploymentDetails, 'jobTitle'>
+/** Body of the employment half of POST/PUT — jobTitle and shiftName are
+ *  read-only, so they're the fields on EmploymentDetails that aren't also
+ *  inputs. */
+export type EmploymentDetailsInput = Omit<EmploymentDetails, 'jobTitle' | 'shiftName'>
 
 /** Body of POST /api/employees and PATCH /api/employees/:id */
 export type EmployeeInput = Omit<Employee, 'id' | 'employment'> & {
@@ -175,6 +183,52 @@ export type JobListResponse = { jobs: Job[] }
 
 /** GET /api/jobs/:id, POST, PUT */
 export type JobResponse = { job: Job }
+
+/* Shift Master --------------------------------------------------------------- */
+
+/**
+ * The 7 workdays a shift's `workdays` bitmask is built from, Monday first
+ * (ISO week order). `bit` values are already the shifted powers of two, so a
+ * shift's mask is just `WORKDAYS.filter(...).reduce((m, d) => m | d.bit, 0)`.
+ */
+export const WORKDAYS = [
+  { bit: 1 << 0, key: 'mon', label: 'จันทร์' },
+  { bit: 1 << 1, key: 'tue', label: 'อังคาร' },
+  { bit: 1 << 2, key: 'wed', label: 'พุธ' },
+  { bit: 1 << 3, key: 'thu', label: 'พฤหัสบดี' },
+  { bit: 1 << 4, key: 'fri', label: 'ศุกร์' },
+  { bit: 1 << 5, key: 'sat', label: 'เสาร์' },
+  { bit: 1 << 6, key: 'sun', label: 'อาทิตย์' },
+] as const
+
+/** The OR of every bit in WORKDAYS — the only values workdays may legally hold. */
+export const WORKDAYS_MASK = WORKDAYS.reduce((mask, day) => mask | day.bit, 0)
+
+/** A row in master_shifts. */
+export type Shift = {
+  id: number
+  shiftCode: string
+  shiftName: string
+  /** Wall-clock time, `HH:MM:SS`. May be later than shiftEndTime — see workdays. */
+  shiftStartTime: string
+  /** Earlier than shiftStartTime means the shift runs past midnight. */
+  shiftEndTime: string
+  /** Both null, or both set — never just one. */
+  breakStartTime: string | null
+  breakEndTime: string | null
+  /** Bitmask over WORKDAYS: which days this shift applies to. */
+  workdays: number
+  isActive: boolean
+}
+
+/** Body of POST /api/shifts and PUT /api/shifts/:id */
+export type ShiftInput = Omit<Shift, 'id'>
+
+/** GET /api/shifts */
+export type ShiftListResponse = { shifts: Shift[] }
+
+/** GET /api/shifts/:id, POST, PUT */
+export type ShiftResponse = { shift: Shift }
 
 /* Health ------------------------------------------------------------------ */
 

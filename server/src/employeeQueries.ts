@@ -8,9 +8,11 @@ import { pool } from './db.js'
 /** Anything that can run a query: the pool, or one client inside a transaction. */
 type Queryable = Pick<pg.Pool, 'query'>
 
-// Shape of a row from the employees ⋈ employment_details ⋈ master_jobs join.
-// Every employment/job column is nullable here only because the LEFT JOINs say
-// so — see rowToEmployee.
+// Shape of a row from the employees ⋈ employment_details ⋈ master_jobs
+// ⋈ master_shifts join. Every employment/job column is nullable here only
+// because the LEFT JOINs say so — see rowToEmployee. shift_id/shift_name stay
+// genuinely nullable even past that check: unlike job_id, an employee can
+// legitimately have no shift assigned.
 export type EmployeeRow = {
   id: string // bigint: pg hands these back as strings to avoid precision loss
   employee_code: string
@@ -25,6 +27,8 @@ export type EmployeeRow = {
   employment_type: string | null
   job_id: string | null // bigint, as a string for the same reason as id
   job_title: string | null
+  shift_id: string | null
+  shift_name: string | null
 }
 
 export const SELECT_EMPLOYEE = `
@@ -32,10 +36,12 @@ export const SELECT_EMPLOYEE = `
          e.first_name_th, e.last_name_th, e.first_name_en, e.last_name_en,
          e.nickname,
          d.status, d.hire_date, d.employment_type,
-         d.job_id, mj.job_title
+         d.job_id, mj.job_title,
+         d.shift_id, ms.shift_name
   FROM employees e
   LEFT JOIN employment_details d ON d.employee_id = e.id
   LEFT JOIN master_jobs mj ON mj.id = d.job_id
+  LEFT JOIN master_shifts ms ON ms.id = d.shift_id
 `
 
 export function rowToEmployee(row: EmployeeRow): Employee {
@@ -43,7 +49,9 @@ export function rowToEmployee(row: EmployeeRow): Employee {
   // transaction that inserts both halves, employment_details.job_id is itself
   // NOT NULL, and its FK guarantees a master_jobs row exists. A null here means
   // the data was tampered with outside the API, so fail loudly rather than
-  // invent an employment record.
+  // invent an employment record. shift_id/shift_name are excluded from this
+  // check — employment_details.shift_id is itself nullable, so null there is
+  // a real "no shift assigned yet", not a sign of a broken row.
   if (
     row.status === null ||
     row.hire_date === null ||
@@ -69,6 +77,8 @@ export function rowToEmployee(row: EmployeeRow): Employee {
       employmentType: row.employment_type as Employee['employment']['employmentType'],
       jobId: Number(row.job_id),
       jobTitle: row.job_title,
+      shiftId: row.shift_id === null ? null : Number(row.shift_id),
+      shiftName: row.shift_name,
     },
   }
 }

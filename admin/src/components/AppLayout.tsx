@@ -36,7 +36,10 @@ const NAV: NavItem[] = [
     type: 'group',
     label: 'Master',
     icon: Database,
-    children: [{ to: '/master/jobs', label: 'ตำแหน่งงาน (Job)' }],
+    children: [
+      { to: '/master/jobs', label: 'ตำแหน่งงาน (Job)' },
+      { to: '/master/shifts', label: 'กะการทำงาน (Shift)' },
+    ],
   },
   { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },
 ]

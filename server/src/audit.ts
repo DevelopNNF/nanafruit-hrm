@@ -23,6 +23,8 @@ export type AuditAction =
   | 'employee.line_linked'
   | 'job.create'
   | 'job.update'
+  | 'shift.create'
+  | 'shift.update'
 
 type Entry = {
   actor: AuthUser

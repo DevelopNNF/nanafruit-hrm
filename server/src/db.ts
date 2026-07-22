@@ -6,6 +6,11 @@ import pg from 'pg'
 // instead, which is exactly what the API contract wants anyway.
 pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value)
 
+// Same story for `time`: left alone, pg parses it into a JS Date pinned to
+// 1970-01-01 in local time, which is meaningless for a wall-clock time that
+// isn't tied to any date. Hand back the raw 'HH:MM:SS' text instead.
+pg.types.setTypeParser(pg.types.builtins.TIME, (value) => value)
+
 // One pool for the whole process. Connection details come from the standard
 // PG* env vars, which node-postgres reads on its own.
 export const pool = new pg.Pool({
