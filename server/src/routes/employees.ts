@@ -3,6 +3,7 @@ import type { Request, Response } from 'express'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
+  GENDERS,
   ROLES,
   TITLES,
   type EmployeeInput,
@@ -133,6 +134,16 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
       ? nicknameRaw.trim()
       : null
 
+  // gender is optional too, and for the same reason nickname is: HR may not
+  // have this on file yet for an employee hired before the field existed.
+  // Absent and null both mean "not recorded".
+  const genderRaw = raw['gender']
+  const genderProvided = genderRaw !== null && genderRaw !== undefined
+  if (genderProvided && !(GENDERS as readonly string[]).includes(genderRaw as string)) {
+    return { ok: false, message: `gender must be null or one of: ${GENDERS.join(', ')}` }
+  }
+  const gender = (genderProvided ? genderRaw : null) as EmployeeInput['gender']
+
   return {
     ok: true,
     value: {
@@ -143,6 +154,7 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
       firstNameEn: fields.firstNameEn as string,
       lastNameEn: fields.lastNameEn as string,
       nickname,
+      gender,
       employment: {
         status: status as EmployeeInput['employment']['status'],
         hireDate,
@@ -239,8 +251,8 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO employees
            (employee_code, title, first_name_th, last_name_th,
-            first_name_en, last_name_en, nickname)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+            first_name_en, last_name_en, nickname, gender)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id`,
         [
           input.employeeCode,
@@ -250,6 +262,7 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
           input.firstNameEn,
           input.lastNameEn,
           input.nickname,
+          input.gender,
         ]
       )
       const created = rows[0]
@@ -318,7 +331,7 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
            employee_code = $2, title = $3,
            first_name_th = $4, last_name_th = $5,
            first_name_en = $6, last_name_en = $7,
-           nickname = $8, updated_at = now()
+           nickname = $8, gender = $9, updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -329,6 +342,7 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
           input.firstNameEn,
           input.lastNameEn,
           input.nickname,
+          input.gender,
         ]
       )
       if (rowCount === 0) return 'not-found' as const

@@ -22,6 +22,7 @@ export type EmployeeRow = {
   first_name_en: string
   last_name_en: string
   nickname: string | null
+  gender: string | null
   status: string | null
   hire_date: string | null // 'YYYY-MM-DD' — see the DATE type parser in db.ts
   employment_type: string | null
@@ -34,7 +35,7 @@ export type EmployeeRow = {
 export const SELECT_EMPLOYEE = `
   SELECT e.id, e.employee_code, e.title,
          e.first_name_th, e.last_name_th, e.first_name_en, e.last_name_en,
-         e.nickname,
+         e.nickname, e.gender,
          d.status, d.hire_date, d.employment_type,
          d.job_id, mj.job_title,
          d.shift_id, ms.shift_name
@@ -71,6 +72,7 @@ export function rowToEmployee(row: EmployeeRow): Employee {
     firstNameEn: row.first_name_en,
     lastNameEn: row.last_name_en,
     nickname: row.nickname,
+    gender: row.gender as Employee['gender'],
     employment: {
       status: row.status as Employee['employment']['status'],
       hireDate: row.hire_date,

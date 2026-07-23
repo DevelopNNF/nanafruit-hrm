@@ -30,6 +30,8 @@ export type AuditAction =
   | 'time_correction.create'
   | 'time_correction.approve'
   | 'time_correction.reject'
+  | 'leave_type.create'
+  | 'leave_type.update'
 
 type Entry = {
   actor: AuthUser

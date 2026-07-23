@@ -44,6 +44,7 @@ const NAV: NavItem[] = [
       { to: '/master/jobs', label: 'ตำแหน่งงาน (Job)' },
       { to: '/master/shifts', label: 'กะการทำงาน (Shift)' },
       { to: '/master/locations', label: 'พิกัดอนุญาต (Location)' },
+      { to: '/master/leave-types', label: 'ประเภทการลา (Leave Type)' },
     ],
   },
   { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },

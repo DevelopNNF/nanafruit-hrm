@@ -14,6 +14,8 @@ import { ShiftListPage } from './pages/ShiftListPage'
 import { ShiftFormPage } from './pages/ShiftFormPage'
 import { LocationListPage } from './pages/LocationListPage'
 import { LocationFormPage } from './pages/LocationFormPage'
+import { LeaveTypeListPage } from './pages/LeaveTypeListPage'
+import { LeaveTypeFormPage } from './pages/LeaveTypeFormPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
 import { TimeCorrectionListPage } from './pages/TimeCorrectionListPage'
 import { TimeCorrectionDetailPage } from './pages/TimeCorrectionDetailPage'
@@ -44,6 +46,11 @@ function KeyedLocationForm() {
   return <LocationFormPage key={id ?? 'new'} />
 }
 
+function KeyedLeaveTypeForm() {
+  const { id } = useParams()
+  return <LeaveTypeFormPage key={id ?? 'new'} />
+}
+
 // /employees/new is matched before /employees/:id so "new" is never read as an id.
 const router = createBrowserRouter([
   {
@@ -67,6 +74,9 @@ const router = createBrowserRouter([
       { path: 'master/locations', element: <LocationListPage /> },
       { path: 'master/locations/new', element: <KeyedLocationForm /> },
       { path: 'master/locations/:id', element: <KeyedLocationForm /> },
+      { path: 'master/leave-types', element: <LeaveTypeListPage /> },
+      { path: 'master/leave-types/new', element: <KeyedLeaveTypeForm /> },
+      { path: 'master/leave-types/:id', element: <KeyedLeaveTypeForm /> },
       { path: 'health', element: <HealthPage /> },
       { path: '*', element: <Navigate to="/dashboard" replace /> },
     ],

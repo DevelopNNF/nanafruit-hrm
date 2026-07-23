@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
+  GENDERS,
   TITLES,
   type EmployeeInput,
   type Job,
@@ -51,6 +52,7 @@ const emptyDraft: EmployeeInput = {
   firstNameEn: '',
   lastNameEn: '',
   nickname: null,
+  gender: null,
   employment: {
     status: EMPLOYEE_STATUSES[0],
     hireDate: today(),
@@ -153,6 +155,7 @@ export function EmployeeFormPage() {
           firstNameEn: employee.firstNameEn,
           lastNameEn: employee.lastNameEn,
           nickname: employee.nickname,
+          gender: employee.gender,
           employment: employee.employment,
         })
         setLoadedJobTitle(employee.employment.jobTitle)
@@ -350,6 +353,23 @@ export function EmployeeFormPage() {
                   value={draft.nickname ?? ''}
                   onChange={(e) => setBasic('nickname', e.target.value || null)}
                 />
+              </label>
+              <label className={fieldLabel}>
+                <span>เพศ</span>
+                <select
+                  className={fieldControl}
+                  value={draft.gender ?? ''}
+                  onChange={(e) =>
+                    setBasic('gender', (e.target.value || null) as EmployeeInput['gender'])
+                  }
+                >
+                  <option value="">— ไม่ระบุ —</option>
+                  {GENDERS.map((gender) => (
+                    <option key={gender} value={gender}>
+                      {gender === 'male' ? 'ชาย' : 'หญิง'}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
           </section>

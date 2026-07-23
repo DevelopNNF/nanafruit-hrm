@@ -41,6 +41,12 @@ export type MeResponse = { user: AuthUser }
 export const TITLES = ['นาย', 'นาง', 'นางสาว'] as const
 export type Title = (typeof TITLES)[number]
 
+/** Distinct from Title: title is a Thai honorific that conflates marital
+ *  status with gender, but master_leave_types.gender needs a real answer to
+ *  restrict a leave type (e.g. ลาคลอด) against. */
+export const GENDERS = ['male', 'female'] as const
+export type Gender = (typeof GENDERS)[number]
+
 export const EMPLOYEE_STATUSES = ['Active', 'Inactive'] as const
 export type EmployeeStatus = (typeof EMPLOYEE_STATUSES)[number]
 
@@ -65,6 +71,10 @@ export type Employee = {
   firstNameEn: string
   lastNameEn: string
   nickname: string | null
+  /** Null until HR records it — see the comment on GENDERS. Only meaningful
+   *  once set: a gender-restricted leave type simply can't be matched
+   *  against an employee whose gender is still null. */
+  gender: Gender | null
   employment: EmploymentDetails
 }
 
@@ -253,6 +263,50 @@ export type LocationListResponse = { locations: Location[] }
 
 /** GET /api/locations/:id, POST, PUT */
 export type LocationResponse = { location: Location }
+
+/* Leave Type Master ----------------------------------------------------------- */
+
+/** A row in master_leave_types: configuration rules for one type of leave.
+ *  Not a request and not a balance — see the migration's comment for why
+ *  quota/entitlement is deliberately left out of this shape. */
+export type LeaveType = {
+  id: number
+  leaveCode: string
+  leaveName: string
+  isPaid: boolean
+  allowHalfDay: boolean
+  allowHourly: boolean
+  /** Smallest amount a single request may be for, in days (0.5 = half day). */
+  minLeaveDays: number
+  /** Largest amount a single request may be for, in days. Null = uncapped —
+   *  this is a per-request ceiling, not an annual quota. */
+  maxLeaveDays: number | null
+  /** How many days ahead of the leave date a request must be submitted. */
+  advanceNoticeDays: number
+  /** 'all' unless the type is restricted to one sex (ลาคลอด, ลาบวช) —
+   *  compared against Employee.gender, which can be null. */
+  gender: 'all' | Gender
+  /** Whether a public holiday inside the leave range counts as a leave day.
+   *  Stored but not yet enforced — there is no holiday calendar in this
+   *  system yet. */
+  isCountHoliday: boolean
+  /** Whether a non-working day (weekend, or a day outside the employee's
+   *  shift) inside the leave range counts as a leave day. Same caveat as
+   *  isCountHoliday. */
+  isCountWeekend: boolean
+  /** Display order in lists/forms — lower first. */
+  sortOrder: number
+  isActive: boolean
+}
+
+/** Body of POST /api/leave-types and PUT /api/leave-types/:id */
+export type LeaveTypeInput = Omit<LeaveType, 'id'>
+
+/** GET /api/leave-types */
+export type LeaveTypeListResponse = { leaveTypes: LeaveType[] }
+
+/** GET /api/leave-types/:id, POST, PUT */
+export type LeaveTypeResponse = { leaveType: LeaveType }
 
 /* Attendance ---------------------------------------------------------------- */
 
