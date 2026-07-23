@@ -265,11 +265,10 @@ export const ATTENDANCE_EVENT_TYPES = ['check_in', 'check_out'] as const
 export type AttendanceEventType = (typeof ATTENDANCE_EVENT_TYPES)[number]
 
 /**
- * Where the event came from. One value today (the LIFF app, GPS-backed) —
- * kept as a field rather than assumed so a later channel (QR, admin manual
- * entry) is a new allowed value, not a schema change.
+ * Where the event came from: the LIFF app (GPS-backed), or an admin-approved
+ * time correction request inserting the event on the employee's behalf.
  */
-export const ATTENDANCE_SOURCES = ['liff_gps'] as const
+export const ATTENDANCE_SOURCES = ['liff_gps', 'admin_correction'] as const
 export type AttendanceSource = (typeof ATTENDANCE_SOURCES)[number]
 
 /** A row in attendance_events. */
@@ -342,6 +341,74 @@ export type AttendanceListItem = AttendanceEvent & {
 
 /** GET /api/attendance */
 export type AttendanceListResponse = { events: AttendanceListItem[] }
+
+/* Time Correction Requests --------------------------------------------------- */
+
+/**
+ * A request goes through exactly one decision. `pending` is the only status
+ * that can change; `approved`/`rejected` are terminal — see the DB's
+ * decision_consistency CHECK, which is the actual source of truth for which
+ * fields accompany which status.
+ */
+export const TIME_CORRECTION_STATUSES = ['pending', 'approved', 'rejected'] as const
+export type TimeCorrectionStatus = (typeof TIME_CORRECTION_STATUSES)[number]
+
+/** A row in time_correction_requests: one employee asking to add one
+ *  check-in or check-out that liff's clock-in flow missed. */
+export type TimeCorrectionRequest = {
+  id: number
+  employeeId: number
+  eventType: AttendanceEventType
+  /** ISO 8601 — the wall-clock moment being requested, combined from the
+   *  liff form's separate date and time fields at submission, not re-derived
+   *  on approval. */
+  requestedEventTime: string
+  reason: string
+  status: TimeCorrectionStatus
+  /** The admin's display name at decision time. Null while pending. */
+  decidedByName: string | null
+  /** ISO 8601. Null while pending. */
+  decidedAt: string | null
+  /** Required when status is 'rejected', null otherwise. */
+  decisionReason: string | null
+  /** FK to the attendance_events row this request created. Null unless
+   *  approved. */
+  resultingEventId: number | null
+  /** ISO 8601. */
+  createdAt: string
+}
+
+/** A request as admin/ sees it: the employee joined in for display, since
+ *  one caller's list spans every employee — same shape as AttendanceListItem. */
+export type TimeCorrectionListItem = TimeCorrectionRequest & {
+  employeeCode: string
+  employeeName: string
+}
+
+/** Body of POST /api/time-corrections. employeeId is not an input — the
+ *  server derives it from the caller's employee session, never the client. */
+export type TimeCorrectionInput = {
+  eventType: AttendanceEventType
+  requestedEventTime: string
+  reason: string
+}
+
+/** POST /api/time-corrections */
+export type TimeCorrectionResponse = { request: TimeCorrectionRequest }
+
+/** GET /api/time-corrections/me — an employee's own requests, no employee
+ *  join needed since it's implicitly them. */
+export type TimeCorrectionMineResponse = { requests: TimeCorrectionRequest[] }
+
+/** GET /api/time-corrections */
+export type TimeCorrectionListResponse = { requests: TimeCorrectionListItem[] }
+
+/** GET /api/time-corrections/:id, POST .../approve, POST .../reject */
+export type TimeCorrectionDetailResponse = { request: TimeCorrectionListItem }
+
+/** Body of POST /api/time-corrections/:id/reject — a reason is required
+ *  every time, never optional. */
+export type TimeCorrectionRejectRequest = { reason: string }
 
 /* Health ------------------------------------------------------------------ */
 

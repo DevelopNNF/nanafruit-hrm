@@ -15,6 +15,8 @@ import { ShiftFormPage } from './pages/ShiftFormPage'
 import { LocationListPage } from './pages/LocationListPage'
 import { LocationFormPage } from './pages/LocationFormPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
+import { TimeCorrectionListPage } from './pages/TimeCorrectionListPage'
+import { TimeCorrectionDetailPage } from './pages/TimeCorrectionDetailPage'
 import { HealthPage } from './pages/HealthPage'
 
 /**
@@ -54,6 +56,8 @@ const router = createBrowserRouter([
       { path: 'employees/new', element: <KeyedEmployeeForm /> },
       { path: 'employees/:id', element: <KeyedEmployeeForm /> },
       { path: 'attendance', element: <AttendanceListPage /> },
+      { path: 'time-corrections', element: <TimeCorrectionListPage /> },
+      { path: 'time-corrections/:id', element: <TimeCorrectionDetailPage /> },
       { path: 'master/jobs', element: <JobListPage /> },
       { path: 'master/jobs/new', element: <KeyedJobForm /> },
       { path: 'master/jobs/:id', element: <KeyedJobForm /> },

@@ -76,7 +76,7 @@ export function alertTitle(tone: AlertTone = 'default'): string {
 
 export const alertDetail = 'mt-1 font-mono text-[0.775rem] break-words text-slate-600'
 
-type BadgeTone = 'active' | 'inactive' | 'role'
+type BadgeTone = 'active' | 'inactive' | 'role' | 'pending' | 'danger'
 
 export function badge(tone: BadgeTone): string {
   const base = 'inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-[0.675rem] font-semibold'
@@ -85,6 +85,10 @@ export function badge(tone: BadgeTone): string {
       return `${base} border-green-700/25 bg-green-100 text-green-700`
     case 'role':
       return `${base} border-navy/20 bg-navy/7 text-navy`
+    case 'pending':
+      return `${base} border-amber-700/25 bg-amber-100 text-amber-700`
+    case 'danger':
+      return `${base} border-red-700/25 bg-red-100 text-red-700`
     default:
       return `${base} border-slate-300 bg-slate-100 text-slate-500`
   }

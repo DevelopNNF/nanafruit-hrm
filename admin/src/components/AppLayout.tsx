@@ -5,6 +5,7 @@ import {
   Activity,
   ChevronDown,
   Clock,
+  ClipboardCheck,
   Database,
   LayoutDashboard,
   LogOut,
@@ -34,6 +35,7 @@ const NAV: NavItem[] = [
   { type: 'link', to: '/dashboard', label: 'ภาพรวม', icon: LayoutDashboard },
   { type: 'link', to: '/employees', label: 'พนักงาน', icon: Users },
   { type: 'link', to: '/attendance', label: 'การลงเวลา', icon: Clock },
+  { type: 'link', to: '/time-corrections', label: 'คำขอแก้ไขเวลา', icon: ClipboardCheck },
   {
     type: 'group',
     label: 'Master',
