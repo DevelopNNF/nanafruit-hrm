@@ -25,3 +25,14 @@ export function useCanWrite(): boolean {
   const me = useMe()
   return me.kind === 'admin' && me.roles.some((role) => WRITE_ROLES.includes(role))
 }
+
+/**
+ * Whether to offer the controls that change master_locations — Admin only,
+ * unlike useCanWrite's HR+Admin: a wrong radius here is a security control
+ * (who may clock in from where), not a scheduling detail. Mirrors the
+ * server's canWrite in server/src/routes/locations.ts.
+ */
+export function useIsAdmin(): boolean {
+  const me = useMe()
+  return me.kind === 'admin' && me.roles.includes('HRM.Admin')
+}

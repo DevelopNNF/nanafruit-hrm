@@ -153,7 +153,7 @@ export function AttendanceListPage() {
             <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
               <thead>
                 <tr>
-                  {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภท', 'เวลา', 'กะ', 'พิกัด', 'อุปกรณ์'].map((h) => (
+                  {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภท', 'เวลา', 'กะ', 'พิกัด', 'จุดที่แมตช์', 'อุปกรณ์'].map((h) => (
                     <th
                       key={h}
                       className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
@@ -190,6 +190,11 @@ export function AttendanceListPage() {
                       {event.latitude === null || event.longitude === null
                         ? '—'
                         : `${event.latitude.toFixed(5)}, ${event.longitude.toFixed(5)}`}
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                      {event.matchedLocationName === null
+                        ? '—'
+                        : `${event.matchedLocationName} (${event.distanceMeters?.toFixed(1)} ม.)`}
                     </td>
                     <td
                       className="max-w-52 truncate border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-500"

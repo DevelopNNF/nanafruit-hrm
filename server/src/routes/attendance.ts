@@ -3,7 +3,6 @@ import type { Request, Response } from 'express'
 import {
   ATTENDANCE_EVENT_TYPES,
   ROLES,
-  type AttendanceClockRequest,
   type AttendanceClockResponse,
   type AttendanceEventType,
   type AttendanceListResponse,
@@ -13,6 +12,8 @@ import { pool } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { fail, handleUnexpected } from '../http.js'
 import { findEmployeeById } from '../employeeQueries.js'
+import { findActiveLocations } from '../locationQueries.js'
+import { nearestLocation } from '../geo.js'
 import {
   findLastAttendanceEvent,
   listAttendanceEvents,
@@ -45,6 +46,19 @@ function requireEmployeeId(req: Request, res: Response): number | null {
 
 type ParseResult<T> = { ok: true; value: T } | { ok: false; message: string }
 
+/** The wire shape (AttendanceClockRequest) makes coordinates optional, since a
+ *  client with no geolocation support may omit them rather than send null —
+ *  but once parsed, this code always has a definite number-or-null to reason
+ *  about, so the parsed shape drops the "or absent" that only ever mattered
+ *  on the wire. */
+type ParsedClockInput = {
+  eventType: AttendanceEventType
+  latitude: number | null
+  longitude: number | null
+  accuracyMeters: number | null
+  deviceInfo: string | null
+}
+
 /** A finite number in range, or null/undefined passed through — see
  *  AttendanceClockRequest: coordinates are optional, not just nullable, since
  *  a client with no geolocation support omits them rather than sending null. */
@@ -62,7 +76,7 @@ function optionalCoordinate(
   return value
 }
 
-function parseClockInput(body: unknown): ParseResult<AttendanceClockRequest> {
+function parseClockInput(body: unknown): ParseResult<ParsedClockInput> {
   if (typeof body !== 'object' || body === null) {
     return { ok: false, message: 'body must be a JSON object' }
   }
@@ -120,20 +134,45 @@ attendanceRouter.post('/attendance/clock', async (req: Request, res: Response) =
       return fail(res, 409, 'ยังไม่ได้ลงเวลาเข้างาน')
     }
 
+    // Geofencing is unconditional — there is no "not configured yet" grace
+    // period. An empty master_locations table blocks every clock event, same
+    // as being genuinely out of range: this repo's earlier stance ("a missing
+    // GPS fix must never block a clock event") was explicitly overridden for
+    // this feature, so an empty-table fallthrough would quietly reinstate the
+    // behaviour that was just turned off. Until admin/ has at least one
+    // location active, no one can clock in — a manual time correction is the
+    // documented workaround for that gap, not a code path here.
+    if (input.latitude === null || input.longitude === null) {
+      return fail(res, 409, 'ไม่พบพิกัด GPS กรุณาเปิดสิทธิ์ตำแหน่งที่ตั้งแล้วลองลงเวลาอีกครั้ง')
+    }
+    const activeLocations = await findActiveLocations()
+    const nearest = nearestLocation(input.latitude, input.longitude, activeLocations)
+    if (nearest === null || nearest.distanceMeters > nearest.location.radiusMeters) {
+      const message =
+        nearest === null
+          ? 'ยังไม่มีการตั้งค่าพิกัดที่อนุญาตให้ลงเวลาในระบบ กรุณาติดต่อฝ่ายบุคคล'
+          : `อยู่นอกพื้นที่ที่อนุญาตให้ลงเวลา (ห่างจาก "${nearest.location.locationName}" ประมาณ ${Math.round(nearest.distanceMeters)} ม. ขอบเขตที่อนุญาต ${nearest.location.radiusMeters} ม.)`
+      return fail(res, 409, message)
+    }
+    const matched = { locationId: nearest.location.id, distanceMeters: nearest.distanceMeters }
+
     const employee = await findEmployeeById(employeeId)
     if (!employee) return fail(res, 404, 'employee record not found')
 
     const { rows } = await pool.query<AttendanceRow>(
       `WITH inserted AS (
          INSERT INTO attendance_events
-           (employee_id, event_type, source, latitude, longitude, accuracy_meters, shift_id, device_info)
-         VALUES ($1, $2, 'liff_gps', $3, $4, $5, $6, $7)
+           (employee_id, event_type, source, latitude, longitude, accuracy_meters, shift_id,
+            device_info, matched_location_id, distance_meters)
+         VALUES ($1, $2, 'liff_gps', $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, employee_id, event_type, event_time, source,
-                   latitude, longitude, accuracy_meters, shift_id, device_info
+                   latitude, longitude, accuracy_meters, shift_id, device_info,
+                   matched_location_id, distance_meters
        )
-       SELECT inserted.*, ms.shift_name
+       SELECT inserted.*, ms.shift_name, ml.location_name AS matched_location_name
        FROM inserted
-       LEFT JOIN master_shifts ms ON ms.id = inserted.shift_id`,
+       LEFT JOIN master_shifts ms ON ms.id = inserted.shift_id
+       LEFT JOIN master_locations ml ON ml.id = inserted.matched_location_id`,
       [
         employeeId,
         input.eventType,
@@ -142,6 +181,8 @@ attendanceRouter.post('/attendance/clock', async (req: Request, res: Response) =
         input.accuracyMeters,
         employee.employment.shiftId,
         input.deviceInfo,
+        matched?.locationId ?? null,
+        matched?.distanceMeters ?? null,
       ]
     )
     const row = rows[0]

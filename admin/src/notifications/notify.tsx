@@ -3,7 +3,6 @@
 // toast call, so every page's wording lands in the same visual language.
 
 import toast from 'react-hot-toast'
-import { createPortal } from 'react-dom'
 import { toastCard } from '../styles'
 
 function body(title: string, message?: string) {

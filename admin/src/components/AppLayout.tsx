@@ -41,6 +41,7 @@ const NAV: NavItem[] = [
     children: [
       { to: '/master/jobs', label: 'ตำแหน่งงาน (Job)' },
       { to: '/master/shifts', label: 'กะการทำงาน (Shift)' },
+      { to: '/master/locations', label: 'พิกัดอนุญาต (Location)' },
     ],
   },
   { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },

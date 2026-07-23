@@ -25,6 +25,8 @@ export type AuditAction =
   | 'job.update'
   | 'shift.create'
   | 'shift.update'
+  | 'location.create'
+  | 'location.update'
 
 type Entry = {
   actor: AuthUser

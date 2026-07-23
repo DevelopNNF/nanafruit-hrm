@@ -230,6 +230,30 @@ export type ShiftListResponse = { shifts: Shift[] }
 /** GET /api/shifts/:id, POST, PUT */
 export type ShiftResponse = { shift: Shift }
 
+/* Location Master --------------------------------------------------------------- */
+
+/** A row in master_locations: one clock-in-allowed point and its radius,
+ *  for attendance geofencing. */
+export type Location = {
+  id: number
+  locationName: string
+  latitude: number
+  longitude: number
+  /** Meters. A clock event's own coordinates must fall within this distance
+   *  of (latitude, longitude) to be accepted while this location is active. */
+  radiusMeters: number
+  isActive: boolean
+}
+
+/** Body of POST /api/locations and PUT /api/locations/:id */
+export type LocationInput = Omit<Location, 'id'>
+
+/** GET /api/locations */
+export type LocationListResponse = { locations: Location[] }
+
+/** GET /api/locations/:id, POST, PUT */
+export type LocationResponse = { location: Location }
+
 /* Attendance ---------------------------------------------------------------- */
 
 /**
@@ -257,7 +281,9 @@ export type AttendanceEvent = {
   eventTime: string
   source: AttendanceSource
   /** Both null together — absent whenever the browser had no fix or the
-   *  employee denied location permission; that never blocks the clock event. */
+   *  employee denied location permission. Once at least one master_locations
+   *  row is active, a clock event with no coordinates is rejected before it
+   *  reaches this shape at all — see matchedLocationId. */
   latitude: number | null
   longitude: number | null
   accuracyMeters: number | null
@@ -267,6 +293,18 @@ export type AttendanceEvent = {
   /** master_shifts.shift_name as of now, joined in for display. Null exactly
    *  when shiftId is null. */
   shiftName: string | null
+  /** FK to master_locations.id — which geofence this event was validated
+   *  against, snapshotted at clock time. Null exactly when the event was
+   *  recorded while zero locations were active (geofencing not configured
+   *  yet); once any location is active, every event either matches one or is
+   *  rejected before insert, so this is never null "by mistake". */
+  matchedLocationId: number | null
+  /** master_locations.location_name as of now, joined in for display. Null
+   *  exactly when matchedLocationId is null. */
+  matchedLocationName: string | null
+  /** Distance in meters from the matched location at clock time. Null
+   *  exactly when matchedLocationId is null. */
+  distanceMeters: number | null
   /** OS/client info from the LIFF app, e.g. "ios inClient=true ua=...".
    *  Debugging aid, not shown to the employee — see e.g. the LINE in-app
    *  browser silently declining a geolocation permission it was never asked
