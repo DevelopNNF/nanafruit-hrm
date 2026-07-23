@@ -230,6 +230,186 @@ export type ShiftListResponse = { shifts: Shift[] }
 /** GET /api/shifts/:id, POST, PUT */
 export type ShiftResponse = { shift: Shift }
 
+/* Location Master --------------------------------------------------------------- */
+
+/** A row in master_locations: one clock-in-allowed point and its radius,
+ *  for attendance geofencing. */
+export type Location = {
+  id: number
+  locationName: string
+  latitude: number
+  longitude: number
+  /** Meters. A clock event's own coordinates must fall within this distance
+   *  of (latitude, longitude) to be accepted while this location is active. */
+  radiusMeters: number
+  isActive: boolean
+}
+
+/** Body of POST /api/locations and PUT /api/locations/:id */
+export type LocationInput = Omit<Location, 'id'>
+
+/** GET /api/locations */
+export type LocationListResponse = { locations: Location[] }
+
+/** GET /api/locations/:id, POST, PUT */
+export type LocationResponse = { location: Location }
+
+/* Attendance ---------------------------------------------------------------- */
+
+/**
+ * Phase 1 of Time Attendance: a raw clock event, nothing derived from it yet.
+ * No "late"/"early"/OT here — that reads attendance_events against
+ * master_shifts and doesn't exist yet.
+ */
+export const ATTENDANCE_EVENT_TYPES = ['check_in', 'check_out'] as const
+export type AttendanceEventType = (typeof ATTENDANCE_EVENT_TYPES)[number]
+
+/**
+ * Where the event came from: the LIFF app (GPS-backed), or an admin-approved
+ * time correction request inserting the event on the employee's behalf.
+ */
+export const ATTENDANCE_SOURCES = ['liff_gps', 'admin_correction'] as const
+export type AttendanceSource = (typeof ATTENDANCE_SOURCES)[number]
+
+/** A row in attendance_events. */
+export type AttendanceEvent = {
+  id: number
+  employeeId: number
+  eventType: AttendanceEventType
+  /** ISO 8601. Set by the server on receipt, never trusted from the client. */
+  eventTime: string
+  source: AttendanceSource
+  /** Both null together — absent whenever the browser had no fix or the
+   *  employee denied location permission. Once at least one master_locations
+   *  row is active, a clock event with no coordinates is rejected before it
+   *  reaches this shape at all — see matchedLocationId. */
+  latitude: number | null
+  longitude: number | null
+  accuracyMeters: number | null
+  /** FK to master_shifts.id, snapshotting employment_details.shiftId as of
+   *  this event — null exactly when the employee had no shift assigned yet. */
+  shiftId: number | null
+  /** master_shifts.shift_name as of now, joined in for display. Null exactly
+   *  when shiftId is null. */
+  shiftName: string | null
+  /** FK to master_locations.id — which geofence this event was validated
+   *  against, snapshotted at clock time. Null exactly when the event was
+   *  recorded while zero locations were active (geofencing not configured
+   *  yet); once any location is active, every event either matches one or is
+   *  rejected before insert, so this is never null "by mistake". */
+  matchedLocationId: number | null
+  /** master_locations.location_name as of now, joined in for display. Null
+   *  exactly when matchedLocationId is null. */
+  matchedLocationName: string | null
+  /** Distance in meters from the matched location at clock time. Null
+   *  exactly when matchedLocationId is null. */
+  distanceMeters: number | null
+  /** OS/client info from the LIFF app, e.g. "ios inClient=true ua=...".
+   *  Debugging aid, not shown to the employee — see e.g. the LINE in-app
+   *  browser silently declining a geolocation permission it was never asked
+   *  to grant, which this is what would have named directly. */
+  deviceInfo: string | null
+}
+
+/** Body of POST /api/attendance/clock. employeeId, eventTime and shiftId are
+ *  not inputs — the server derives them from the caller's session and current
+ *  employment_details, never from the client. */
+export type AttendanceClockRequest = {
+  eventType: AttendanceEventType
+  latitude?: number | null
+  longitude?: number | null
+  accuracyMeters?: number | null
+  /** Free-form OS/client string the caller reports about itself — not
+   *  verified, so it's a debugging aid only, never something to branch logic
+   *  on server-side. */
+  deviceInfo?: string | null
+}
+
+/** POST /api/attendance/clock */
+export type AttendanceClockResponse = { event: AttendanceEvent }
+
+/** GET /api/attendance/me — null means this employee has no events yet. */
+export type AttendanceStatusResponse = { lastEvent: AttendanceEvent | null }
+
+/** An attendance event as admin/ sees it: the employee it belongs to, joined
+ *  in for display, since one caller's list spans every employee. */
+export type AttendanceListItem = AttendanceEvent & {
+  employeeCode: string
+  /** Thai full name, e.g. "นายสมชาย ใจดี" — display only, not an identifier. */
+  employeeName: string
+}
+
+/** GET /api/attendance */
+export type AttendanceListResponse = { events: AttendanceListItem[] }
+
+/* Time Correction Requests --------------------------------------------------- */
+
+/**
+ * A request goes through exactly one decision. `pending` is the only status
+ * that can change; `approved`/`rejected` are terminal — see the DB's
+ * decision_consistency CHECK, which is the actual source of truth for which
+ * fields accompany which status.
+ */
+export const TIME_CORRECTION_STATUSES = ['pending', 'approved', 'rejected'] as const
+export type TimeCorrectionStatus = (typeof TIME_CORRECTION_STATUSES)[number]
+
+/** A row in time_correction_requests: one employee asking to add one
+ *  check-in or check-out that liff's clock-in flow missed. */
+export type TimeCorrectionRequest = {
+  id: number
+  employeeId: number
+  eventType: AttendanceEventType
+  /** ISO 8601 — the wall-clock moment being requested, combined from the
+   *  liff form's separate date and time fields at submission, not re-derived
+   *  on approval. */
+  requestedEventTime: string
+  reason: string
+  status: TimeCorrectionStatus
+  /** The admin's display name at decision time. Null while pending. */
+  decidedByName: string | null
+  /** ISO 8601. Null while pending. */
+  decidedAt: string | null
+  /** Required when status is 'rejected', null otherwise. */
+  decisionReason: string | null
+  /** FK to the attendance_events row this request created. Null unless
+   *  approved. */
+  resultingEventId: number | null
+  /** ISO 8601. */
+  createdAt: string
+}
+
+/** A request as admin/ sees it: the employee joined in for display, since
+ *  one caller's list spans every employee — same shape as AttendanceListItem. */
+export type TimeCorrectionListItem = TimeCorrectionRequest & {
+  employeeCode: string
+  employeeName: string
+}
+
+/** Body of POST /api/time-corrections. employeeId is not an input — the
+ *  server derives it from the caller's employee session, never the client. */
+export type TimeCorrectionInput = {
+  eventType: AttendanceEventType
+  requestedEventTime: string
+  reason: string
+}
+
+/** POST /api/time-corrections */
+export type TimeCorrectionResponse = { request: TimeCorrectionRequest }
+
+/** GET /api/time-corrections/me — an employee's own requests, no employee
+ *  join needed since it's implicitly them. */
+export type TimeCorrectionMineResponse = { requests: TimeCorrectionRequest[] }
+
+/** GET /api/time-corrections */
+export type TimeCorrectionListResponse = { requests: TimeCorrectionListItem[] }
+
+/** GET /api/time-corrections/:id, POST .../approve, POST .../reject */
+export type TimeCorrectionDetailResponse = { request: TimeCorrectionListItem }
+
+/** Body of POST /api/time-corrections/:id/reject — a reason is required
+ *  every time, never optional. */
+export type TimeCorrectionRejectRequest = { reason: string }
+
 /* Health ------------------------------------------------------------------ */
 
 /** GET /api/health */

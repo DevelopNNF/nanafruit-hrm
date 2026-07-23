@@ -17,6 +17,7 @@ import {
 } from '../api/employees'
 import { listJobs } from '../api/jobs'
 import { listShifts } from '../api/shifts'
+import { DatePicker } from '../components/DatePicker'
 import { LinkCodeCard } from '../components/LinkCodeCard'
 import { useCanWrite } from '../auth/meContext'
 import { notify } from '../notifications/notify'
@@ -381,12 +382,10 @@ export function EmployeeFormPage() {
                 <span>
                   วันที่จ้าง <span className={requiredMark}>*</span>
                 </span>
-                <input
+                <DatePicker
                   required
-                  type="date"
-                  className={fieldControl}
                   value={draft.employment.hireDate}
-                  onChange={(e) => setEmployment('hireDate', e.target.value)}
+                  onChange={(value) => setEmployment('hireDate', value)}
                 />
               </label>
               <label className={fieldLabel}>

@@ -25,6 +25,11 @@ export type AuditAction =
   | 'job.update'
   | 'shift.create'
   | 'shift.update'
+  | 'location.create'
+  | 'location.update'
+  | 'time_correction.create'
+  | 'time_correction.approve'
+  | 'time_correction.reject'
 
 type Entry = {
   actor: AuthUser

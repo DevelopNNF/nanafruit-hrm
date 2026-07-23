@@ -179,7 +179,7 @@ export function ShiftListPage() {
                       'เวลาเข้า-ออกกะ',
                       'ชั่วโมงทำงาน',
                       'วันทำงาน',
-                      'Is Active',
+                      'เปิดใช้งาน',
                     ].map(
                       (h) => (
                         <th

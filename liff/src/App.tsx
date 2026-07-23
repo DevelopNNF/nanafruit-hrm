@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import liff from '@line/liff'
 import type { Employee, LineSessionResponse } from '@hrm/shared'
 import { LinkScreen } from './LinkScreen'
+import { AttendanceCard } from './AttendanceCard'
+import { TimeCorrectionCard } from './TimeCorrectionCard'
 import './App.css'
 
 type Profile = {
@@ -47,6 +49,10 @@ function EmployeeHome({ employee }: { employee: Employee }) {
 
       <h1>HRM</h1>
       <p className="subtitle">ข้อมูลพนักงานของคุณ</p>
+
+      <AttendanceCard />
+
+      <TimeCorrectionCard />
 
       <div className="card ok">
         <p className="headline">

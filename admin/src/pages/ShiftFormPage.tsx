@@ -288,7 +288,7 @@ export function ShiftFormPage() {
                   checked={draft.isActive}
                   onChange={(e) => set('isActive', e.target.checked)}
                 />
-                <span>Is Active</span>
+                <span>เปิดใช้งาน</span>
               </label>
             </div>
           </section>
