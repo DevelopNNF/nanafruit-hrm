@@ -32,6 +32,11 @@ export type AuditAction =
   | 'time_correction.reject'
   | 'leave_type.create'
   | 'leave_type.update'
+  | 'holiday_group.create'
+  | 'holiday_group.update'
+  | 'holiday.create'
+  | 'holiday.update'
+  | 'holiday.delete'
 
 type Entry = {
   actor: AuthUser

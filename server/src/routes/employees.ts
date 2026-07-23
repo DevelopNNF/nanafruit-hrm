@@ -98,6 +98,14 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
     return { ok: false, message: 'employment.shiftId must be a positive integer or null' }
   }
 
+  const holidayGroupId = optionalPositiveInt(emp, 'holidayGroupId')
+  if (holidayGroupId === undefined) {
+    return {
+      ok: false,
+      message: 'employment.holidayGroupId must be a positive integer or null',
+    }
+  }
+
   const title = requiredString(raw, 'title')
   if (title === null || !(TITLES as readonly string[]).includes(title)) {
     return { ok: false, message: `title must be one of: ${TITLES.join(', ')}` }
@@ -161,6 +169,7 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
         employmentType: employmentType as EmployeeInput['employment']['employmentType'],
         jobId,
         shiftId,
+        holidayGroupId,
       },
     },
   }
@@ -199,15 +208,17 @@ function isForeignKeyViolation(err: unknown): boolean {
 }
 
 /**
- * job_id and shift_id are both FKs on employment_details, so a 23503 needs the
- * constraint name to say which one actually failed rather than guessing.
- * Postgres auto-names a column-level REFERENCES as `<table>_<column>_fkey`.
+ * job_id, shift_id and holiday_group_id are all FKs on employment_details, so
+ * a 23503 needs the constraint name to say which one actually failed rather
+ * than guessing. Postgres auto-names a column-level REFERENCES as
+ * `<table>_<column>_fkey`.
  */
-function fkViolationField(err: unknown): 'job' | 'shift' | null {
+function fkViolationField(err: unknown): 'job' | 'shift' | 'holidayGroup' | null {
   const constraint =
     typeof err === 'object' && err !== null ? (err as { constraint?: unknown }).constraint : null
   if (constraint === 'employment_details_job_id_fkey') return 'job'
   if (constraint === 'employment_details_shift_id_fkey') return 'shift'
+  if (constraint === 'employment_details_holiday_group_id_fkey') return 'holidayGroup'
   return null
 }
 
@@ -270,8 +281,8 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
 
       await client.query(
         `INSERT INTO employment_details
-           (employee_id, status, hire_date, employment_type, job_id, shift_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+           (employee_id, status, hire_date, employment_type, job_id, shift_id, holiday_group_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           created.id,
           input.employment.status,
@@ -279,6 +290,7 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
           input.employment.employmentType,
           input.employment.jobId,
           input.employment.shiftId,
+          input.employment.holidayGroupId,
         ]
       )
 
@@ -306,6 +318,9 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
     const fkField = fkViolationField(err)
     if (fkField === 'job') return fail(res, 400, `no job with id ${input.employment.jobId}`)
     if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.employment.shiftId}`)
+    if (fkField === 'holidayGroup') {
+      return fail(res, 400, `no holiday group with id ${input.employment.holidayGroupId}`)
+    }
     if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in employment')
     handleUnexpected(res, err)
   }
@@ -350,7 +365,7 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
       await client.query(
         `UPDATE employment_details SET
            status = $2, hire_date = $3, employment_type = $4,
-           job_id = $5, shift_id = $6, updated_at = now()
+           job_id = $5, shift_id = $6, holiday_group_id = $7, updated_at = now()
          WHERE employee_id = $1`,
         [
           id,
@@ -359,6 +374,7 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
           input.employment.employmentType,
           input.employment.jobId,
           input.employment.shiftId,
+          input.employment.holidayGroupId,
         ]
       )
 
@@ -387,6 +403,9 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
     const fkField = fkViolationField(err)
     if (fkField === 'job') return fail(res, 400, `no job with id ${input.employment.jobId}`)
     if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.employment.shiftId}`)
+    if (fkField === 'holidayGroup') {
+      return fail(res, 400, `no holiday group with id ${input.employment.holidayGroupId}`)
+    }
     if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in employment')
     handleUnexpected(res, err)
   }

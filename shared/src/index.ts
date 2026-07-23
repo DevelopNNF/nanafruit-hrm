@@ -95,12 +95,22 @@ export type EmploymentDetails = {
    *  shiftId, not writable directly — absent from EmploymentDetailsInput.
    *  Null exactly when shiftId is null. */
   shiftName: string | null
+  /** FK to master_holiday_groups.id. Nullable — same reasoning as shiftId:
+   *  not every employee has a holiday calendar assigned yet. */
+  holidayGroupId: number | null
+  /** master_holiday_groups.group_name as of now, joined in for display.
+   *  Derived from holidayGroupId, not writable directly — absent from
+   *  EmploymentDetailsInput. Null exactly when holidayGroupId is null. */
+  holidayGroupName: string | null
 }
 
-/** Body of the employment half of POST/PUT — jobTitle and shiftName are
- *  read-only, so they're the fields on EmploymentDetails that aren't also
- *  inputs. */
-export type EmploymentDetailsInput = Omit<EmploymentDetails, 'jobTitle' | 'shiftName'>
+/** Body of the employment half of POST/PUT — jobTitle, shiftName and
+ *  holidayGroupName are read-only, so they're the fields on
+ *  EmploymentDetails that aren't also inputs. */
+export type EmploymentDetailsInput = Omit<
+  EmploymentDetails,
+  'jobTitle' | 'shiftName' | 'holidayGroupName'
+>
 
 /** Body of POST /api/employees and PATCH /api/employees/:id */
 export type EmployeeInput = Omit<Employee, 'id' | 'employment'> & {
@@ -307,6 +317,51 @@ export type LeaveTypeListResponse = { leaveTypes: LeaveType[] }
 
 /** GET /api/leave-types/:id, POST, PUT */
 export type LeaveTypeResponse = { leaveType: LeaveType }
+
+/* Holiday Group Master ------------------------------------------------------- */
+
+/** A row in master_holiday_groups: which holiday calendar an employee is
+ *  assigned to (e.g. Office vs Factory). The dates themselves live one level
+ *  down, in Holiday/master_holidays. */
+export type HolidayGroup = {
+  id: number
+  groupCode: string
+  groupName: string
+  isActive: boolean
+}
+
+/** Body of POST /api/holiday-groups and PUT /api/holiday-groups/:id */
+export type HolidayGroupInput = Omit<HolidayGroup, 'id'>
+
+/** GET /api/holiday-groups */
+export type HolidayGroupListResponse = { holidayGroups: HolidayGroup[] }
+
+/** GET /api/holiday-groups/:id, POST, PUT */
+export type HolidayGroupResponse = { holidayGroup: HolidayGroup }
+
+/** A row in master_holidays: one calendar date within one group. Unlike every
+ *  other master table, there is no isActive here and a real DELETE route —
+ *  see the migration's comment for why (nothing holds a foreign key to a
+ *  single holiday row). */
+export type Holiday = {
+  id: number
+  /** FK to master_holiday_groups.id. */
+  groupId: number
+  holidayName: string
+  /** Calendar date, `YYYY-MM-DD`. No time, no timezone. */
+  holidayDate: string
+}
+
+/** Body of POST /api/holiday-groups/:groupId/holidays and PUT /api/holidays/:id.
+ *  groupId is not an input on the PUT body — which group a holiday belongs to
+ *  is fixed at creation, set from the route param, not the body. */
+export type HolidayInput = Omit<Holiday, 'id' | 'groupId'>
+
+/** GET /api/holiday-groups/:groupId/holidays */
+export type HolidayListResponse = { holidays: Holiday[] }
+
+/** POST /api/holiday-groups/:groupId/holidays, PUT /api/holidays/:id */
+export type HolidayResponse = { holiday: Holiday }
 
 /* Attendance ---------------------------------------------------------------- */
 

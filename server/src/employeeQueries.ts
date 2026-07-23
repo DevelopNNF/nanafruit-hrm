@@ -30,6 +30,8 @@ export type EmployeeRow = {
   job_title: string | null
   shift_id: string | null
   shift_name: string | null
+  holiday_group_id: string | null
+  holiday_group_name: string | null
 }
 
 export const SELECT_EMPLOYEE = `
@@ -38,11 +40,13 @@ export const SELECT_EMPLOYEE = `
          e.nickname, e.gender,
          d.status, d.hire_date, d.employment_type,
          d.job_id, mj.job_title,
-         d.shift_id, ms.shift_name
+         d.shift_id, ms.shift_name,
+         d.holiday_group_id, mhg.group_name AS holiday_group_name
   FROM employees e
   LEFT JOIN employment_details d ON d.employee_id = e.id
   LEFT JOIN master_jobs mj ON mj.id = d.job_id
   LEFT JOIN master_shifts ms ON ms.id = d.shift_id
+  LEFT JOIN master_holiday_groups mhg ON mhg.id = d.holiday_group_id
 `
 
 export function rowToEmployee(row: EmployeeRow): Employee {
@@ -81,6 +85,8 @@ export function rowToEmployee(row: EmployeeRow): Employee {
       jobTitle: row.job_title,
       shiftId: row.shift_id === null ? null : Number(row.shift_id),
       shiftName: row.shift_name,
+      holidayGroupId: row.holiday_group_id === null ? null : Number(row.holiday_group_id),
+      holidayGroupName: row.holiday_group_name,
     },
   }
 }

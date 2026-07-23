@@ -7,6 +7,7 @@ import {
   GENDERS,
   TITLES,
   type EmployeeInput,
+  type HolidayGroup,
   type Job,
   type Shift,
 } from '@hrm/shared'
@@ -18,6 +19,7 @@ import {
 } from '../api/employees'
 import { listJobs } from '../api/jobs'
 import { listShifts } from '../api/shifts'
+import { listHolidayGroups } from '../api/holidayGroups'
 import { DatePicker } from '../components/DatePicker'
 import { LinkCodeCard } from '../components/LinkCodeCard'
 import { useCanWrite } from '../auth/meContext'
@@ -63,6 +65,9 @@ const emptyDraft: EmployeeInput = {
     // Unlike jobId, null is a real value here — shift assignment is optional —
     // so it doubles as both "nothing picked yet" and "deliberately unset".
     shiftId: null,
+    // Same reasoning as shiftId — not every employee has a holiday calendar
+    // assigned yet.
+    holidayGroupId: null,
   },
 }
 
@@ -85,10 +90,12 @@ export function EmployeeFormPage() {
   const [error, setError] = useState<string | null>(null)
 
   // The title/name as of the last load — EmploymentDetailsInput (what `draft`
-  // holds) has no jobTitle/shiftName field, so this is the only place the
-  // label for a deactivated job's or shift's option comes from.
+  // holds) has no jobTitle/shiftName/holidayGroupName field, so this is the
+  // only place the label for a deactivated job's, shift's or holiday group's
+  // option comes from.
   const [loadedJobTitle, setLoadedJobTitle] = useState<string | null>(null)
   const [loadedShiftName, setLoadedShiftName] = useState<string | null>(null)
+  const [loadedHolidayGroupName, setLoadedHolidayGroupName] = useState<string | null>(null)
 
   type JobOptionsState =
     | { phase: 'loading' }
@@ -101,6 +108,14 @@ export function EmployeeFormPage() {
     | { phase: 'ok'; shifts: Shift[] }
     | { phase: 'error'; message: string }
   const [shiftOptions, setShiftOptions] = useState<ShiftOptionsState>({ phase: 'loading' })
+
+  type HolidayGroupOptionsState =
+    | { phase: 'loading' }
+    | { phase: 'ok'; holidayGroups: HolidayGroup[] }
+    | { phase: 'error'; message: string }
+  const [holidayGroupOptions, setHolidayGroupOptions] = useState<HolidayGroupOptionsState>({
+    phase: 'loading',
+  })
 
   useEffect(() => {
     const controller = new AbortController()
@@ -139,6 +154,27 @@ export function EmployeeFormPage() {
   }, [])
 
   useEffect(() => {
+    const controller = new AbortController()
+
+    listHolidayGroups(controller.signal)
+      .then((holidayGroups) =>
+        setHolidayGroupOptions({
+          phase: 'ok',
+          holidayGroups: holidayGroups.filter((group) => group.isActive),
+        })
+      )
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setHolidayGroupOptions({
+          phase: 'error',
+          message: err instanceof Error ? err.message : 'request failed',
+        })
+      })
+
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
     if (id === null) return
     const controller = new AbortController()
 
@@ -160,6 +196,7 @@ export function EmployeeFormPage() {
         })
         setLoadedJobTitle(employee.employment.jobTitle)
         setLoadedShiftName(employee.employment.shiftName)
+        setLoadedHolidayGroupName(employee.employment.holidayGroupName)
         setLoading(false)
       })
       .catch((err: unknown) => {
@@ -231,6 +268,12 @@ export function EmployeeFormPage() {
   const activeShiftIds = shiftOptions.phase === 'ok' ? shiftOptions.shifts.map((s) => s.id) : []
   const currentShiftMissing =
     draft.employment.shiftId !== null && !activeShiftIds.includes(draft.employment.shiftId)
+
+  const activeHolidayGroupIds =
+    holidayGroupOptions.phase === 'ok' ? holidayGroupOptions.holidayGroups.map((g) => g.id) : []
+  const currentHolidayGroupMissing =
+    draft.employment.holidayGroupId !== null &&
+    !activeHolidayGroupIds.includes(draft.employment.holidayGroupId)
 
   return (
     <>
@@ -489,6 +532,42 @@ export function EmployeeFormPage() {
                 {shiftOptions.phase === 'error' && (
                   <span className="text-[0.7rem] text-red-700">
                     โหลดรายการกะการทำงานไม่สำเร็จ: {shiftOptions.message}
+                  </span>
+                )}
+              </label>
+              <label className={fieldLabel}>
+                <span>กลุ่มวันหยุด (Holiday Group)</span>
+                <select
+                  className={fieldControl}
+                  disabled={holidayGroupOptions.phase === 'loading'}
+                  value={draft.employment.holidayGroupId ?? ''}
+                  onChange={(e) =>
+                    setEmployment(
+                      'holidayGroupId',
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                >
+                  <option value="">
+                    {holidayGroupOptions.phase === 'loading'
+                      ? 'กำลังโหลดกลุ่มวันหยุด…'
+                      : '— ไม่ระบุกลุ่ม —'}
+                  </option>
+                  {currentHolidayGroupMissing && (
+                    <option value={draft.employment.holidayGroupId ?? ''}>
+                      {loadedHolidayGroupName ?? `#${draft.employment.holidayGroupId}`} (ไม่พร้อมใช้งาน)
+                    </option>
+                  )}
+                  {holidayGroupOptions.phase === 'ok' &&
+                    holidayGroupOptions.holidayGroups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.groupName}
+                      </option>
+                    ))}
+                </select>
+                {holidayGroupOptions.phase === 'error' && (
+                  <span className="text-[0.7rem] text-red-700">
+                    โหลดรายการกลุ่มวันหยุดไม่สำเร็จ: {holidayGroupOptions.message}
                   </span>
                 )}
               </label>
