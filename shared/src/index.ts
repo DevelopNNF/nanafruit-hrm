@@ -102,14 +102,23 @@ export type EmploymentDetails = {
    *  Derived from holidayGroupId, not writable directly — absent from
    *  EmploymentDetailsInput. Null exactly when holidayGroupId is null. */
   holidayGroupName: string | null
+  /** master_shifts.shift_start_time/shift_end_time as of now, joined in
+   *  purely so liff's leave-request form can prefill a default time range
+   *  without needing its own route into master_shifts (which is admin-only).
+   *  Derived from shiftId, not writable directly — absent from
+   *  EmploymentDetailsInput. Null exactly when shiftId is null. Wall-clock
+   *  'HH:MM:SS', same as the column itself — see master_shifts' comment on
+   *  why these are `time` and not `timestamptz`. */
+  shiftStartTime: string | null
+  shiftEndTime: string | null
 }
 
-/** Body of the employment half of POST/PUT — jobTitle, shiftName and
- *  holidayGroupName are read-only, so they're the fields on
- *  EmploymentDetails that aren't also inputs. */
+/** Body of the employment half of POST/PUT — jobTitle, shiftName,
+ *  holidayGroupName, shiftStartTime and shiftEndTime are read-only, so
+ *  they're the fields on EmploymentDetails that aren't also inputs. */
 export type EmploymentDetailsInput = Omit<
   EmploymentDetails,
-  'jobTitle' | 'shiftName' | 'holidayGroupName'
+  'jobTitle' | 'shiftName' | 'holidayGroupName' | 'shiftStartTime' | 'shiftEndTime'
 >
 
 /** Body of POST /api/employees and PATCH /api/employees/:id */
@@ -297,19 +306,22 @@ export type LeaveType = {
   /** 'all' unless the type is restricted to one sex (ลาคลอด, ลาบวช) —
    *  compared against Employee.gender, which can be null. */
   gender: 'all' | Gender
-  /** Whether a public holiday inside the leave range counts as a leave day.
-   *  Stored but not yet enforced — there is a holiday calendar now
-   *  (HolidayGroup/Holiday) but the leave-day-calculation logic that would
-   *  read it doesn't exist until the leave-request phase. */
+  /** Whether a public holiday (per the employee's HolidayGroup) inside the
+   *  leave range counts toward LeaveRequest.totalDays. Read by the
+   *  day-counting logic in leaveRequestQueries.ts. */
   isCountHoliday: boolean
-  /** Whether a non-working day (weekend, or a day outside the employee's
-   *  shift) inside the leave range counts as a leave day. Same caveat as
-   *  isCountHoliday. */
+  /** Whether a non-workday (per the employee's shift `workdays` bitmask)
+   *  inside the leave range counts toward LeaveRequest.totalDays. Same
+   *  caveat as isCountHoliday. */
   isCountWeekend: boolean
   /** Suggested amount for a year's 'grant' entry in LeaveBalanceEntry — see
    *  that migration's comment. Null means this type has no banked
    *  entitlement (e.g. ลาไม่รับค่าจ้าง) and never gets a grant. */
   defaultDaysPerYear: number | null
+  /** Whether LeaveRequestInput.reason is mandatory for this type on the
+   *  liff leave-request form. Checked in application code, not a DB CHECK —
+   *  same split as leave_balance_entries_adjustment_reason. */
+  requireReason: boolean
   /** Display order in lists/forms — lower first. */
   sortOrder: number
   isActive: boolean
@@ -375,7 +387,10 @@ export type LeaveBalanceEntryResponse = { entry: LeaveBalanceEntry }
 /** One leave type's balance summary for one employee/year, derived by
  *  summing leave_balance_entries grouped by entryType. remainingDays is the
  *  total of all of them combined, not merely granted minus used — an
- *  adjustment can move it either way. */
+ *  adjustment can move it either way. pendingDays is not part of that sum:
+ *  a pending leave_requests row hasn't posted a 'usage' entry yet (only
+ *  approval does), so it's summed in separately, from leave_requests rather
+ *  than the ledger. */
 export type LeaveBalanceSummary = {
   leaveTypeId: number
   leaveCode: string
@@ -385,6 +400,12 @@ export type LeaveBalanceSummary = {
   usedDays: number
   adjustmentDays: number
   remainingDays: number
+  /** SUM(totalDays) over this employee/type/year's leave_requests still
+   *  awaiting a decision. The liff gauge's yellow segment; also what a new
+   *  request's balance check subtracts from remainingDays before comparing
+   *  against the requested amount, so two pending requests can't both be
+   *  approved past the same limit. */
+  pendingDays: number
 }
 
 /** GET /api/employees/:employeeId/leave-balances */
@@ -402,6 +423,95 @@ export type BulkGrantLeaveResponse = {
    *  left untouched — bulk-grant is safe to run more than once. */
   skippedCount: number
 }
+
+/* Leave Requests -------------------------------------------------------------- */
+
+/**
+ * A request goes through exactly one decision, same as TimeCorrectionStatus —
+ * except a request may also be withdrawn by the employee before that decision
+ * is made. 'pending' is the only status that can change away from itself;
+ * 'approved'/'rejected'/'cancelled' are all terminal — see the DB's
+ * decision_consistency CHECK, which is the actual source of truth for which
+ * fields accompany which status.
+ */
+export const LEAVE_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
+export type LeaveRequestStatus = (typeof LEAVE_REQUEST_STATUSES)[number]
+
+/** A row in leave_requests: one employee's request for one leave type over
+ *  one date range. leaveTypeName/leaveTypeCode are joined in for display —
+ *  every screen that shows a request needs them, the same reasoning as
+ *  EmploymentDetails.jobTitle being joined onto every Employee. */
+export type LeaveRequest = {
+  id: number
+  employeeId: number
+  leaveTypeId: number
+  leaveTypeCode: string
+  leaveTypeName: string
+  /** Calendar date, `YYYY-MM-DD`. */
+  startDate: string
+  endDate: string
+  /** Wall-clock 'HH:MM:SS'. Set only for a leave type's hourly range or a
+   *  half day taken as a custom time; null for a plain full-day or AM/PM
+   *  half-day request. */
+  startTime: string | null
+  endTime: string | null
+  /** Computed once at submission from the leave type's rules, the
+   *  employee's shift workdays and their holiday group, then frozen — see
+   *  the migration's comment on why this isn't recomputed at approval. */
+  totalDays: number
+  /** Required when the leave type has requireReason set, null otherwise. */
+  reason: string | null
+  status: LeaveRequestStatus
+  /** The admin's display name at decision time. Null while pending/cancelled. */
+  decidedByName: string | null
+  /** ISO 8601. Null while pending/cancelled. */
+  decidedAt: string | null
+  /** Required when status is 'rejected', null otherwise. */
+  decisionReason: string | null
+  /** FK to the leave_balance_entries 'usage' row this request posted. Null
+   *  unless approved. */
+  leaveBalanceEntryId: number | null
+  /** ISO 8601. */
+  createdAt: string
+}
+
+/** A request as admin/ sees it: the employee joined in for display, since
+ *  one caller's list spans every employee — same shape as
+ *  TimeCorrectionListItem. */
+export type LeaveRequestListItem = LeaveRequest & {
+  employeeCode: string
+  employeeName: string
+}
+
+/** Body of POST /api/leave-requests. employeeId is not an input — the
+ *  server derives it from the caller's employee session, never the client.
+ *  totalDays is not an input either — the server computes and validates it,
+ *  never trusting a client-supplied day count. */
+export type LeaveRequestInput = {
+  leaveTypeId: number
+  startDate: string
+  endDate: string
+  startTime: string | null
+  endTime: string | null
+  reason: string | null
+}
+
+/** POST /api/leave-requests */
+export type LeaveRequestResponse = { request: LeaveRequest }
+
+/** GET /api/leave-requests/me — an employee's own requests, no employee
+ *  join needed since it's implicitly them. */
+export type LeaveRequestMineResponse = { requests: LeaveRequest[] }
+
+/** GET /api/leave-requests */
+export type LeaveRequestListResponse = { requests: LeaveRequestListItem[] }
+
+/** GET /api/leave-requests/:id, POST .../approve, POST .../reject */
+export type LeaveRequestDetailResponse = { request: LeaveRequestListItem }
+
+/** Body of POST /api/leave-requests/:id/reject — a reason is required every
+ *  time, never optional. */
+export type LeaveRequestRejectRequest = { reason: string }
 
 /* Holiday Group Master ------------------------------------------------------- */
 

@@ -14,6 +14,7 @@ import { leaveTypesRouter } from './routes/leaveTypes.js'
 import { holidayGroupsRouter } from './routes/holidayGroups.js'
 import { holidaysRouter } from './routes/holidays.js'
 import { leaveBalancesRouter } from './routes/leaveBalances.js'
+import { leaveRequestsRouter } from './routes/leaveRequests.js'
 import { meRouter } from './routes/me.js'
 import { authRouter } from './routes/auth.js'
 import { authenticate } from './auth/middleware.js'
@@ -73,6 +74,7 @@ app.use('/api', authenticate, leaveTypesRouter)
 app.use('/api', authenticate, holidayGroupsRouter)
 app.use('/api', authenticate, holidaysRouter)
 app.use('/api', authenticate, leaveBalancesRouter)
+app.use('/api', authenticate, leaveRequestsRouter)
 
 const port = Number(process.env.PORT) || 3000
 const server = app.listen(port, () => {

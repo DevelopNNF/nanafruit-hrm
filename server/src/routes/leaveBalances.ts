@@ -35,6 +35,22 @@ function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
 }
 
+/** GET /leave-balances/me is for the employee arm of AuthUser only — an
+ *  admin token has no employeeId of its own, same reasoning as
+ *  timeCorrections.ts's requireEmployeeId. */
+function requireEmployeeId(req: Request, res: Response): number | null {
+  const auth = req.auth
+  if (!auth) {
+    fail(res, 500, 'server misconfigured')
+    return null
+  }
+  if (auth.kind !== 'employee') {
+    fail(res, 403, 'this endpoint is for employee accounts', 'FORBIDDEN')
+    return null
+  }
+  return auth.employeeId
+}
+
 type ParseResult<T> = { ok: true; value: T } | { ok: false; message: string }
 
 function parseId(value: string | string[] | undefined): number | null {
@@ -110,6 +126,24 @@ function isForeignKeyViolation(err: unknown): boolean {
     typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23503'
   )
 }
+
+/** The liff gauge's data source — this employee's own balance, across every
+ *  active leave type, for the year they're currently requesting leave in. */
+leaveBalancesRouter.get('/leave-balances/me', async (req: Request, res: Response) => {
+  const employeeId = requireEmployeeId(req, res)
+  if (employeeId === null) return
+
+  const year = parseYear(req.query['year'])
+  if (year === null) return fail(res, 400, 'year query parameter is required')
+
+  try {
+    const summaries = await listLeaveBalanceSummaries(employeeId, year)
+    const body: LeaveBalanceSummaryListResponse = { summaries }
+    res.json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
 
 leaveBalancesRouter.get(
   '/employees/:employeeId/leave-balances',

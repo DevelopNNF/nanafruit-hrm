@@ -62,11 +62,20 @@ type LeaveBalanceSummaryRow = {
   used_days: string
   adjustment_days: string
   remaining_days: string
+  pending_days: string
 }
 
 /** Every active leave type, whether or not it has any entries yet for this
  *  employee/year — a type nobody has granted anything for still shows up,
- *  with zeros, rather than silently vanishing from the summary. */
+ *  with zeros, rather than silently vanishing from the summary.
+ *
+ * pending_days comes from leave_requests rather than the ledger — a pending
+ * request hasn't posted a 'usage' entry yet (only approval does) — so it's
+ * aggregated in its own subquery first and joined in as a single value per
+ * leave type, rather than alongside leave_balance_entries directly, which
+ * would double-count via the cross product of two unrelated one-to-many
+ * joins. Its year is EXTRACT(YEAR FROM start_date): a leave_requests row has
+ * no year column of its own, unlike leave_balance_entries. */
 export async function listLeaveBalanceSummaries(
   employeeId: number,
   year: number,
@@ -78,12 +87,19 @@ export async function listLeaveBalanceSummaries(
        COALESCE(SUM(lbe.amount_days) FILTER (WHERE lbe.entry_type IN ('grant', 'carry_over')), 0) AS granted_days,
        COALESCE(-SUM(lbe.amount_days) FILTER (WHERE lbe.entry_type = 'usage'), 0) AS used_days,
        COALESCE(SUM(lbe.amount_days) FILTER (WHERE lbe.entry_type = 'adjustment'), 0) AS adjustment_days,
-       COALESCE(SUM(lbe.amount_days), 0) AS remaining_days
+       COALESCE(SUM(lbe.amount_days), 0) AS remaining_days,
+       COALESCE(lr.pending_days, 0) AS pending_days
      FROM master_leave_types mlt
      LEFT JOIN leave_balance_entries lbe
        ON lbe.leave_type_id = mlt.id AND lbe.employee_id = $1 AND lbe.year = $2
+     LEFT JOIN (
+       SELECT leave_type_id, SUM(total_days) AS pending_days
+       FROM leave_requests
+       WHERE employee_id = $1 AND status = 'pending' AND EXTRACT(YEAR FROM start_date) = $2
+       GROUP BY leave_type_id
+     ) lr ON lr.leave_type_id = mlt.id
      WHERE mlt.is_active = true
-     GROUP BY mlt.id, mlt.leave_code, mlt.leave_name, mlt.sort_order
+     GROUP BY mlt.id, mlt.leave_code, mlt.leave_name, mlt.sort_order, lr.pending_days
      ORDER BY mlt.sort_order, mlt.leave_name`,
     [employeeId, year]
   )
@@ -97,5 +113,6 @@ export async function listLeaveBalanceSummaries(
     usedDays: Number(row.used_days),
     adjustmentDays: Number(row.adjustment_days),
     remainingDays: Number(row.remaining_days),
+    pendingDays: Number(row.pending_days),
   }))
 }

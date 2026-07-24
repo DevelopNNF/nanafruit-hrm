@@ -40,6 +40,10 @@ export type AuditAction =
   | 'leave_balance.grant'
   | 'leave_balance.adjust'
   | 'leave_balance.bulk_grant'
+  | 'leave_request.create'
+  | 'leave_request.cancel'
+  | 'leave_request.approve'
+  | 'leave_request.reject'
 
 type Entry = {
   actor: AuthUser

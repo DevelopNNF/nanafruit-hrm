@@ -4,6 +4,7 @@ import { useMsal } from '@azure/msal-react'
 import {
   Activity,
   CalendarPlus,
+  CalendarX2,
   ChevronDown,
   Clock,
   ClipboardCheck,
@@ -37,6 +38,7 @@ const NAV: NavItem[] = [
   { type: 'link', to: '/employees', label: 'พนักงาน', icon: Users },
   { type: 'link', to: '/attendance', label: 'การลงเวลา', icon: Clock },
   { type: 'link', to: '/time-corrections', label: 'คำขอแก้ไขเวลา', icon: ClipboardCheck },
+  { type: 'link', to: '/leave-requests', label: 'คำขอลา', icon: CalendarX2 },
   { type: 'link', to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา', icon: CalendarPlus },
   {
     type: 'group',

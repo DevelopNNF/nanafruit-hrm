@@ -4,6 +4,7 @@ import type { Employee, LineSessionResponse } from '@hrm/shared'
 import { LinkScreen } from './LinkScreen'
 import { AttendanceCard } from './AttendanceCard'
 import { TimeCorrectionCard } from './TimeCorrectionCard'
+import { LeaveRequestCard } from './LeaveRequestCard'
 import './App.css'
 
 type Profile = {
@@ -53,6 +54,8 @@ function EmployeeHome({ employee }: { employee: Employee }) {
       <AttendanceCard />
 
       <TimeCorrectionCard />
+
+      <LeaveRequestCard employee={employee} />
 
       <div className="card ok">
         <p className="headline">

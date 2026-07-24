@@ -22,6 +22,8 @@ import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
 import { TimeCorrectionListPage } from './pages/TimeCorrectionListPage'
 import { TimeCorrectionDetailPage } from './pages/TimeCorrectionDetailPage'
+import { LeaveRequestListPage } from './pages/LeaveRequestListPage'
+import { LeaveRequestDetailPage } from './pages/LeaveRequestDetailPage'
 import { HealthPage } from './pages/HealthPage'
 
 /**
@@ -73,6 +75,8 @@ const router = createBrowserRouter([
       { path: 'attendance', element: <AttendanceListPage /> },
       { path: 'time-corrections', element: <TimeCorrectionListPage /> },
       { path: 'time-corrections/:id', element: <TimeCorrectionDetailPage /> },
+      { path: 'leave-requests', element: <LeaveRequestListPage /> },
+      { path: 'leave-requests/:id', element: <LeaveRequestDetailPage /> },
       { path: 'leave-balances/bulk-grant', element: <LeaveBalanceBulkGrantPage /> },
       { path: 'master/jobs', element: <JobListPage /> },
       { path: 'master/jobs/new', element: <KeyedJobForm /> },

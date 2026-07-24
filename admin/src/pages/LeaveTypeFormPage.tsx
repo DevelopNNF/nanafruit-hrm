@@ -39,6 +39,7 @@ const emptyDraft: LeaveTypeInput = {
   isCountHoliday: false,
   isCountWeekend: false,
   defaultDaysPerYear: null,
+  requireReason: false,
   sortOrder: 0,
   isActive: true,
 }
@@ -84,6 +85,7 @@ export function LeaveTypeFormPage() {
           isCountHoliday: leaveType.isCountHoliday,
           isCountWeekend: leaveType.isCountWeekend,
           defaultDaysPerYear: leaveType.defaultDaysPerYear,
+          requireReason: leaveType.requireReason,
           sortOrder: leaveType.sortOrder,
           isActive: leaveType.isActive,
         })
@@ -312,6 +314,14 @@ export function LeaveTypeFormPage() {
                 />
                 <span>อนุญาตให้ลาเป็นชั่วโมง</span>
               </label>
+              <label className={checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={draft.requireReason}
+                  onChange={(e) => set('requireReason', e.target.checked)}
+                />
+                <span>บังคับให้ระบุเหตุผลตอนยื่นคำขอลา</span>
+              </label>
             </div>
           </section>
 
@@ -348,8 +358,7 @@ export function LeaveTypeFormPage() {
           <section className={`${card} mb-4`}>
             <h2 className={sectionTitle}>การนับวันลา (Day counting)</h2>
             <p className={`${muted} mb-3`}>
-              มีปฏิทินวันหยุดในระบบแล้ว (Master → วันหยุด) แต่ยังไม่มีการคำนวณวันลาที่อ่านค่านี้ —
-              ค่านี้จะถูกใช้งานจริงเมื่อมีเฟสยื่นคำขอลา/คำนวณวันลา
+              ใช้คำนวณจำนวนวันลาตอนพนักงานยื่นคำขอ โดยอ้างอิงปฏิทินวันหยุด (Master → วันหยุด) และวันทำงานตามกะของพนักงานแต่ละคน
             </p>
             <div className="flex flex-col gap-2.5">
               <label className={checkboxLabel}>

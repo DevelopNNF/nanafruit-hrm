@@ -63,6 +63,7 @@ function parseLeaveTypeInput(body: unknown): ParseResult<LeaveTypeInput> {
     'allowHourly',
     'isCountHoliday',
     'isCountWeekend',
+    'requireReason',
     'isActive',
   ] as const
   const booleans: Record<(typeof booleanFields)[number], boolean> = {} as never
@@ -138,6 +139,7 @@ function parseLeaveTypeInput(body: unknown): ParseResult<LeaveTypeInput> {
       isCountHoliday: booleans.isCountHoliday,
       isCountWeekend: booleans.isCountWeekend,
       defaultDaysPerYear,
+      requireReason: booleans.requireReason,
       sortOrder: sortOrderRaw,
       isActive: booleans.isActive,
     },
@@ -160,6 +162,23 @@ leaveTypesRouter.get('/leave-types', canRead, async (_req: Request, res: Respons
   try {
     const { rows } = await pool.query<LeaveTypeRow>(
       `${SELECT_LEAVE_TYPE} ORDER BY sort_order, leave_name`
+    )
+    const body: LeaveTypeListResponse = { leaveTypes: rows.map(rowToLeaveType) }
+    res.json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
+
+/** liff's leave-request form reads this — no requireRole, just authenticate
+ *  (mounted ahead of this router): an employee session has no HRM role at
+ *  all, but choosing which leave type to request needs the same active-type
+ *  list an admin sees, minus whichever ones are already retired. Registered
+ *  ahead of GET /leave-types/:id so "active" is never read as an id. */
+leaveTypesRouter.get('/leave-types/active', async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query<LeaveTypeRow>(
+      `${SELECT_LEAVE_TYPE} WHERE is_active = true ORDER BY sort_order, leave_name`
     )
     const body: LeaveTypeListResponse = { leaveTypes: rows.map(rowToLeaveType) }
     res.json(body)
@@ -197,8 +216,9 @@ leaveTypesRouter.post('/leave-types', canWrite, async (req: Request, res: Respon
         `INSERT INTO master_leave_types
            (leave_code, leave_name, is_paid, allow_half_day, allow_hourly,
             min_leave_days, max_leave_days, advance_notice_days, gender,
-            is_count_holiday, is_count_weekend, default_days_per_year, sort_order, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            is_count_holiday, is_count_weekend, default_days_per_year, require_reason,
+            sort_order, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING id`,
         [
           input.leaveCode,
@@ -213,6 +233,7 @@ leaveTypesRouter.post('/leave-types', canWrite, async (req: Request, res: Respon
           input.isCountHoliday,
           input.isCountWeekend,
           input.defaultDaysPerYear,
+          input.requireReason,
           input.sortOrder,
           input.isActive,
         ]
@@ -260,7 +281,8 @@ leaveTypesRouter.put('/leave-types/:id', canWrite, async (req: Request, res: Res
            allow_half_day = $5, allow_hourly = $6,
            min_leave_days = $7, max_leave_days = $8, advance_notice_days = $9,
            gender = $10, is_count_holiday = $11, is_count_weekend = $12,
-           default_days_per_year = $13, sort_order = $14, is_active = $15, updated_at = now()
+           default_days_per_year = $13, require_reason = $14,
+           sort_order = $15, is_active = $16, updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -276,6 +298,7 @@ leaveTypesRouter.put('/leave-types/:id', canWrite, async (req: Request, res: Res
           input.isCountHoliday,
           input.isCountWeekend,
           input.defaultDaysPerYear,
+          input.requireReason,
           input.sortOrder,
           input.isActive,
         ]
