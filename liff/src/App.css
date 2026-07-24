@@ -523,3 +523,85 @@
   background: var(--accent);
   color: #fff;
 }
+
+/* Confirm modal ------------------------------------------------------------ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(8, 6, 13, 0.45);
+  /* Above everything else in the app; there is only ever one modal at a time. */
+  z-index: 100;
+}
+
+.modal-dialog {
+  width: 100%;
+  max-width: 26rem;
+  padding: 2.5rem 1.25rem;
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: 0 -4px 24px rgba(8, 6, 13, 0.12);
+}
+
+.modal-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  text-align: center;
+  color: var(--text-h);
+}
+
+.modal-message {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.1rem;
+}
+
+.modal-actions .secondary-button {
+  flex: 1;
+}
+
+.modal-confirm-button {
+  flex: 1;
+  padding: 0.75rem;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  min-height: 2.75rem;
+  cursor: pointer;
+}
+
+.modal-confirm-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Toast --------------------------------------------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(1.5rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  padding: 0.75rem 1.25rem;
+  border-radius: 999px;
+  background: var(--text-h);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(8, 6, 13, 0.2);
+  z-index: 110;
+}

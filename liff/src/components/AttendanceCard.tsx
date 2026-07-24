@@ -4,6 +4,8 @@ import { clockAttendance, fetchAttendanceStatus } from '../api/attendance'
 import { ApiRequestError } from '../api/client'
 import { getCurrentCoordinates, type CoordinatesResult } from '../lib/geolocation'
 import { describeDevice } from '../lib/deviceInfo'
+import { ConfirmModal } from './ConfirmModal'
+import { Toast } from './Toast'
 
 type State =
   | { phase: 'loading' }
@@ -51,6 +53,11 @@ export function AttendanceCard() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [locationHint, setLocationHint] = useState<string | null>(null)
+  // Gating submit() behind an explicit confirm tap is what stops the
+  // repeated-tap-spam this replaces — the clock button itself no longer
+  // fires a network call.
+  const [confirming, setConfirming] = useState(false)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -74,11 +81,21 @@ export function AttendanceCard() {
       const event = await clockAttendance(eventType, result.ok ? result.coordinates : null, describeDevice())
       setState({ phase: 'ready', lastEvent: event })
       setLocationHint(locationHintFor(result))
+      setToastMessage(eventType === 'check_in' ? 'ลงเวลาเข้างานสำเร็จแล้ว' : 'ลงเวลาออกงานสำเร็จแล้ว')
+      return true
     } catch (err) {
       setError(messageFor(err))
+      return false
     } finally {
       setBusy(false)
     }
+  }
+
+  async function handleConfirm(eventType: AttendanceEventType) {
+    // Close either way: a failure is shown as `error` on the card itself,
+    // which the modal overlay would otherwise hide from view.
+    await submit(eventType)
+    setConfirming(false)
   }
 
   return (
@@ -101,18 +118,32 @@ export function AttendanceCard() {
             type="button"
             className={`clock-button ${nextEventType(state.lastEvent)}`}
             disabled={busy}
-            onClick={() => void submit(nextEventType(state.lastEvent))}
+            onClick={() => setConfirming(true)}
           >
-            {busy
-              ? 'กำลังบันทึก…'
-              : nextEventType(state.lastEvent) === 'check_in'
-                ? 'ลงเวลาเข้างาน'
-                : 'ลงเวลาออกงาน'}
+            {nextEventType(state.lastEvent) === 'check_in' ? 'ลงเวลาเข้างาน' : 'ลงเวลาออกงาน'}
           </button>
 
           {error !== null && <p className="form-error">{error}</p>}
           {error === null && locationHint !== null && <p className="hint">{locationHint}</p>}
+
+          {confirming && (
+            <ConfirmModal
+              title={
+                nextEventType(state.lastEvent) === 'check_in'
+                  ? 'ยืนยันลงเวลาเข้างาน?'
+                  : 'ยืนยันลงเวลาออกงาน?'
+              }
+              confirmLabel="ยืนยัน"
+              busy={busy}
+              onConfirm={() => void handleConfirm(nextEventType(state.lastEvent))}
+              onCancel={() => setConfirming(false)}
+            />
+          )}
         </>
+      )}
+
+      {toastMessage !== null && (
+        <Toast message={toastMessage} onDone={() => setToastMessage(null)} />
       )}
     </div>
   )
