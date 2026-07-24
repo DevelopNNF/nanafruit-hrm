@@ -38,6 +38,7 @@ const emptyDraft: LeaveTypeInput = {
   gender: 'all',
   isCountHoliday: false,
   isCountWeekend: false,
+  defaultDaysPerYear: null,
   sortOrder: 0,
   isActive: true,
 }
@@ -59,6 +60,7 @@ export function LeaveTypeFormPage() {
 
   const [draft, setDraft] = useState<LeaveTypeInput>(emptyDraft)
   const [hasMaxLeave, setHasMaxLeave] = useState(false)
+  const [hasDefaultDaysPerYear, setHasDefaultDaysPerYear] = useState(false)
   const [loading, setLoading] = useState(!isNew)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -81,10 +83,12 @@ export function LeaveTypeFormPage() {
           gender: leaveType.gender,
           isCountHoliday: leaveType.isCountHoliday,
           isCountWeekend: leaveType.isCountWeekend,
+          defaultDaysPerYear: leaveType.defaultDaysPerYear,
           sortOrder: leaveType.sortOrder,
           isActive: leaveType.isActive,
         })
         setHasMaxLeave(leaveType.maxLeaveDays !== null)
+        setHasDefaultDaysPerYear(leaveType.defaultDaysPerYear !== null)
         setLoading(false)
       })
       .catch((err: unknown) => {
@@ -104,6 +108,12 @@ export function LeaveTypeFormPage() {
     setHasMaxLeave(checked)
     if (!checked) set('maxLeaveDays', null)
     else if (draft.maxLeaveDays === null) set('maxLeaveDays', draft.minLeaveDays)
+  }
+
+  function toggleHasDefaultDaysPerYear(checked: boolean) {
+    setHasDefaultDaysPerYear(checked)
+    if (!checked) set('defaultDaysPerYear', null)
+    else if (draft.defaultDaysPerYear === null) set('defaultDaysPerYear', 6)
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -306,9 +316,40 @@ export function LeaveTypeFormPage() {
           </section>
 
           <section className={`${card} mb-4`}>
+            <h2 className={sectionTitle}>สิทธิ์วันลาประจำปี (Annual balance)</h2>
+            <div className="flex flex-col gap-2.5">
+              <label className={checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={hasDefaultDaysPerYear}
+                  onChange={(e) => toggleHasDefaultDaysPerYear(e.target.checked)}
+                />
+                <span>ประเภทนี้มีสิทธิ์วันลาสะสมต่อปี (ออกสิทธิ์ผ่านหน้า “สิทธิ์วันลา”)</span>
+              </label>
+              {hasDefaultDaysPerYear && (
+                <label className={`${fieldLabel} max-w-40`}>
+                  <span>
+                    จำนวนวันสิทธิ์เริ่มต้นต่อปี <span className={requiredMark}>*</span>
+                  </span>
+                  <input
+                    required
+                    type="number"
+                    min={0.5}
+                    step={0.5}
+                    className={fieldControl}
+                    value={draft.defaultDaysPerYear ?? ''}
+                    onChange={(e) => set('defaultDaysPerYear', Number(e.target.value))}
+                  />
+                </label>
+              )}
+            </div>
+          </section>
+
+          <section className={`${card} mb-4`}>
             <h2 className={sectionTitle}>การนับวันลา (Day counting)</h2>
             <p className={`${muted} mb-3`}>
-              ยังไม่มีปฏิทินวันหยุดในระบบ ค่านี้จะถูกใช้งานจริงเมื่อมีการคำนวณวันลาในเฟสถัดไป
+              มีปฏิทินวันหยุดในระบบแล้ว (Master → วันหยุด) แต่ยังไม่มีการคำนวณวันลาที่อ่านค่านี้ —
+              ค่านี้จะถูกใช้งานจริงเมื่อมีเฟสยื่นคำขอลา/คำนวณวันลา
             </p>
             <div className="flex flex-col gap-2.5">
               <label className={checkboxLabel}>

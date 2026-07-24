@@ -37,6 +37,9 @@ export type AuditAction =
   | 'holiday.create'
   | 'holiday.update'
   | 'holiday.delete'
+  | 'leave_balance.grant'
+  | 'leave_balance.adjust'
+  | 'leave_balance.bulk_grant'
 
 type Entry = {
   actor: AuthUser

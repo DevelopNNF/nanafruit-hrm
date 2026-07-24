@@ -22,6 +22,7 @@ import { listShifts } from '../api/shifts'
 import { listHolidayGroups } from '../api/holidayGroups'
 import { DatePicker } from '../components/DatePicker'
 import { LinkCodeCard } from '../components/LinkCodeCard'
+import { LeaveBalanceCard } from '../components/LeaveBalanceCard'
 import { useCanWrite } from '../auth/meContext'
 import { notify } from '../notifications/notify'
 import {
@@ -615,6 +616,15 @@ export function EmployeeFormPage() {
           </div>
         )}
       </form>
+
+      {/* Outside the employee form, not just visually after it: this card
+          renders its own <form> for adding an entry, and a <form> nested
+          inside another <form> is invalid HTML — the browser silently
+          un-nests them, which both breaks the inner submit button and
+          throws a hydration-mismatch error to the console. Viewable by any
+          role that can see this employee at all — only the add-entry form
+          inside is gated on canWrite. */}
+      {id !== null && <LeaveBalanceCard employeeId={id} canWrite={canWrite} />}
     </>
   )
 }

@@ -277,8 +277,9 @@ export type LocationResponse = { location: Location }
 /* Leave Type Master ----------------------------------------------------------- */
 
 /** A row in master_leave_types: configuration rules for one type of leave.
- *  Not a request and not a balance — see the migration's comment for why
- *  quota/entitlement is deliberately left out of this shape. */
+ *  Not a request and not a balance — actual entitlement/usage per employee
+ *  lives in LeaveBalanceEntry (leave_balance_entries), which this type only
+ *  suggests a default amount for. */
 export type LeaveType = {
   id: number
   leaveCode: string
@@ -297,13 +298,18 @@ export type LeaveType = {
    *  compared against Employee.gender, which can be null. */
   gender: 'all' | Gender
   /** Whether a public holiday inside the leave range counts as a leave day.
-   *  Stored but not yet enforced — there is no holiday calendar in this
-   *  system yet. */
+   *  Stored but not yet enforced — there is a holiday calendar now
+   *  (HolidayGroup/Holiday) but the leave-day-calculation logic that would
+   *  read it doesn't exist until the leave-request phase. */
   isCountHoliday: boolean
   /** Whether a non-working day (weekend, or a day outside the employee's
    *  shift) inside the leave range counts as a leave day. Same caveat as
    *  isCountHoliday. */
   isCountWeekend: boolean
+  /** Suggested amount for a year's 'grant' entry in LeaveBalanceEntry — see
+   *  that migration's comment. Null means this type has no banked
+   *  entitlement (e.g. ลาไม่รับค่าจ้าง) and never gets a grant. */
+  defaultDaysPerYear: number | null
   /** Display order in lists/forms — lower first. */
   sortOrder: number
   isActive: boolean
@@ -317,6 +323,85 @@ export type LeaveTypeListResponse = { leaveTypes: LeaveType[] }
 
 /** GET /api/leave-types/:id, POST, PUT */
 export type LeaveTypeResponse = { leaveType: LeaveType }
+
+/* Leave Balance -------------------------------------------------------------- */
+
+/**
+ * A row in leave_balance_entries — one transaction against an employee's
+ * leave-type balance for one year. The balance itself is never stored; it is
+ * SUM(amountDays) over every entry for the same (employeeId, leaveTypeId,
+ * year) — see the migration's comment for why this is a ledger rather than
+ * a mutable snapshot.
+ */
+export const LEAVE_BALANCE_ENTRY_TYPES = ['grant', 'carry_over', 'adjustment', 'usage'] as const
+export type LeaveBalanceEntryType = (typeof LEAVE_BALANCE_ENTRY_TYPES)[number]
+
+export type LeaveBalanceEntry = {
+  id: number
+  employeeId: number
+  leaveTypeId: number
+  year: number
+  entryType: LeaveBalanceEntryType
+  /** Positive for grant/carry_over, negative for usage, either sign for
+   *  adjustment — enforced by a DB CHECK, not just convention. */
+  amountDays: number
+  /** Required when entryType is 'adjustment', null otherwise. */
+  reason: string | null
+  /** The admin's display name at the time this entry was made. */
+  createdByName: string
+  /** ISO 8601. */
+  createdAt: string
+}
+
+/** Body of POST /api/employees/:employeeId/leave-balances/entries. employeeId
+ *  itself is not an input — it's the route param that says whose balance
+ *  this is. entryType is restricted to the kinds HR can create by hand —
+ *  'usage' has no route yet (see the migration's comment), so it's excluded
+ *  here rather than merely discouraged. */
+export type LeaveBalanceEntryInput = {
+  leaveTypeId: number
+  year: number
+  entryType: Exclude<LeaveBalanceEntryType, 'usage'>
+  amountDays: number
+  reason: string | null
+}
+
+/** GET /api/employees/:employeeId/leave-balances/entries */
+export type LeaveBalanceEntryListResponse = { entries: LeaveBalanceEntry[] }
+
+/** POST /api/employees/:employeeId/leave-balances/entries */
+export type LeaveBalanceEntryResponse = { entry: LeaveBalanceEntry }
+
+/** One leave type's balance summary for one employee/year, derived by
+ *  summing leave_balance_entries grouped by entryType. remainingDays is the
+ *  total of all of them combined, not merely granted minus used — an
+ *  adjustment can move it either way. */
+export type LeaveBalanceSummary = {
+  leaveTypeId: number
+  leaveCode: string
+  leaveName: string
+  year: number
+  grantedDays: number
+  usedDays: number
+  adjustmentDays: number
+  remainingDays: number
+}
+
+/** GET /api/employees/:employeeId/leave-balances */
+export type LeaveBalanceSummaryListResponse = { summaries: LeaveBalanceSummary[] }
+
+/** POST /api/leave-balances/bulk-grant — issues one 'grant' entry, amount
+ *  taken from LeaveType.defaultDaysPerYear, to every active employee who
+ *  doesn't already have a 'grant' entry for this leaveTypeId/year. */
+export type BulkGrantLeaveRequest = { year: number; leaveTypeId: number }
+
+export type BulkGrantLeaveResponse = {
+  /** How many employees received a new grant entry. */
+  grantedCount: number
+  /** How many active employees already had one for this year/type and were
+   *  left untouched — bulk-grant is safe to run more than once. */
+  skippedCount: number
+}
 
 /* Holiday Group Master ------------------------------------------------------- */
 

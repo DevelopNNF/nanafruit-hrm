@@ -18,6 +18,7 @@ import { LeaveTypeListPage } from './pages/LeaveTypeListPage'
 import { LeaveTypeFormPage } from './pages/LeaveTypeFormPage'
 import { HolidayGroupListPage } from './pages/HolidayGroupListPage'
 import { HolidayGroupFormPage } from './pages/HolidayGroupFormPage'
+import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
 import { TimeCorrectionListPage } from './pages/TimeCorrectionListPage'
 import { TimeCorrectionDetailPage } from './pages/TimeCorrectionDetailPage'
@@ -72,6 +73,7 @@ const router = createBrowserRouter([
       { path: 'attendance', element: <AttendanceListPage /> },
       { path: 'time-corrections', element: <TimeCorrectionListPage /> },
       { path: 'time-corrections/:id', element: <TimeCorrectionDetailPage /> },
+      { path: 'leave-balances/bulk-grant', element: <LeaveBalanceBulkGrantPage /> },
       { path: 'master/jobs', element: <JobListPage /> },
       { path: 'master/jobs/new', element: <KeyedJobForm /> },
       { path: 'master/jobs/:id', element: <KeyedJobForm /> },

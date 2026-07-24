@@ -20,6 +20,7 @@ export type LeaveTypeRow = {
   gender: string
   is_count_holiday: boolean
   is_count_weekend: boolean
+  default_days_per_year: string | null // numeric: pg hands these back as strings too
   sort_order: number
   is_active: boolean
 }
@@ -27,7 +28,7 @@ export type LeaveTypeRow = {
 export const SELECT_LEAVE_TYPE = `
   SELECT id, leave_code, leave_name, is_paid, allow_half_day, allow_hourly,
          min_leave_days, max_leave_days, advance_notice_days, gender,
-         is_count_holiday, is_count_weekend, sort_order, is_active
+         is_count_holiday, is_count_weekend, default_days_per_year, sort_order, is_active
   FROM master_leave_types
 `
 
@@ -45,6 +46,8 @@ export function rowToLeaveType(row: LeaveTypeRow): LeaveType {
     gender: row.gender as LeaveType['gender'],
     isCountHoliday: row.is_count_holiday,
     isCountWeekend: row.is_count_weekend,
+    defaultDaysPerYear:
+      row.default_days_per_year === null ? null : Number(row.default_days_per_year),
     sortOrder: row.sort_order,
     isActive: row.is_active,
   }

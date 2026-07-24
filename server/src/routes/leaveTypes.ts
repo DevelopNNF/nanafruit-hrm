@@ -109,6 +109,20 @@ function parseLeaveTypeInput(body: unknown): ParseResult<LeaveTypeInput> {
     return { ok: false, message: 'sortOrder must be an integer' }
   }
 
+  const defaultDaysPerYearRaw = raw['defaultDaysPerYear']
+  let defaultDaysPerYear: number | null
+  if (defaultDaysPerYearRaw === null || defaultDaysPerYearRaw === undefined) {
+    defaultDaysPerYear = null
+  } else if (
+    typeof defaultDaysPerYearRaw === 'number' &&
+    Number.isFinite(defaultDaysPerYearRaw) &&
+    defaultDaysPerYearRaw > 0
+  ) {
+    defaultDaysPerYear = defaultDaysPerYearRaw
+  } else {
+    return { ok: false, message: 'defaultDaysPerYear must be a positive number or null' }
+  }
+
   return {
     ok: true,
     value: {
@@ -123,6 +137,7 @@ function parseLeaveTypeInput(body: unknown): ParseResult<LeaveTypeInput> {
       gender: genderRaw as LeaveTypeInput['gender'],
       isCountHoliday: booleans.isCountHoliday,
       isCountWeekend: booleans.isCountWeekend,
+      defaultDaysPerYear,
       sortOrder: sortOrderRaw,
       isActive: booleans.isActive,
     },
@@ -182,8 +197,8 @@ leaveTypesRouter.post('/leave-types', canWrite, async (req: Request, res: Respon
         `INSERT INTO master_leave_types
            (leave_code, leave_name, is_paid, allow_half_day, allow_hourly,
             min_leave_days, max_leave_days, advance_notice_days, gender,
-            is_count_holiday, is_count_weekend, sort_order, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            is_count_holiday, is_count_weekend, default_days_per_year, sort_order, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING id`,
         [
           input.leaveCode,
@@ -197,6 +212,7 @@ leaveTypesRouter.post('/leave-types', canWrite, async (req: Request, res: Respon
           input.gender,
           input.isCountHoliday,
           input.isCountWeekend,
+          input.defaultDaysPerYear,
           input.sortOrder,
           input.isActive,
         ]
@@ -244,7 +260,7 @@ leaveTypesRouter.put('/leave-types/:id', canWrite, async (req: Request, res: Res
            allow_half_day = $5, allow_hourly = $6,
            min_leave_days = $7, max_leave_days = $8, advance_notice_days = $9,
            gender = $10, is_count_holiday = $11, is_count_weekend = $12,
-           sort_order = $13, is_active = $14, updated_at = now()
+           default_days_per_year = $13, sort_order = $14, is_active = $15, updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -259,6 +275,7 @@ leaveTypesRouter.put('/leave-types/:id', canWrite, async (req: Request, res: Res
           input.gender,
           input.isCountHoliday,
           input.isCountWeekend,
+          input.defaultDaysPerYear,
           input.sortOrder,
           input.isActive,
         ]
