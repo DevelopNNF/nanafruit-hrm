@@ -34,6 +34,64 @@
   font-size: 0.9rem;
 }
 
+/* Home nav list ------------------------------------------------------------ */
+
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text-h);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nav-item span {
+  opacity: 0.5;
+  font-weight: 400;
+}
+
+/* Sub-screen header ---------------------------------------------------------- */
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.page-header h1 {
+  font-size: 1.4rem;
+}
+
+.back-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card-bg);
+  color: var(--text-h);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .card {
   background: var(--card-bg);
   border: 1px solid var(--border);

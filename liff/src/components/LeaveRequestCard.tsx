@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { Employee, LeaveBalanceSummary, LeaveRequest, LeaveType } from '@hrm/shared'
-import { fetchMyLeaveBalances } from './api/leaveBalances'
-import { fetchActiveLeaveTypes } from './api/leaveTypes'
-import { cancelLeaveRequest, fetchMyLeaveRequests, submitLeaveRequest } from './api/leaveRequests'
-import { ApiRequestError } from './api/client'
+import { fetchMyLeaveBalances } from '../api/leaveBalances'
+import { fetchActiveLeaveTypes } from '../api/leaveTypes'
+import { cancelLeaveRequest, fetchMyLeaveRequests, submitLeaveRequest } from '../api/leaveRequests'
+import { ApiRequestError } from '../api/client'
 import { LeaveBalanceGauge } from './LeaveBalanceGauge'
 
 type Props = {

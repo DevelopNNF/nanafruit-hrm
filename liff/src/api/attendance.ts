@@ -5,7 +5,7 @@ import type {
   AttendanceEventType,
   AttendanceStatusResponse,
 } from '@hrm/shared'
-import type { Coordinates } from '../geolocation'
+import type { Coordinates } from '../lib/geolocation'
 import { apiFetch, jsonHeaders, unwrap } from './client'
 
 /** This employee's own most recent clock event, or null if they have none. */

@@ -1,4 +1,4 @@
-import './App.css'
+import '../App.css'
 
 // Shown when liff.init() never resolved, so the app proper has no SDK to talk
 // to. Deliberately dependency-free: whatever broke, this still has to render.

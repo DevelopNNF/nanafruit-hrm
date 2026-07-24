@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AttendanceEventType, TimeCorrectionRequest } from '@hrm/shared'
-import { fetchMyTimeCorrections, submitTimeCorrection } from './api/timeCorrections'
-import { ApiRequestError } from './api/client'
+import { fetchMyTimeCorrections, submitTimeCorrection } from '../api/timeCorrections'
+import { ApiRequestError } from '../api/client'
 
 type State =
   | { phase: 'loading' }

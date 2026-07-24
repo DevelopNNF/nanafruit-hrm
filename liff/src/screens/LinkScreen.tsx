@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { LineSessionResponse } from '@hrm/shared'
-import { ApiRequestError } from './api/client'
-import { linkAccount } from './api/auth'
+import { ApiRequestError } from '../api/client'
+import { linkAccount } from '../api/auth'
 
 type Props = {
   idToken: string

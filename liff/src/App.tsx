@@ -1,16 +1,11 @@
 import { useEffect, useState } from 'react'
-import liff from '@line/liff'
 import type { Employee, LineSessionResponse } from '@hrm/shared'
-import { LinkScreen } from './LinkScreen'
-import { AttendanceCard } from './AttendanceCard'
-import { TimeCorrectionCard } from './TimeCorrectionCard'
-import { LeaveRequestCard } from './LeaveRequestCard'
+import { LinkScreen } from './screens/LinkScreen'
+import { HomeScreen, type SubScreen } from './screens/HomeScreen'
+import { LeaveScreen } from './screens/LeaveScreen'
+import { TimeCorrectionScreen } from './screens/TimeCorrectionScreen'
+import { ProfileScreen } from './screens/ProfileScreen'
 import './App.css'
-
-type Profile = {
-  displayName: string
-  pictureUrl?: string
-}
 
 type Props = {
   idToken: string
@@ -18,65 +13,37 @@ type Props = {
   initialSession: LineSessionResponse | null
 }
 
+type Screen = 'home' | SubScreen
+
+const HISTORY_STATE_KEY = 'liffSubScreen'
+
 function EmployeeHome({ employee }: { employee: Employee }) {
-  const [profile, setProfile] = useState<Profile | null>(null)
+  const [screen, setScreen] = useState<Screen>('home')
 
   useEffect(() => {
-    // Display only. Anything the server is asked to trust has to come from
-    // liff.getIDToken() and be verified against LINE server-side — a client can
-    // claim any profile it likes, so this name is decoration, not identity.
-    // The name below it, in the card, is the one the server vouches for.
-    liff.getProfile().then(
-      (p) => setProfile({ displayName: p.displayName, pictureUrl: p.pictureUrl }),
-      () => {
-        // Decoration failing to load is not worth surfacing.
-      },
-    )
+    // The LINE in-app browser on Android maps the hardware/gesture back button
+    // to browser history. Without a history entry for sub-screens, pressing
+    // back on one would exit the LIFF window instead of returning home.
+    function onPopState() {
+      setScreen('home')
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  return (
-    <main className="app">
-      {profile && (
-        <header className="profile">
-          {profile.pictureUrl && (
-            <img src={profile.pictureUrl} alt="" width={44} height={44} />
-          )}
-          <div>
-            <p className="greeting">สวัสดี</p>
-            <p className="name">{profile.displayName}</p>
-          </div>
-        </header>
-      )}
+  function navigate(next: SubScreen) {
+    history.pushState({ [HISTORY_STATE_KEY]: next }, '')
+    setScreen(next)
+  }
 
-      <h1>HRM</h1>
-      <p className="subtitle">ข้อมูลพนักงานของคุณ</p>
+  function back() {
+    history.back()
+  }
 
-      <AttendanceCard />
-
-      <TimeCorrectionCard />
-
-      <LeaveRequestCard employee={employee} />
-
-      <div className="card ok">
-        <p className="headline">
-          {employee.title}
-          {employee.firstNameTh} {employee.lastNameTh}
-        </p>
-        <dl>
-          <dt>รหัสพนักงาน</dt>
-          <dd>{employee.employeeCode}</dd>
-          <dt>ตำแหน่ง</dt>
-          <dd>{employee.employment.jobTitle}</dd>
-          <dt>ประเภท</dt>
-          <dd>{employee.employment.employmentType}</dd>
-          <dt>วันที่เริ่มงาน</dt>
-          <dd>{employee.employment.hireDate}</dd>
-          <dt>สถานะ</dt>
-          <dd>{employee.employment.status}</dd>
-        </dl>
-      </div>
-    </main>
-  )
+  if (screen === 'leave') return <LeaveScreen employee={employee} onBack={back} />
+  if (screen === 'correction') return <TimeCorrectionScreen onBack={back} />
+  if (screen === 'profile') return <ProfileScreen employee={employee} onBack={back} />
+  return <HomeScreen onNavigate={navigate} />
 }
 
 function App({ idToken, initialSession }: Props) {

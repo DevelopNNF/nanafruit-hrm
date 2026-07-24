@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { AttendanceEvent, AttendanceEventType } from '@hrm/shared'
-import { clockAttendance, fetchAttendanceStatus } from './api/attendance'
-import { ApiRequestError } from './api/client'
-import { getCurrentCoordinates, type CoordinatesResult } from './geolocation'
-import { describeDevice } from './deviceInfo'
+import { clockAttendance, fetchAttendanceStatus } from '../api/attendance'
+import { ApiRequestError } from '../api/client'
+import { getCurrentCoordinates, type CoordinatesResult } from '../lib/geolocation'
+import { describeDevice } from '../lib/deviceInfo'
 
 type State =
   | { phase: 'loading' }

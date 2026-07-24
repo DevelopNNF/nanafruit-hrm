@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import liff from '@line/liff'
 import './index.css'
 import App from './App.tsx'
-import BootFailure from './BootFailure.tsx'
+import BootFailure from './screens/BootFailure.tsx'
 import { startSession } from './api/auth.ts'
 
 const root = createRoot(document.getElementById('root')!)
