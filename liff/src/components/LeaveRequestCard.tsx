@@ -245,8 +245,8 @@ export function LeaveRequestCard({ employee }: Props) {
   }
 
   return (
-    <div className="card ok leave-card">
-      <p className="headline">คำขอลา</p>
+    <div className="leave-card">
+      {/* <p className="headline">คำขอลา</p> */}
 
       {mode === 'list' && (
         <>
@@ -255,6 +255,10 @@ export function LeaveRequestCard({ employee }: Props) {
 
           {listState.phase === 'ready' && (
             <>
+              <button type="button" className="secondary-button" onClick={openForm}>
+                ยื่นขอลา
+              </button>
+
               {listState.requests.length === 0 ? (
                 <p className="hint">ยังไม่มีคำขอลา</p>
               ) : (
@@ -283,9 +287,6 @@ export function LeaveRequestCard({ employee }: Props) {
                   ))}
                 </ul>
               )}
-              <button type="button" className="secondary-button" onClick={openForm}>
-                ยื่นขอลา
-              </button>
             </>
           )}
         </>
