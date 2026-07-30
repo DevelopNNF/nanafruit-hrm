@@ -524,6 +524,133 @@
   color: #fff;
 }
 
+/* Calendar screen ------------------------------------------------------------ */
+
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.calendar-nav-button {
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card-bg);
+  color: var(--text-h);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.calendar-month-label {
+  font-weight: 600;
+  color: var(--text-h);
+  font-size: 0.95rem;
+}
+
+.calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.calendar-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.calendar-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+}
+
+.calendar-dot.workday {
+  background: var(--bg);
+}
+
+.calendar-dot.weekly_off {
+  background: var(--border);
+}
+
+.calendar-dot.holiday {
+  background: var(--warn);
+  border-color: var(--warn);
+  opacity: 0.6;
+}
+
+.calendar-dot.leave {
+  background: var(--ok);
+  border-color: var(--ok);
+  opacity: 0.6;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 1.1rem;
+}
+
+.calendar-weekday {
+  text-align: center;
+  font-size: 0.675rem;
+  font-weight: 600;
+  opacity: 0.5;
+  padding-bottom: 0.4rem;
+}
+
+.calendar-day {
+  aspect-ratio: 1;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--text-h);
+  cursor: pointer;
+  padding: 0;
+}
+
+.calendar-day.empty {
+  cursor: default;
+}
+
+.calendar-day.weekly_off {
+  background: var(--border);
+}
+
+.calendar-day.holiday {
+  background: rgba(242, 169, 0, 0.16);
+  color: #8a5f00;
+}
+
+.calendar-day.leave {
+  background: rgba(6, 199, 85, 0.14);
+  color: #046b30;
+}
+
+.calendar-day.today {
+  box-shadow: inset 0 0 0 1.5px var(--text-h);
+}
+
+.calendar-day.selected {
+  box-shadow: inset 0 0 0 2px var(--ok);
+}
+
+.calendar-detail {
+  margin-top: 0.25rem;
+}
+
 /* Confirm modal ------------------------------------------------------------ */
 
 .modal-overlay {

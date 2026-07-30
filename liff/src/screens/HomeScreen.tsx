@@ -7,7 +7,7 @@ type Profile = {
   pictureUrl?: string
 }
 
-export type SubScreen = 'leave' | 'correction' | 'profile'
+export type SubScreen = 'leave' | 'correction' | 'profile' | 'calendar'
 
 type Props = {
   onNavigate: (screen: SubScreen) => void
@@ -48,6 +48,10 @@ export function HomeScreen({ onNavigate }: Props) {
       <AttendanceCard />
 
       <nav className="nav-list">
+        <button type="button" className="nav-item" onClick={() => onNavigate('calendar')}>
+          ปฏิทินการทำงาน
+          <span aria-hidden="true">→</span>
+        </button>
         <button type="button" className="nav-item" onClick={() => onNavigate('leave')}>
           ลา
           <span aria-hidden="true">→</span>

@@ -5,6 +5,7 @@ import { HomeScreen, type SubScreen } from './screens/HomeScreen'
 import { LeaveScreen } from './screens/LeaveScreen'
 import { TimeCorrectionScreen } from './screens/TimeCorrectionScreen'
 import { ProfileScreen } from './screens/ProfileScreen'
+import { CalendarScreen } from './screens/CalendarScreen'
 import './App.css'
 
 type Props = {
@@ -43,6 +44,7 @@ function EmployeeHome({ employee }: { employee: Employee }) {
   if (screen === 'leave') return <LeaveScreen employee={employee} onBack={back} />
   if (screen === 'correction') return <TimeCorrectionScreen onBack={back} />
   if (screen === 'profile') return <ProfileScreen employee={employee} onBack={back} />
+  if (screen === 'calendar') return <CalendarScreen onBack={back} />
   return <HomeScreen onNavigate={navigate} />
 }
 

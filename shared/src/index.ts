@@ -714,6 +714,33 @@ export type TimeCorrectionDetailResponse = { request: TimeCorrectionListItem }
  *  every time, never optional. */
 export type TimeCorrectionRejectRequest = { reason: string }
 
+/* Calendar -------------------------------------------------------------- */
+
+/**
+ * One day's classification on an employee's monthly calendar, in priority
+ * order (a day can only be one of these, so an approved leave wins over a
+ * holiday, which wins over a plain weekly off):
+ * 'leave' — an approved leave_requests row covers this date.
+ * 'holiday' — this date is in the employee's holiday group.
+ * 'weekly_off' — this date is outside the employee's shift's workdays bitmask.
+ * 'workday' — everything else, including every day when the employee has no
+ * shift assigned yet (no bitmask to check against).
+ */
+export const CALENDAR_DAY_STATUSES = ['workday', 'weekly_off', 'holiday', 'leave'] as const
+export type CalendarDayStatus = (typeof CALENDAR_DAY_STATUSES)[number]
+
+export type CalendarDay = {
+  /** Calendar date, `YYYY-MM-DD`. */
+  date: string
+  status: CalendarDayStatus
+  /** holidayName when status is 'holiday', leaveTypeName when status is
+   *  'leave', null otherwise. */
+  label: string | null
+}
+
+/** GET /api/calendar/me?year=YYYY&month=MM — one calendar month, in date order. */
+export type MonthCalendarResponse = { days: CalendarDay[] }
+
 /* Health ------------------------------------------------------------------ */
 
 /** GET /api/health */

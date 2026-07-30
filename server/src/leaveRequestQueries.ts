@@ -189,20 +189,21 @@ function shiftWorkingMinutes(shift: ShiftDayInfo): number {
 }
 
 /** ISO weekday of a UTC-midnight date, as a bit position: Monday = 0 ...
- *  Sunday = 6, matching master_shifts.workdays' encoding. */
-function isoWeekdayBit(date: Date): number {
+ *  Sunday = 6, matching master_shifts.workdays' encoding. Exported for
+ *  calendarQueries.ts, which classifies a whole month the same way. */
+export function isoWeekdayBit(date: Date): number {
   return (date.getUTCDay() + 6) % 7
 }
 
-function isWorkday(date: Date, workdays: number): boolean {
+export function isWorkday(date: Date, workdays: number): boolean {
   return (workdays & (1 << isoWeekdayBit(date))) !== 0
 }
 
-function parseDateOnlyUtc(dateStr: string): Date {
+export function parseDateOnlyUtc(dateStr: string): Date {
   return new Date(`${dateStr}T00:00:00Z`)
 }
 
-function toDateOnlyString(date: Date): string {
+export function toDateOnlyString(date: Date): string {
   const iso = date.toISOString()
   return iso.slice(0, 10)
 }
