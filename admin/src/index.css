@@ -65,4 +65,44 @@
   :where(a, button, input, select, textarea, [tabindex]):focus-visible {
     @apply rounded-md outline-2 outline-offset-2 outline-navy;
   }
+
+  /* Thin, on-brand scrollbars instead of the OS default — slate on the light
+     content, translucent white on the dark rail so it doesn't stand out
+     against bg-shell the way a light native scrollbar does. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8;
+  }
+
+  /* `scrollbar-color` on `aside` alone wouldn't reach `nav`, the element that
+     actually scrolls in there — descendants are directly matched (and so
+     overridden) by the `*` rule above, not just inheriting from their
+     ancestor, so the override has to reach them explicitly. */
+  aside,
+  aside * {
+    scrollbar-color: rgb(255 255 255 / 25%) transparent;
+  }
+  aside ::-webkit-scrollbar-thumb {
+    background-color: rgb(255 255 255 / 25%);
+  }
+  aside ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(255 255 255 / 40%);
+  }
 }

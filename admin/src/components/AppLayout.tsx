@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
 import {
@@ -8,7 +8,9 @@ import {
   Database,
   LayoutDashboard,
   LogOut,
+  Menu,
   Users,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import type { Role } from '@hrm/shared'
@@ -120,19 +122,55 @@ export function AppLayout() {
     })
   }
 
+  // Below the `shell` breakpoint the rail has nowhere to stand, so it becomes
+  // a collapsible off-canvas drawer instead of falling back to a top bar: a
+  // hamburger button opens it over the page, and it closes itself once a link
+  // is picked so it never lingers over the page it just navigated to.
+  const [mobileOpen, setMobileOpen] = useState(false)
+
+  useEffect(() => {
+    setMobileOpen(false)
+  }, [location.pathname])
+
   return (
     <div className="flex flex-1 flex-col shell:flex-row">
-      {/* A dark rail against the light content on wide screens; a top bar on
-          narrow ones, where a full-height rail would cost more width than it
-          earns. Same markup and order either way — only the direction and a
-          few sizes change. */}
-      <aside
-        className="sticky top-0 z-10 flex flex-row flex-wrap items-center gap-x-4 gap-y-2
-          bg-shell px-4 py-3 text-shell-fg-dim
-          shell:h-svh shell:w-62 shell:flex-none shell:flex-col shell:flex-nowrap
-          shell:items-stretch shell:gap-0 shell:px-3.5 shell:py-5"
+      <div
+        className="sticky top-0 z-10 flex items-center gap-3 bg-shell px-4 py-3 text-shell-fg
+          shell:hidden"
       >
-        <div className="flex items-center gap-2.5 shell:px-2 shell:pt-1 shell:pb-6">
+        <button
+          type="button"
+          onClick={() => setMobileOpen(true)}
+          aria-label="เปิดเมนู"
+          className="grid size-9 flex-none place-items-center rounded-md text-shell-fg-dim
+            transition-colors hover:bg-white/6 hover:text-shell-fg"
+        >
+          <Menu size={20} />
+        </button>
+        <span className="text-base font-bold tracking-wide text-white">HRM</span>
+      </div>
+
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/40 shell:hidden"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* A dark rail against the light content, always a vertical sidebar:
+          fixed and off-canvas (slid out via translate-x) below the `shell`
+          breakpoint so it can be toggled open over the page, sticky and
+          always visible above it. Same markup and order either way — only
+          how it's positioned changes. */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-30 flex w-72 max-w-[85vw] flex-col bg-shell px-3.5
+          py-5 text-shell-fg-dim shadow-2xl transition-transform duration-200 ease-out
+          shell:sticky shell:top-0 shell:h-svh shell:w-62 shell:flex-none shell:translate-x-0
+          shell:px-3.5 shell:py-5 shell:shadow-none
+          ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+      >
+        <div className="flex items-center gap-2.5 px-2 pt-1 pb-6">
           <div className="grid size-8 flex-none place-items-center rounded-md bg-white/10 text-shell-fg">
             <Users size={17} />
           </div>
@@ -140,14 +178,20 @@ export function AppLayout() {
             <span className="text-base font-bold tracking-wide text-white">HRM</span>
             <span className="text-[0.7rem] text-shell-fg-dim">Nanafruit</span>
           </div>
+          <button
+            type="button"
+            onClick={() => setMobileOpen(false)}
+            aria-label="ปิดเมนู"
+            className="ml-auto grid size-8 flex-none place-items-center rounded-md
+              text-shell-fg-dim transition-colors hover:bg-white/6 hover:text-shell-fg shell:hidden"
+          >
+            <X size={18} />
+          </button>
         </div>
 
-        <nav className="order-3 mt-3 flex basis-full flex-row gap-1 overflow-x-auto border-t
-          border-white/10 pt-3 scrollbar-none
-          shell:order-0 shell:mt-0 shell:basis-auto shell:flex-col shell:overflow-visible
-          shell:border-t-0 shell:pt-0">
-          <p className="hidden px-3 pb-2 text-[0.65rem] font-semibold tracking-widest
-            text-shell-fg-dim/70 uppercase shell:block">
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto border-t border-white/10 pt-3">
+          <p className="px-3 pb-2 text-[0.65rem] font-semibold tracking-widest
+            text-shell-fg-dim/70 uppercase">
             เมนูหลัก
           </p>
           {NAV.map((item) =>
@@ -157,7 +201,7 @@ export function AppLayout() {
                 <span>{item.label}</span>
               </NavLink>
             ) : (
-              <div key={item.label} className="flex flex-none flex-col shell:w-full">
+              <div key={item.label} className="flex flex-none flex-col">
                 <button
                   type="button"
                   onClick={() => toggleGroup(item.label)}
@@ -188,9 +232,8 @@ export function AppLayout() {
           )}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2 shell:ml-0 shell:mt-auto shell:flex-col
-          shell:items-stretch shell:gap-2.5 shell:border-t shell:border-white/10 shell:pt-4">
-          <div className="hidden flex-wrap gap-1 px-1 shell:flex">
+        <div className="mt-auto flex flex-col items-stretch gap-2.5 border-t border-white/10 pt-4">
+          <div className="flex flex-wrap gap-1 px-1">
             {roles.map((role) => (
               <span
                 key={role}
@@ -210,7 +253,7 @@ export function AppLayout() {
             >
               {initials(name)}
             </div>
-            <div className="hidden min-w-0 flex-col leading-tight shell:flex">
+            <div className="flex min-w-0 flex-col leading-tight">
               <span className="truncate text-[0.8rem] font-semibold text-shell-fg">
                 {name}
               </span>
@@ -220,7 +263,7 @@ export function AppLayout() {
 
           <button
             type="button"
-            className={`${button('ghost')} px-2.5 py-1.5 shell:w-full shell:px-3.5 shell:py-2`}
+            className={`${button('ghost')} w-full px-3.5 py-2`}
             // Naming the account for the same reason the API client does: the
             // active one is not guaranteed to be set. The redirect to Entra's
             // end-session endpoint that this would otherwise trigger is
@@ -228,7 +271,7 @@ export function AppLayout() {
             onClick={() => void instance.logoutRedirect({ account: getSignedInAccount() })}
           >
             <LogOut size={16} />
-            <span className="hidden shell:inline">ออกจากระบบ</span>
+            <span>ออกจากระบบ</span>
           </button>
         </div>
       </aside>
