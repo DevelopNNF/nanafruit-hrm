@@ -36,10 +36,6 @@ type NavItem =
 const NAV: NavItem[] = [
   { type: 'link', to: '/dashboard', label: 'ภาพรวม', icon: LayoutDashboard },
   { type: 'link', to: '/employees', label: 'พนักงาน', icon: Users },
-  { type: 'link', to: '/attendance', label: 'การลงเวลา', icon: Clock },
-  { type: 'link', to: '/time-corrections', label: 'คำขอแก้ไขเวลา', icon: ClipboardCheck },
-  { type: 'link', to: '/leave-requests', label: 'คำขอลา', icon: CalendarX2 },
-  { type: 'link', to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา', icon: CalendarPlus },
   {
     type: 'group',
     label: 'Master',
@@ -52,6 +48,10 @@ const NAV: NavItem[] = [
       { to: '/master/holidays', label: 'วันหยุด (Holiday)' },
     ],
   },
+  { type: 'link', to: '/attendance', label: 'การลงเวลา', icon: Clock },
+  { type: 'link', to: '/time-corrections', label: 'คำขอแก้ไขเวลา', icon: ClipboardCheck },
+  { type: 'link', to: '/leave-requests', label: 'คำขอลา', icon: CalendarX2 },
+  { type: 'link', to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา', icon: CalendarPlus },
   { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },
 ]
 
