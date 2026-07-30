@@ -3,11 +3,8 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
 import {
   Activity,
-  CalendarPlus,
-  CalendarX2,
   ChevronDown,
   Clock,
-  ClipboardCheck,
   Database,
   LayoutDashboard,
   LogOut,
@@ -48,10 +45,24 @@ const NAV: NavItem[] = [
       { to: '/master/holidays', label: 'วันหยุด (Holiday)' },
     ],
   },
-  { type: 'link', to: '/attendance', label: 'การลงเวลา', icon: Clock },
-  { type: 'link', to: '/time-corrections', label: 'คำขอแก้ไขเวลา', icon: ClipboardCheck },
-  { type: 'link', to: '/leave-requests', label: 'คำขอลา', icon: CalendarX2 },
-  { type: 'link', to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา', icon: CalendarPlus },
+  {
+    type: 'group',
+    label: 'การลงเวลา',
+    icon: Clock,
+    children: [
+      { to: '/attendance', label: 'รายละเอียดการลงเวลา'},
+      { to: '/time-corrections', label: 'คำขอแก้ไขเวลา'},
+    ],
+  },
+  {
+    type: 'group',
+    label: 'การลา',
+    icon: Clock,
+    children: [
+      { to: '/leave-requests', label: 'คำขอลา'},
+      { to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา'},
+    ],
+  },
   { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },
 ]
 
@@ -132,8 +143,8 @@ export function AppLayout() {
         </div>
 
         <nav className="order-3 mt-3 flex basis-full flex-row gap-1 overflow-x-auto border-t
-          border-white/10 pt-3 [scrollbar-width:none]
-          shell:order-none shell:mt-0 shell:basis-auto shell:flex-col shell:overflow-visible
+          border-white/10 pt-3 scrollbar-none
+          shell:order-0 shell:mt-0 shell:basis-auto shell:flex-col shell:overflow-visible
           shell:border-t-0 shell:pt-0">
           <p className="hidden px-3 pb-2 text-[0.65rem] font-semibold tracking-widest
             text-shell-fg-dim/70 uppercase shell:block">
