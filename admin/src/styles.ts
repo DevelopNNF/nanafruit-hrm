@@ -53,7 +53,7 @@ export function alert(tone: AlertTone = 'default'): string {
 }
 
 /** Same palette as alert(), sized and shadowed for a floating toast instead of
- *  an in-flow banner — no mb-5, react-hot-toast's own stack spacing owns that. */
+ *  an in-flow banner — no mb-5, Sonner's own stack spacing owns that. */
 export function toastCard(tone: AlertTone = 'default'): string {
   const base = 'rounded-lg border border-l-[3px] px-4 py-3.5 shadow-lg'
   switch (tone) {

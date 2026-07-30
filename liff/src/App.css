@@ -529,22 +529,25 @@
 .modal-overlay {
   position: fixed;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
   background: rgba(8, 6, 13, 0.45);
   /* Above everything else in the app; there is only ever one modal at a time. */
   z-index: 100;
 }
 
 .modal-dialog {
-  width: 100%;
+  /* Radix renders this as a sibling of .modal-overlay, not a child, so
+     centring lives here instead of on the overlay's old flexbox. */
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(100% - 2rem);
   max-width: 26rem;
   padding: 2.5rem 1.25rem;
   border-radius: 14px;
   background: var(--bg);
   box-shadow: 0 -4px 24px rgba(8, 6, 13, 0.12);
+  z-index: 100;
 }
 
 .modal-title {
@@ -586,22 +589,4 @@
 .modal-confirm-button:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-/* Toast --------------------------------------------------------------------- */
-
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: max(1.5rem, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  padding: 0.75rem 1.25rem;
-  border-radius: 999px;
-  background: var(--text-h);
-  color: #fff;
-  font-size: 0.85rem;
-  font-weight: 600;
-  white-space: nowrap;
-  box-shadow: 0 4px 16px rgba(8, 6, 13, 0.2);
-  z-index: 110;
 }

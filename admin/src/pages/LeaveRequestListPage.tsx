@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { LeaveRequestListItem, LeaveRequestStatus } from '@hrm/shared'
 import { listLeaveRequests } from '../api/leaveRequests'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../styles'
 
 type State =
@@ -52,12 +53,6 @@ function formatDateRange(request: LeaveRequestListItem): string {
   return range
 }
 
-const tabClass = (isActive: boolean) =>
-  [
-    'rounded-md px-3 py-1.5 text-[0.825rem] font-medium transition-colors',
-    isActive ? 'bg-navy text-white' : 'text-slate-600 hover:bg-slate-100',
-  ].join(' ')
-
 export function LeaveRequestListPage() {
   const [tab, setTab] = useState<TabValue>('pending')
   const [state, setState] = useState<State>({ phase: 'loading' })
@@ -92,98 +87,97 @@ export function LeaveRequestListPage() {
         </div>
       </header>
 
-      <div className="mb-5 flex flex-wrap gap-1.5 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
-        {TABS.map((t) => (
-          <button
-            key={t.value}
-            type="button"
-            className={tabClass(tab === t.value)}
-            onClick={() => setTab(t.value)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
+        <TabsList>
+          {TABS.map((t) => (
+            <TabsTrigger key={t.value} value={t.value}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      {state.phase === 'loading' && <p className={muted}>กำลังโหลด…</p>}
+        <TabsContent value={tab}>
+          {state.phase === 'loading' && <p className={muted}>กำลังโหลด…</p>}
 
-      {state.phase === 'error' && (
-        <div className={alert('danger')}>
-          <p className={alertTitle('danger')}>โหลดข้อมูลไม่สำเร็จ</p>
-          <p className={alertDetail}>{state.message}</p>
-        </div>
-      )}
+          {state.phase === 'error' && (
+            <div className={alert('danger')}>
+              <p className={alertTitle('danger')}>โหลดข้อมูลไม่สำเร็จ</p>
+              <p className={alertDetail}>{state.message}</p>
+            </div>
+          )}
 
-      {state.phase === 'ok' && state.requests.length === 0 && (
-        <div className={`rounded-lg border border-slate-200 bg-white shadow-sm ${cardEmpty}`}>
-          <p className="mb-1.5 font-semibold text-slate-900">ไม่พบคำขอในหมวดนี้</p>
-          <p className={muted}>ลองเปลี่ยนแท็บด้านบน</p>
-        </div>
-      )}
+          {state.phase === 'ok' && state.requests.length === 0 && (
+            <div className={`rounded-lg border border-slate-200 bg-white shadow-sm ${cardEmpty}`}>
+              <p className="mb-1.5 font-semibold text-slate-900">ไม่พบคำขอในหมวดนี้</p>
+              <p className={muted}>ลองเปลี่ยนแท็บด้านบน</p>
+            </div>
+          )}
 
-      {state.phase === 'ok' && state.requests.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
-            <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-              {state.requests.length} รายการ
-              {state.requests.length === 500 && ' (แสดงล่าสุด 500 รายการ)'}
-            </p>
-          </div>
+          {state.phase === 'ok' && state.requests.length > 0 && (
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
+                <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
+                  {state.requests.length} รายการ
+                  {state.requests.length === 500 && ' (แสดงล่าสุด 500 รายการ)'}
+                </p>
+              </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
-              <thead>
-                <tr>
-                  {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภทการลา', 'ช่วงวันที่', 'จำนวนวัน', 'เหตุผล', 'สถานะ'].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
+                  <thead>
+                    <tr>
+                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภทการลา', 'ช่วงวันที่', 'จำนวนวัน', 'เหตุผล', 'สถานะ'].map(
+                        (h) => (
+                          <th
+                            key={h}
+                            className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
+                          >
+                            {h}
+                          </th>
+                        )
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {state.requests.map((request, index) => (
+                      <tr
+                        key={request.id}
+                        onClick={() => void navigate(`/leave-requests/${request.id}`)}
+                        className="cursor-pointer hover:bg-slate-50"
                       >
-                        {h}
-                      </th>
-                    )
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {state.requests.map((request, index) => (
-                  <tr
-                    key={request.id}
-                    onClick={() => void navigate(`/leave-requests/${request.id}`)}
-                    className="cursor-pointer hover:bg-slate-50"
-                  >
-                    <td className="w-12 border-b border-slate-200 px-4 py-2.5 align-middle text-slate-500">
-                      {index + 1}
-                    </td>
-                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-medium text-slate-900">
-                      {request.employeeCode}
-                    </td>
-                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                      {request.employeeName}
-                    </td>
-                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                      {request.leaveTypeName}
-                    </td>
-                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
-                      {formatDateRange(request)}
-                    </td>
-                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600 tabular-nums">
-                      {request.totalDays}
-                    </td>
-                    <td className="max-w-64 truncate border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                      {request.reason ?? '—'}
-                    </td>
-                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
-                      <span className={badge(statusBadgeTone(request.status))}>{STATUS_LABEL[request.status]}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+                        <td className="w-12 border-b border-slate-200 px-4 py-2.5 align-middle text-slate-500">
+                          {index + 1}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-medium text-slate-900">
+                          {request.employeeCode}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                          {request.employeeName}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                          {request.leaveTypeName}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
+                          {formatDateRange(request)}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600 tabular-nums">
+                          {request.totalDays}
+                        </td>
+                        <td className="max-w-64 truncate border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                          {request.reason ?? '—'}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
+                          <span className={badge(statusBadgeTone(request.status))}>{STATUS_LABEL[request.status]}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </>
   )
 }

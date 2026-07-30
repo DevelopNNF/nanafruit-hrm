@@ -1,3 +1,24 @@
+@import 'tailwindcss';
+
+/* Bridges the existing --text/--bg/etc. custom properties (below) into
+   Tailwind's theme so new Tailwind-based components (Dialog, Toaster) share
+   the same palette as the rest of the hand-written CSS, instead of a second,
+   drifting set of colours. */
+@theme {
+  --color-text: #6b6375;
+  --color-text-h: #08060d;
+  --color-bg: #fff;
+  --color-border: #e5e4e7;
+  --color-card: #fbfbfa;
+  --color-ok: #06c755;
+  --color-warn: #f2a900;
+  --color-error: #d64545;
+  --color-accent: #06c755;
+
+  --font-sans: system-ui, 'Segoe UI', Roboto, 'Noto Sans Thai', sans-serif;
+  --font-mono: ui-monospace, Consolas, monospace;
+}
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;

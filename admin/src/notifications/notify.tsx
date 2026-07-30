@@ -2,7 +2,7 @@
 // out to the server — a page reaches for notify.* instead of reinventing a
 // toast call, so every page's wording lands in the same visual language.
 
-import toast from 'react-hot-toast'
+import { toast } from 'sonner'
 import { toastCard } from '../styles'
 
 function body(title: string, message?: string) {

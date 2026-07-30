@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import type { AttendanceEvent, AttendanceEventType } from '@hrm/shared'
 import { clockAttendance, fetchAttendanceStatus } from '../api/attendance'
 import { ApiRequestError } from '../api/client'
 import { getCurrentCoordinates, type CoordinatesResult } from '../lib/geolocation'
 import { describeDevice } from '../lib/deviceInfo'
 import { ConfirmModal } from './ConfirmModal'
-import { Toast } from './Toast'
 
 type State =
   | { phase: 'loading' }
@@ -57,7 +57,6 @@ export function AttendanceCard() {
   // repeated-tap-spam this replaces — the clock button itself no longer
   // fires a network call.
   const [confirming, setConfirming] = useState(false)
-  const [toastMessage, setToastMessage] = useState<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -81,7 +80,7 @@ export function AttendanceCard() {
       const event = await clockAttendance(eventType, result.ok ? result.coordinates : null, describeDevice())
       setState({ phase: 'ready', lastEvent: event })
       setLocationHint(locationHintFor(result))
-      setToastMessage(eventType === 'check_in' ? 'ลงเวลาเข้างานสำเร็จแล้ว' : 'ลงเวลาออกงานสำเร็จแล้ว')
+      toast(eventType === 'check_in' ? 'ลงเวลาเข้างานสำเร็จแล้ว' : 'ลงเวลาออกงานสำเร็จแล้ว')
       return true
     } catch (err) {
       setError(messageFor(err))
@@ -140,10 +139,6 @@ export function AttendanceCard() {
             />
           )}
         </>
-      )}
-
-      {toastMessage !== null && (
-        <Toast message={toastMessage} onDone={() => setToastMessage(null)} />
       )}
     </div>
   )

@@ -1,3 +1,5 @@
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog'
+
 type Props = {
   title: string
   message?: string
@@ -18,22 +20,18 @@ export function ConfirmModal({
   onCancel,
 }: Props) {
   return (
-    <div
-      className="modal-overlay"
-      role="presentation"
-      onClick={() => {
-        if (!busy) onCancel()
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        // Radix fires this for Escape and outside-click too — ignoring it
+        // while busy is what used to stop the overlay's onClick from
+        // cancelling mid-submit.
+        if (!open && !busy) onCancel()
       }}
     >
-      <div
-        className="modal-dialog"
-        role="alertdialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <p className="modal-title">{title}</p>
-        {message && <p className="modal-message">{message}</p>}
+      <DialogContent role="alertdialog">
+        <DialogTitle>{title}</DialogTitle>
+        {message && <DialogDescription>{message}</DialogDescription>}
         <div className="modal-actions">
           <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>
             {cancelLabel}
@@ -42,7 +40,7 @@ export function ConfirmModal({
             {busy ? 'กำลังบันทึก…' : confirmLabel}
           </button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

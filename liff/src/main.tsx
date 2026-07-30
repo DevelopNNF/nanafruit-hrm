@@ -5,6 +5,7 @@ import './index.css'
 import App from './App.tsx'
 import BootFailure from './screens/BootFailure.tsx'
 import { startSession } from './api/auth.ts'
+import { Toaster } from './components/ui/sonner.tsx'
 
 const root = createRoot(document.getElementById('root')!)
 
@@ -40,6 +41,7 @@ async function boot() {
 
   root.render(
     <StrictMode>
+      <Toaster />
       <App idToken={idToken} initialSession={session} />
     </StrictMode>,
   )
