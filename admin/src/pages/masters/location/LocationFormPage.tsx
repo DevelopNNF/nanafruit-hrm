@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import type { LocationInput } from '@hrm/shared'
-import { createLocation, getLocation, updateLocation } from '../api/locations'
-import { useIsAdmin } from '../auth/meContext'
-import { notify } from '../notifications/notify'
+import { createLocation, getLocation, updateLocation } from '../../../api/locations'
+import { useIsAdmin } from '../../../auth/meContext'
+import { notify } from '../../../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -18,7 +18,7 @@ import {
   pageHead,
   requiredMark,
   subtitle,
-} from '../styles'
+} from '../../../styles'
 
 const emptyDraft: LocationInput = {
   locationName: '',

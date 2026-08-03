@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search } from 'lucide-react'
 import type { LeaveType } from '@hrm/shared'
-import { listLeaveTypes, updateLeaveType } from '../api/leaveTypes'
-import { useCanWrite } from '../auth/meContext'
-import { notify } from '../notifications/notify'
+import { listLeaveTypes, updateLeaveType } from '../../../api/leaveTypes'
+import { useCanWrite } from '../../../auth/meContext'
+import { notify } from '../../../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -16,7 +16,7 @@ import {
   muted,
   pageHead,
   subtitle,
-} from '../styles'
+} from '../../../styles'
 
 type State =
   | { phase: 'loading' }

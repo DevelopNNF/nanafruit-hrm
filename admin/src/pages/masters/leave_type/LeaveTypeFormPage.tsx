@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import type { LeaveTypeInput } from '@hrm/shared'
-import { createLeaveType, getLeaveType, updateLeaveType } from '../api/leaveTypes'
-import { useCanWrite } from '../auth/meContext'
-import { notify } from '../notifications/notify'
+import { createLeaveType, getLeaveType, updateLeaveType } from '../../../api/leaveTypes'
+import { useCanWrite } from '../../../auth/meContext'
+import { notify } from '../../../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -18,7 +18,7 @@ import {
   pageHead,
   requiredMark,
   subtitle,
-} from '../styles'
+} from '../../../styles'
 
 const GENDER_OPTIONS: { value: LeaveTypeInput['gender']; label: string }[] = [
   { value: 'all', label: 'ทุกเพศ' },

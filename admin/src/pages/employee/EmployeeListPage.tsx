@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search } from 'lucide-react'
 import type { Employee } from '@hrm/shared'
-import { listEmployees } from '../api/employees'
-import { useCanWrite } from '../auth/meContext'
-import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../styles'
+import { listEmployees } from '../../api/employees'
+import { useCanWrite } from '../../auth/meContext'
+import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
 
 type State =
   | { phase: 'loading' }

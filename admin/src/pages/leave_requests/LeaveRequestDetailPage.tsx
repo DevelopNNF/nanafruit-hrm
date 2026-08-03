@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import type { TimeCorrectionListItem } from '@hrm/shared'
-import { approveTimeCorrection, getTimeCorrection, rejectTimeCorrection } from '../api/timeCorrections'
-import { useCanWrite } from '../auth/meContext'
-import { notify } from '../notifications/notify'
+import type { LeaveRequestListItem } from '@hrm/shared'
+import { approveLeaveRequest, getLeaveRequest, rejectLeaveRequest } from '../../api/leaveRequests'
+import { useCanWrite } from '../../auth/meContext'
+import { notify } from '../../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -20,19 +20,33 @@ import {
   specDd,
   specDt,
   subtitle,
-} from '../styles'
+} from '../../styles'
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; request: TimeCorrectionListItem }
+  | { phase: 'ok'; request: LeaveRequestListItem }
   | { phase: 'error'; message: string }
 
-const STATUS_LABEL = { pending: 'รอดำเนินการ', approved: 'อนุมัติแล้ว', rejected: 'ปฏิเสธแล้ว' } as const
+const STATUS_LABEL = {
+  pending: 'รอดำเนินการ',
+  approved: 'อนุมัติแล้ว',
+  rejected: 'ปฏิเสธแล้ว',
+  cancelled: 'ยกเลิกแล้ว',
+} as const
 
-function statusBadgeTone(status: TimeCorrectionListItem['status']): 'pending' | 'active' | 'danger' {
+function statusBadgeTone(status: LeaveRequestListItem['status']): 'pending' | 'active' | 'danger' | 'inactive' {
   if (status === 'approved') return 'active'
   if (status === 'rejected') return 'danger'
+  if (status === 'cancelled') return 'inactive'
   return 'pending'
+}
+
+function formatDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('th-TH', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
 function formatDateTime(iso: string): string {
@@ -45,7 +59,18 @@ function formatDateTime(iso: string): string {
   })
 }
 
-export function TimeCorrectionDetailPage() {
+function formatDateRange(request: LeaveRequestListItem): string {
+  const range =
+    request.startDate === request.endDate
+      ? formatDate(request.startDate)
+      : `${formatDate(request.startDate)} – ${formatDate(request.endDate)}`
+  if (request.startTime && request.endTime) {
+    return `${range} เวลา ${request.startTime.slice(0, 5)}–${request.endTime.slice(0, 5)}`
+  }
+  return range
+}
+
+export function LeaveRequestDetailPage() {
   const { id } = useParams()
   const canWrite = useCanWrite()
 
@@ -58,7 +83,7 @@ export function TimeCorrectionDetailPage() {
     const requestId = Number(id)
     const controller = new AbortController()
 
-    getTimeCorrection(requestId, controller.signal)
+    getLeaveRequest(requestId, controller.signal)
       .then((request) => setState({ phase: 'ok', request }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
@@ -73,18 +98,18 @@ export function TimeCorrectionDetailPage() {
 
   async function handleApprove() {
     if (state.phase !== 'ok') return
-    if (!confirm('อนุมัติคำขอแก้ไขเวลานี้?')) return
+    if (!confirm('อนุมัติคำขอลานี้?')) return
 
     setBusy(true)
     try {
-      const request = await approveTimeCorrection(state.request.id)
+      const request = await approveLeaveRequest(state.request.id)
       setState({ phase: 'ok', request })
-      notify.success('อนุมัติคำขอแล้ว', 'บันทึกเวลาลงในประวัติการลงเวลาแล้ว')
+      notify.success('อนุมัติคำขอแล้ว', 'บันทึกลงในสิทธิ์วันลาของพนักงานแล้ว')
     } catch (err) {
       notify.error('อนุมัติไม่สำเร็จ', err instanceof Error ? err.message : undefined)
       // The decision may have raced with another admin — refetch to show the
       // current, authoritative state rather than leave a stale "pending" view.
-      getTimeCorrection(state.request.id)
+      getLeaveRequest(state.request.id)
         .then((request) => setState({ phase: 'ok', request }))
         .catch(() => {})
     } finally {
@@ -98,13 +123,13 @@ export function TimeCorrectionDetailPage() {
 
     setBusy(true)
     try {
-      const request = await rejectTimeCorrection(state.request.id, rejectReason)
+      const request = await rejectLeaveRequest(state.request.id, rejectReason)
       setState({ phase: 'ok', request })
       setRejecting(false)
       notify.success('ปฏิเสธคำขอแล้ว')
     } catch (err) {
       notify.error('ปฏิเสธไม่สำเร็จ', err instanceof Error ? err.message : undefined)
-      getTimeCorrection(state.request.id)
+      getLeaveRequest(state.request.id)
         .then((request) => setState({ phase: 'ok', request }))
         .catch(() => {})
     } finally {
@@ -116,11 +141,11 @@ export function TimeCorrectionDetailPage() {
     <>
       <header className={pageHead}>
         <div>
-          <p className={eyebrow}>Time Attendance</p>
-          <h1>รายละเอียดคำขอแก้ไขเวลา</h1>
-          <p className={subtitle}>ตรวจสอบและอนุมัติ/ปฏิเสธคำขอแก้ไขเวลาเข้า-ออกงาน</p>
+          <p className={eyebrow}>Leave</p>
+          <h1>รายละเอียดคำขอลา</h1>
+          <p className={subtitle}>ตรวจสอบและอนุมัติ/ปฏิเสธคำขอลาจากพนักงาน</p>
         </div>
-        <Link className={link} to="/time-corrections">
+        <Link className={link} to="/leave-requests">
           ← กลับไปรายการคำขอ
         </Link>
       </header>
@@ -148,19 +173,22 @@ export function TimeCorrectionDetailPage() {
           </div>
 
           <dl className={spec}>
-            <dt className={specDt}>ประเภท</dt>
-            <dd className={specDd}>{state.request.eventType === 'check_in' ? 'เข้างาน' : 'ออกงาน'}</dd>
+            <dt className={specDt}>ประเภทการลา</dt>
+            <dd className={specDd}>{state.request.leaveTypeName}</dd>
 
-            <dt className={specDt}>วันเวลาที่ขอแก้ไข</dt>
-            <dd className={specDd}>{formatDateTime(state.request.requestedEventTime)}</dd>
+            <dt className={specDt}>ช่วงวันที่ลา</dt>
+            <dd className={specDd}>{formatDateRange(state.request)}</dd>
+
+            <dt className={specDt}>จำนวนวัน</dt>
+            <dd className={specDd}>{state.request.totalDays} วัน</dd>
 
             <dt className={specDt}>เหตุผลจากพนักงาน</dt>
-            <dd className={specDd}>{state.request.reason}</dd>
+            <dd className={specDd}>{state.request.reason ?? '—'}</dd>
 
             <dt className={specDt}>ส่งคำขอเมื่อ</dt>
             <dd className={specDd}>{formatDateTime(state.request.createdAt)}</dd>
 
-            {state.request.status !== 'pending' && (
+            {state.request.status !== 'pending' && state.request.status !== 'cancelled' && (
               <>
                 <dt className={specDt}>ดำเนินการโดย</dt>
                 <dd className={specDd}>{state.request.decidedByName}</dd>

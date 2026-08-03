@@ -13,19 +13,19 @@ import {
   type Job,
   type Shift,
 } from '@hrm/shared'
-import { createEmployee, deleteEmployee, getEmployee } from '../api/employees'
-import { listJobs } from '../api/jobs'
-import { listDepartments } from '../api/departments'
-import { listShifts } from '../api/shifts'
-import { listHolidayGroups } from '../api/holidayGroups'
-import { DatePicker } from '../components/DatePicker'
-import { EmployeeBasicTab } from '../components/EmployeeBasicTab'
-import { EmployeeEmploymentTab } from '../components/EmployeeEmploymentTab'
-import { LeaveBalanceCard } from '../components/LeaveBalanceCard'
-import { ShiftHistoryCard } from '../components/ShiftHistoryCard'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
-import { useCanWrite } from '../auth/meContext'
-import { notify } from '../notifications/notify'
+import { createEmployee, deleteEmployee, getEmployee } from '../../api/employees'
+import { listJobs } from '../../api/jobs'
+import { listDepartments } from '../../api/departments'
+import { listShifts } from '../../api/shifts'
+import { listHolidayGroups } from '../../api/holidayGroups'
+import { DatePicker } from '../../components/DatePicker'
+import { EmployeeBasicTab } from '../../components/EmployeeBasicTab'
+import { EmployeeEmploymentTab } from '../../components/EmployeeEmploymentTab'
+import { LeaveBalanceCard } from '../../components/LeaveBalanceCard'
+import { ShiftHistoryCard } from '../../components/ShiftHistoryCard'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
+import { useCanWrite } from '../../auth/meContext'
+import { notify } from '../../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -39,7 +39,7 @@ import {
   pageHead,
   requiredMark,
   subtitle,
-} from '../styles'
+} from '../../styles'
 
 /** Local calendar date as YYYY-MM-DD. toISOString would shift the day west of UTC. */
 function today(): string {

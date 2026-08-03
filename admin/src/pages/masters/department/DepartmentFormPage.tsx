@@ -7,9 +7,9 @@ import {
   getDepartment,
   listDepartments,
   updateDepartment,
-} from '../api/departments'
-import { useCanWrite } from '../auth/meContext'
-import { notify } from '../notifications/notify'
+} from '../../../api/departments'
+import { useCanWrite } from '../../../auth/meContext'
+import { notify } from '../../../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -23,7 +23,7 @@ import {
   pageHead,
   requiredMark,
   subtitle,
-} from '../styles'
+} from '../../../styles'
 
 const emptyDraft: DepartmentInput = {
   deptCode: '',

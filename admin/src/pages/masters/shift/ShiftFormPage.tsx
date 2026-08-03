@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { WORKDAYS, type ShiftInput } from '@hrm/shared'
-import { createShift, getShift, updateShift } from '../api/shifts'
-import { computeWorkMinutes, formatWorkMinutes } from '../shiftHours'
-import { TimeInput } from '../components/TimeInput'
-import { useCanWrite } from '../auth/meContext'
-import { notify } from '../notifications/notify'
+import { createShift, getShift, updateShift } from '../../../api/shifts'
+import { computeWorkMinutes, formatWorkMinutes } from '../../../shiftHours'
+import { TimeInput } from '../../../components/TimeInput'
+import { useCanWrite } from '../../../auth/meContext'
+import { notify } from '../../../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -20,7 +20,7 @@ import {
   pageHead,
   requiredMark,
   subtitle,
-} from '../styles'
+} from '../../../styles'
 
 const emptyDraft: ShiftInput = {
   shiftCode: '',

@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import type { JobInput } from '@hrm/shared'
-import { createJob, getJob, updateJob } from '../api/jobs'
-import { RichTextEditor } from '../components/RichTextEditor'
-import { useCanWrite } from '../auth/meContext'
-import { notify } from '../notifications/notify'
+import { createJob, getJob, updateJob } from '../../../api/jobs'
+import { RichTextEditor } from '../../../components/RichTextEditor'
+import { useCanWrite } from '../../../auth/meContext'
+import { notify } from '../../../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -19,7 +19,7 @@ import {
   pageHead,
   requiredMark,
   subtitle,
-} from '../styles'
+} from '../../../styles'
 
 const emptyDraft: JobInput = {
   jobTitle: '',

@@ -1,59 +1,70 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { TimeCorrectionListItem, TimeCorrectionStatus } from '@hrm/shared'
-import { listTimeCorrections } from '../api/timeCorrections'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
-import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../styles'
+import type { LeaveRequestListItem, LeaveRequestStatus } from '@hrm/shared'
+import { listLeaveRequests } from '../../api/leaveRequests'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
+import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; requests: TimeCorrectionListItem[] }
+  | { phase: 'ok'; requests: LeaveRequestListItem[] }
   | { phase: 'error'; message: string }
 
-type TabValue = TimeCorrectionStatus | 'all'
+type TabValue = LeaveRequestStatus | 'all'
 
 const TABS: { value: TabValue; label: string }[] = [
   { value: 'pending', label: 'รอดำเนินการ' },
   { value: 'approved', label: 'อนุมัติแล้ว' },
   { value: 'rejected', label: 'ปฏิเสธแล้ว' },
+  { value: 'cancelled', label: 'ยกเลิกแล้ว' },
   { value: 'all', label: 'ทั้งหมด' },
 ]
 
-const STATUS_LABEL: Record<TimeCorrectionStatus, string> = {
+const STATUS_LABEL: Record<LeaveRequestStatus, string> = {
   pending: 'รอดำเนินการ',
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
+  cancelled: 'ยกเลิกแล้ว',
 }
 
-function statusBadgeTone(status: TimeCorrectionStatus): 'pending' | 'active' | 'danger' {
+function statusBadgeTone(status: LeaveRequestStatus): 'pending' | 'active' | 'danger' | 'inactive' {
   if (status === 'approved') return 'active'
   if (status === 'rejected') return 'danger'
+  if (status === 'cancelled') return 'inactive'
   return 'pending'
 }
 
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString('th-TH', {
+function formatDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('th-TH', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
   })
 }
 
-export function TimeCorrectionListPage() {
+function formatDateRange(request: LeaveRequestListItem): string {
+  const range =
+    request.startDate === request.endDate
+      ? formatDate(request.startDate)
+      : `${formatDate(request.startDate)} – ${formatDate(request.endDate)}`
+  if (request.startTime && request.endTime) {
+    return `${range} (${request.startTime.slice(0, 5)}–${request.endTime.slice(0, 5)})`
+  }
+  return range
+}
+
+export function LeaveRequestListPage() {
   const [tab, setTab] = useState<TabValue>('pending')
   const [state, setState] = useState<State>({ phase: 'loading' })
   const navigate = useNavigate()
 
-  // No setState({ phase: 'loading' }) at the top: the initial state already
-  // is 'loading', and switching tabs just leaves the old table in place until
-  // the new one is ready, rather than flashing blank — same reasoning as
-  // AttendanceListPage's filter effect.
+  // No setState({ phase: 'loading' }) at the top: switching tabs leaves the
+  // old table in place until the new one is ready, rather than flashing
+  // blank — same reasoning as TimeCorrectionListPage's filter effect.
   useEffect(() => {
     const controller = new AbortController()
 
-    listTimeCorrections(tab === 'all' ? undefined : tab, controller.signal)
+    listLeaveRequests(tab === 'all' ? undefined : tab, controller.signal)
       .then((requests) => setState({ phase: 'ok', requests }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
@@ -70,9 +81,9 @@ export function TimeCorrectionListPage() {
     <>
       <header className={pageHead}>
         <div>
-          <p className={eyebrow}>Time Attendance</p>
-          <h1>คำขอแก้ไขเวลา</h1>
-          <p className={subtitle}>คำขอแก้ไข/เพิ่มเวลาเข้า-ออกงานจากพนักงาน รออนุมัติหรือปฏิเสธ</p>
+          <p className={eyebrow}>Leave</p>
+          <h1>คำขอลา</h1>
+          <p className={subtitle}>คำขอลาจากพนักงาน รออนุมัติหรือปฏิเสธ</p>
         </div>
       </header>
 
@@ -115,21 +126,23 @@ export function TimeCorrectionListPage() {
                 <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
                   <thead>
                     <tr>
-                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภท', 'วันเวลาที่ขอแก้ไข', 'เหตุผล', 'สถานะ'].map((h) => (
-                        <th
-                          key={h}
-                          className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
-                        >
-                          {h}
-                        </th>
-                      ))}
+                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภทการลา', 'ช่วงวันที่', 'จำนวนวัน', 'เหตุผล', 'สถานะ'].map(
+                        (h) => (
+                          <th
+                            key={h}
+                            className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
+                          >
+                            {h}
+                          </th>
+                        )
+                      )}
                     </tr>
                   </thead>
                   <tbody>
                     {state.requests.map((request, index) => (
                       <tr
                         key={request.id}
-                        onClick={() => void navigate(`/time-corrections/${request.id}`)}
+                        onClick={() => void navigate(`/leave-requests/${request.id}`)}
                         className="cursor-pointer hover:bg-slate-50"
                       >
                         <td className="w-12 border-b border-slate-200 px-4 py-2.5 align-middle text-slate-500">
@@ -141,16 +154,17 @@ export function TimeCorrectionListPage() {
                         <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
                           {request.employeeName}
                         </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
-                          <span className={badge(request.eventType === 'check_in' ? 'active' : 'inactive')}>
-                            {request.eventType === 'check_in' ? 'เข้างาน' : 'ออกงาน'}
-                          </span>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                          {request.leaveTypeName}
                         </td>
                         <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
-                          {formatDateTime(request.requestedEventTime)}
+                          {formatDateRange(request)}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600 tabular-nums">
+                          {request.totalDays}
                         </td>
                         <td className="max-w-64 truncate border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                          {request.reason}
+                          {request.reason ?? '—'}
                         </td>
                         <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
                           <span className={badge(statusBadgeTone(request.status))}>{STATUS_LABEL[request.status]}</span>

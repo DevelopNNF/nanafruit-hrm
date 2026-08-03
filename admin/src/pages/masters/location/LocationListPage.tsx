@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search } from 'lucide-react'
 import type { Location } from '@hrm/shared'
-import { listLocations, updateLocation } from '../api/locations'
-import { useIsAdmin } from '../auth/meContext'
-import { notify } from '../notifications/notify'
+import { listLocations, updateLocation } from '../../../api/locations'
+import { useIsAdmin } from '../../../auth/meContext'
+import { notify } from '../../../notifications/notify'
 import {
   alert,
   alertDetail,
@@ -16,7 +16,7 @@ import {
   muted,
   pageHead,
   subtitle,
-} from '../styles'
+} from '../../../styles'
 
 type State =
   | { phase: 'loading' }
