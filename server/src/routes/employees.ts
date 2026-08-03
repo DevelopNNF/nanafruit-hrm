@@ -9,6 +9,8 @@ import {
   type EmployeeInput,
   type EmployeeListResponse,
   type AuthUser,
+  type EmployeeBasicInput,
+  type EmploymentInput,
   type EmployeePhotoPresignResponse,
   type EmployeePhotoResponse,
   type EmployeeResponse,
@@ -81,18 +83,8 @@ function optionalPositiveInt(source: Record<string, unknown>, key: string): numb
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
 }
 
-/** Hand-rolled rather than pulling in a schema library for one route. */
-function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
-  if (typeof body !== 'object' || body === null) {
-    return { ok: false, message: 'body must be a JSON object' }
-  }
-  const raw = body as Record<string, unknown>
-  const employmentRaw = raw['employment']
-  if (typeof employmentRaw !== 'object' || employmentRaw === null) {
-    return { ok: false, message: 'employment is required and must be an object' }
-  }
-  const emp = employmentRaw as Record<string, unknown>
-
+/** Shared by parseEmployeeInput (POST) and PATCH /employees/:id/basic. */
+function parseEmployeeBasicFields(raw: Record<string, unknown>): ParseResult<EmployeeBasicInput> {
   const fields = {
     employeeCode: requiredString(raw, 'employeeCode'),
     firstNameTh: requiredString(raw, 'firstNameTh'),
@@ -104,14 +96,48 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
     if (value === null) return { ok: false, message: `${key} is required` }
   }
 
+  const title = requiredString(raw, 'title')
+  if (title === null || !(TITLES as readonly string[]).includes(title)) {
+    return { ok: false, message: `title must be one of: ${TITLES.join(', ')}` }
+  }
+
+  // nickname is the only optional field: absent, null and '' all mean "none".
+  const nicknameRaw = raw['nickname']
+  const nickname =
+    typeof nicknameRaw === 'string' && nicknameRaw.trim() !== ''
+      ? nicknameRaw.trim()
+      : null
+
+  // gender is optional too, and for the same reason nickname is: HR may not
+  // have this on file yet for an employee hired before the field existed.
+  // Absent and null both mean "not recorded".
+  const genderRaw = raw['gender']
+  const genderProvided = genderRaw !== null && genderRaw !== undefined
+  if (genderProvided && !(GENDERS as readonly string[]).includes(genderRaw as string)) {
+    return { ok: false, message: `gender must be null or one of: ${GENDERS.join(', ')}` }
+  }
+  const gender = (genderProvided ? genderRaw : null) as EmployeeBasicInput['gender']
+
+  return {
+    ok: true,
+    value: {
+      employeeCode: fields.employeeCode as string,
+      title: title as EmployeeBasicInput['title'],
+      firstNameTh: fields.firstNameTh as string,
+      lastNameTh: fields.lastNameTh as string,
+      firstNameEn: fields.firstNameEn as string,
+      lastNameEn: fields.lastNameEn as string,
+      nickname,
+      gender,
+    },
+  }
+}
+
+/** Shared by parseEmployeeInput (POST) and PATCH /employees/:id/employment. */
+function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<EmploymentInput> {
   const jobId = requiredPositiveInt(emp, 'jobId')
   if (jobId === null) {
     return { ok: false, message: 'employment.jobId is required and must be a positive integer' }
-  }
-
-  const shiftId = optionalPositiveInt(emp, 'shiftId')
-  if (shiftId === undefined) {
-    return { ok: false, message: 'employment.shiftId must be a positive integer or null' }
   }
 
   const holidayGroupId = optionalPositiveInt(emp, 'holidayGroupId')
@@ -120,11 +146,6 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
       ok: false,
       message: 'employment.holidayGroupId must be a positive integer or null',
     }
-  }
-
-  const title = requiredString(raw, 'title')
-  if (title === null || !(TITLES as readonly string[]).includes(title)) {
-    return { ok: false, message: `title must be one of: ${TITLES.join(', ')}` }
   }
 
   const status = requiredString(emp, 'status')
@@ -151,41 +172,51 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
     return { ok: false, message: 'employment.hireDate must be a date as YYYY-MM-DD' }
   }
 
-  // nickname is the only optional field: absent, null and '' all mean "none".
-  const nicknameRaw = raw['nickname']
-  const nickname =
-    typeof nicknameRaw === 'string' && nicknameRaw.trim() !== ''
-      ? nicknameRaw.trim()
-      : null
-
-  // gender is optional too, and for the same reason nickname is: HR may not
-  // have this on file yet for an employee hired before the field existed.
-  // Absent and null both mean "not recorded".
-  const genderRaw = raw['gender']
-  const genderProvided = genderRaw !== null && genderRaw !== undefined
-  if (genderProvided && !(GENDERS as readonly string[]).includes(genderRaw as string)) {
-    return { ok: false, message: `gender must be null or one of: ${GENDERS.join(', ')}` }
+  return {
+    ok: true,
+    value: {
+      status: status as EmploymentInput['status'],
+      hireDate,
+      employmentType: employmentType as EmploymentInput['employmentType'],
+      jobId,
+      holidayGroupId,
+    },
   }
-  const gender = (genderProvided ? genderRaw : null) as EmployeeInput['gender']
+}
+
+/** Hand-rolled rather than pulling in a schema library for one route. */
+function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, message: 'body must be a JSON object' }
+  }
+  const raw = body as Record<string, unknown>
+  const employmentRaw = raw['employment']
+  if (typeof employmentRaw !== 'object' || employmentRaw === null) {
+    return { ok: false, message: 'employment is required and must be an object' }
+  }
+  const emp = employmentRaw as Record<string, unknown>
+
+  const basic = parseEmployeeBasicFields(raw)
+  if (!basic.ok) return basic
+
+  const employment = parseEmploymentFields(emp)
+  if (!employment.ok) return employment
+
+  // shiftId is only settable here — the employee's first assignment at
+  // creation. PATCH /employees/:id/employment has no shiftId at all; shift
+  // changes after creation go through POST /employees/:id/shift-changes.
+  const shiftId = optionalPositiveInt(emp, 'shiftId')
+  if (shiftId === undefined) {
+    return { ok: false, message: 'employment.shiftId must be a positive integer or null' }
+  }
 
   return {
     ok: true,
     value: {
-      employeeCode: fields.employeeCode as string,
-      title: title as EmployeeInput['title'],
-      firstNameTh: fields.firstNameTh as string,
-      lastNameTh: fields.lastNameTh as string,
-      firstNameEn: fields.firstNameEn as string,
-      lastNameEn: fields.lastNameEn as string,
-      nickname,
-      gender,
+      ...basic.value,
       employment: {
-        status: status as EmployeeInput['employment']['status'],
-        hireDate,
-        employmentType: employmentType as EmployeeInput['employment']['employmentType'],
-        jobId,
+        ...employment.value,
         shiftId,
-        holidayGroupId,
       },
     },
   }
@@ -397,18 +428,23 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
   }
 })
 
-// PUT, not PATCH: the body is a complete employee, so this replaces rather than
-// merges. Partial updates can get their own PATCH if a caller ever needs one.
-employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Response) => {
+// Two independent PATCHes rather than one full-replace PUT: the admin edit
+// screen has separate forms (and separate Save buttons) for basic info and
+// employment info, and neither should need to know the other's current
+// draft to save.
+employeesRouter.patch('/employees/:id/basic', canWrite, async (req: Request, res: Response) => {
   const actor = actorOf(req)
   if (!actor) return fail(res, 500, 'server misconfigured')
 
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
 
-  const parsed = parseEmployeeInput(req.body)
+  if (typeof req.body !== 'object' || req.body === null) {
+    return fail(res, 400, 'body must be a JSON object')
+  }
+  const parsed = parseEmployeeBasicFields(req.body as Record<string, unknown>)
   if (!parsed.ok) return fail(res, 400, parsed.message)
-  const input = parsed.value
+  const input: EmployeeBasicInput = parsed.value
 
   try {
     const result = await withTransaction(async (client) => {
@@ -433,37 +469,15 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
       )
       if (rowCount === 0) return 'not-found' as const
 
-      // shift_id is deliberately absent here: this is a full-replace edit,
-      // but shift changes need an effective date and go through
-      // POST /employees/:id/shift-changes instead, which is the only writer
-      // of employee_shift_assignments (and, since 023, the only thing any
-      // read path trusts for "current shift"). input.employment.shiftId is
-      // still part of the body — EmployeeInput is shared with POST — it's
-      // just not written here.
-      await client.query(
-        `UPDATE employment_details SET
-           status = $2, hire_date = $3, employment_type = $4,
-           job_id = $5, holiday_group_id = $6, updated_at = now()
-         WHERE employee_id = $1`,
-        [
-          id,
-          input.employment.status,
-          input.employment.hireDate,
-          input.employment.employmentType,
-          input.employment.jobId,
-          input.employment.holidayGroupId,
-        ]
-      )
-
       await recordAudit(client, {
         actor,
-        action: 'employee.update',
+        action: 'employee.basic_update',
         entityId: id,
         detail: { employeeCode: input.employeeCode },
       })
 
-      // Re-read through the join for the same reason as POST: input carries
-      // jobId, not the jobTitle the response needs.
+      // Re-read through the join for the same reason POST does: the response
+      // needs jobTitle/shiftName/holidayGroupName, which input never carries.
       const employee = await findEmployeeById(id, client)
       if (!employee) throw new Error('employee vanished during update')
       return employee
@@ -477,15 +491,77 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
     if (isUniqueViolation(err)) {
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
     }
-    const fkField = fkViolationField(err)
-    if (fkField === 'job') return fail(res, 400, `no job with id ${input.employment.jobId}`)
-    if (fkField === 'holidayGroup') {
-      return fail(res, 400, `no holiday group with id ${input.employment.holidayGroupId}`)
-    }
-    if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in employment')
     handleUnexpected(res, err)
   }
 })
+
+employeesRouter.patch(
+  '/employees/:id/employment',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    if (typeof req.body !== 'object' || req.body === null) {
+      return fail(res, 400, 'body must be a JSON object')
+    }
+    const parsed = parseEmploymentFields(req.body as Record<string, unknown>)
+    if (!parsed.ok) return fail(res, 400, parsed.message)
+    const input: EmploymentInput = parsed.value
+
+    try {
+      const result = await withTransaction(async (client) => {
+        // shift_id is deliberately absent here — shift changes need an
+        // effective date and go through POST /employees/:id/shift-changes
+        // instead, which is the only writer of employee_shift_assignments
+        // (and, since 023, the only thing any read path trusts for "current
+        // shift").
+        const { rowCount } = await client.query(
+          `UPDATE employment_details SET
+             status = $2, hire_date = $3, employment_type = $4,
+             job_id = $5, holiday_group_id = $6, updated_at = now()
+           WHERE employee_id = $1`,
+          [
+            id,
+            input.status,
+            input.hireDate,
+            input.employmentType,
+            input.jobId,
+            input.holidayGroupId,
+          ]
+        )
+        if (rowCount === 0) return 'not-found' as const
+
+        await recordAudit(client, {
+          actor,
+          action: 'employee.employment_update',
+          entityId: id,
+          detail: { jobId: input.jobId },
+        })
+
+        const employee = await findEmployeeById(id, client)
+        if (!employee) throw new Error('employee vanished during update')
+        return employee
+      })
+
+      if (result === 'not-found') return fail(res, 404, `no employee with id ${id}`)
+
+      const body: EmployeeResponse = { employee: result }
+      res.json(body)
+    } catch (err) {
+      const fkField = fkViolationField(err)
+      if (fkField === 'job') return fail(res, 400, `no job with id ${input.jobId}`)
+      if (fkField === 'holidayGroup') {
+        return fail(res, 400, `no holiday group with id ${input.holidayGroupId}`)
+      }
+      if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in employment')
+      handleUnexpected(res, err)
+    }
+  }
+)
 
 employeesRouter.post(
   '/employees/:id/shift-changes',

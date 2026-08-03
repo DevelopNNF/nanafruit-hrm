@@ -125,10 +125,18 @@ export type EmploymentDetailsInput = Omit<
   'jobTitle' | 'shiftName' | 'holidayGroupName' | 'shiftStartTime' | 'shiftEndTime'
 >
 
-/** Body of POST /api/employees and PATCH /api/employees/:id */
+/** Body of POST /api/employees */
 export type EmployeeInput = Omit<Employee, 'id' | 'employment'> & {
   employment: EmploymentDetailsInput
 }
+
+/** Body of PATCH /api/employees/:id/basic */
+export type EmployeeBasicInput = Omit<Employee, 'id' | 'employment'>
+
+/** Body of PATCH /api/employees/:id/employment. shiftId is absent — shift
+ *  changes always go through POST /api/employees/:id/shift-changes, which is
+ *  the only writer of "current shift". */
+export type EmploymentInput = Omit<EmploymentDetailsInput, 'shiftId'>
 
 /** GET /api/employees */
 export type EmployeeListResponse = { employees: Employee[] }

@@ -6,25 +6,22 @@ import {
   EMPLOYMENT_TYPES,
   GENDERS,
   TITLES,
+  type Employee,
   type EmployeeInput,
   type HolidayGroup,
   type Job,
   type Shift,
 } from '@hrm/shared'
-import {
-  createEmployee,
-  deleteEmployee,
-  getEmployee,
-  updateEmployee,
-} from '../api/employees'
+import { createEmployee, deleteEmployee, getEmployee } from '../api/employees'
 import { listJobs } from '../api/jobs'
 import { listShifts } from '../api/shifts'
 import { listHolidayGroups } from '../api/holidayGroups'
 import { DatePicker } from '../components/DatePicker'
-import { EmployeePhotoCard } from '../components/EmployeePhotoCard'
-import { LinkCodeCard } from '../components/LinkCodeCard'
+import { EmployeeBasicTab } from '../components/EmployeeBasicTab'
+import { EmployeeEmploymentTab } from '../components/EmployeeEmploymentTab'
 import { LeaveBalanceCard } from '../components/LeaveBalanceCard'
 import { ShiftHistoryCard } from '../components/ShiftHistoryCard'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useCanWrite } from '../auth/meContext'
 import { notify } from '../notifications/notify'
 import {
@@ -77,6 +74,14 @@ const emptyDraft: EmployeeInput = {
 const fieldGrid = 'grid gap-x-5 gap-y-4 grid-cols-[repeat(auto-fit,minmax(13rem,1fr))]'
 const sectionTitle = 'mb-5 border-b border-slate-200 pb-3 text-xs font-bold tracking-wider text-slate-500 uppercase'
 
+const EDIT_TABS = [
+  { value: 'basic', label: 'รูปพนักงาน & ข้อมูลพื้นฐาน' },
+  { value: 'employment', label: 'ข้อมูลการจ้างงาน' },
+  { value: 'leave', label: 'สิทธิการลา' },
+  { value: 'shift', label: 'การเปลี่ยนกะ' },
+] as const
+type EditTabValue = (typeof EDIT_TABS)[number]['value']
+
 export function EmployeeFormPage() {
   const params = useParams()
   const navigate = useNavigate()
@@ -87,18 +92,26 @@ export function EmployeeFormPage() {
   const isNew = idParam === undefined
   const id = isNew ? null : Number(idParam)
 
+  // A viewer has no business on the "new employee" route at all — there is
+  // nothing on it they could finish. The edit route still shows them the record,
+  // read-only, because reading is exactly what their role is for.
+  if (isNew && !canWrite) return <Navigate to="/employees" replace />
+
+  if (isNew) return <NewEmployeeForm canWrite={canWrite} onCancel={() => void navigate('/employees')} />
+  if (id !== null) return <EditEmployeePage id={id} canWrite={canWrite} />
+  return null
+}
+
+/**
+ * Creating an employee is a single uncluttered form — there is no id yet for
+ * a photo, LINE link code, leave balance or shift history to attach to, so
+ * there is nothing to split into tabs here.
+ */
+function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: () => void }) {
+  const navigate = useNavigate()
   const [draft, setDraft] = useState<EmployeeInput>(emptyDraft)
-  const [loading, setLoading] = useState(!isNew)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  // The title/name as of the last load — EmploymentDetailsInput (what `draft`
-  // holds) has no jobTitle/shiftName/holidayGroupName field, so this is the
-  // only place the label for a deactivated job's, shift's or holiday group's
-  // option comes from.
-  const [loadedJobTitle, setLoadedJobTitle] = useState<string | null>(null)
-  const [loadedShiftName, setLoadedShiftName] = useState<string | null>(null)
-  const [loadedHolidayGroupName, setLoadedHolidayGroupName] = useState<string | null>(null)
 
   type JobOptionsState =
     | { phase: 'loading' }
@@ -122,9 +135,6 @@ export function EmployeeFormPage() {
 
   useEffect(() => {
     const controller = new AbortController()
-
-    // Any role can read master_jobs (same canRead as employees), so this loads
-    // regardless of canWrite — a viewer sees the same options a form submit would.
     listJobs(controller.signal)
       .then((jobs) => setJobOptions({ phase: 'ok', jobs: jobs.filter((job) => job.isActive) }))
       .catch((err: unknown) => {
@@ -134,13 +144,11 @@ export function EmployeeFormPage() {
           message: err instanceof Error ? err.message : 'request failed',
         })
       })
-
     return () => controller.abort()
   }, [])
 
   useEffect(() => {
     const controller = new AbortController()
-
     listShifts(controller.signal)
       .then((shifts) =>
         setShiftOptions({ phase: 'ok', shifts: shifts.filter((shift) => shift.isActive) })
@@ -152,13 +160,11 @@ export function EmployeeFormPage() {
           message: err instanceof Error ? err.message : 'request failed',
         })
       })
-
     return () => controller.abort()
   }, [])
 
   useEffect(() => {
     const controller = new AbortController()
-
     listHolidayGroups(controller.signal)
       .then((holidayGroups) =>
         setHolidayGroupOptions({
@@ -173,61 +179,8 @@ export function EmployeeFormPage() {
           message: err instanceof Error ? err.message : 'request failed',
         })
       })
-
     return () => controller.abort()
   }, [])
-
-  useEffect(() => {
-    if (id === null) return
-    const controller = new AbortController()
-
-    getEmployee(id, controller.signal)
-      .then((employee) => {
-        // Spelled out rather than destructuring `id` away: EmployeeInput is
-        // Omit<Employee, 'id'>, so a new field on Employee fails to compile here
-        // until the form grows an input for it.
-        setDraft({
-          employeeCode: employee.employeeCode,
-          title: employee.title,
-          firstNameTh: employee.firstNameTh,
-          lastNameTh: employee.lastNameTh,
-          firstNameEn: employee.firstNameEn,
-          lastNameEn: employee.lastNameEn,
-          nickname: employee.nickname,
-          gender: employee.gender,
-          employment: employee.employment,
-        })
-        setLoadedJobTitle(employee.employment.jobTitle)
-        setLoadedShiftName(employee.employment.shiftName)
-        setLoadedHolidayGroupName(employee.employment.holidayGroupName)
-        setLoading(false)
-      })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return
-        setError(err instanceof Error ? err.message : 'request failed')
-        setLoading(false)
-      })
-
-    return () => controller.abort()
-  }, [id])
-
-  // Re-fetches just the "current shift" the page shows after
-  // ShiftHistoryCard records a change — that card's own list is already up
-  // to date from its own reload, this only refreshes this page's display.
-  function refreshCurrentShift() {
-    if (id === null) return
-    getEmployee(id)
-      .then((employee) => {
-        setDraft((prev) => ({
-          ...prev,
-          employment: { ...prev.employment, shiftId: employee.employment.shiftId },
-        }))
-        setLoadedShiftName(employee.employment.shiftName)
-      })
-      .catch(() => {
-        /* best-effort refresh only */
-      })
-  }
 
   function setBasic<K extends keyof EmployeeInput>(key: K, value: EmployeeInput[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }))
@@ -245,9 +198,8 @@ export function EmployeeFormPage() {
     setSaving(true)
     setError(null)
     try {
-      if (id === null) await createEmployee(draft)
-      else await updateEmployee(id, draft)
-      notify.success(isNew ? 'เพิ่มพนักงานสำเร็จ' : 'บันทึกการแก้ไขสำเร็จ')
+      await createEmployee(draft)
+      notify.success('เพิ่มพนักงานสำเร็จ')
       void navigate('/employees')
     } catch (err) {
       // Server-side rejections (duplicate code, bad enum) land here — keep the
@@ -256,28 +208,6 @@ export function EmployeeFormPage() {
       setSaving(false)
     }
   }
-
-  async function handleDelete() {
-    if (id === null) return
-    if (!confirm(`ลบพนักงาน ${draft.employeeCode}?`)) return
-    setSaving(true)
-    setError(null)
-    try {
-      await deleteEmployee(id)
-      notify.success('ลบพนักงานสำเร็จ')
-      void navigate('/employees')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'delete failed')
-      setSaving(false)
-    }
-  }
-
-  // A viewer has no business on the "new employee" route at all — there is
-  // nothing on it they could finish. The edit route still shows them the record,
-  // read-only, because reading is exactly what their role is for.
-  if (isNew && !canWrite) return <Navigate to="/employees" replace />
-
-  if (loading) return <p className={muted}>กำลังโหลด…</p>
 
   const activeJobIds = jobOptions.phase === 'ok' ? jobOptions.jobs.map((j) => j.id) : []
   // A saved employee can point at a job that's since been deactivated — kept
@@ -309,19 +239,10 @@ export function EmployeeFormPage() {
               กลับไปรายชื่อพนักงาน
             </Link>
           </p>
-          <h1>{isNew ? 'เพิ่มพนักงาน' : canWrite ? 'แก้ไขข้อมูลพนักงาน' : 'ข้อมูลพนักงาน'}</h1>
-          <p className={subtitle}>
-            {isNew ? 'กรอกข้อมูลให้ครบทุกช่องที่มีเครื่องหมาย *' : `รหัส ${draft.employeeCode}`}
-          </p>
+          <h1>เพิ่มพนักงาน</h1>
+          <p className={subtitle}>กรอกข้อมูลให้ครบทุกช่องที่มีเครื่องหมาย *</p>
         </div>
       </header>
-
-      {!canWrite && (
-        <div className={alert('info')}>
-          <p className={alertTitle()}>โหมดอ่านอย่างเดียว</p>
-          <p className={muted}>สิทธิ์ของคุณดูข้อมูลได้อย่างเดียว จึงแก้ไขข้อมูลนี้ไม่ได้</p>
-        </div>
-      )}
 
       {error && (
         <div className={alert('danger')}>
@@ -509,7 +430,7 @@ export function EmployeeFormPage() {
                   </option>
                   {currentJobMissing && (
                     <option value={draft.employment.jobId}>
-                      {loadedJobTitle ?? `#${draft.employment.jobId}`} (ไม่พร้อมใช้งาน)
+                      #{draft.employment.jobId} (ไม่พร้อมใช้งาน)
                     </option>
                   )}
                   {jobOptions.phase === 'ok' &&
@@ -527,47 +448,33 @@ export function EmployeeFormPage() {
               </label>
               <label className={fieldLabel}>
                 <span>กะการทำงาน (Shift)</span>
-                {isNew ? (
-                  <>
-                    <select
-                      className={fieldControl}
-                      disabled={shiftOptions.phase === 'loading'}
-                      value={draft.employment.shiftId ?? ''}
-                      onChange={(e) =>
-                        setEmployment('shiftId', e.target.value ? Number(e.target.value) : null)
-                      }
-                    >
-                      <option value="">
-                        {shiftOptions.phase === 'loading' ? 'กำลังโหลดกะการทำงาน…' : '— ไม่ระบุกะ —'}
+                <select
+                  className={fieldControl}
+                  disabled={shiftOptions.phase === 'loading'}
+                  value={draft.employment.shiftId ?? ''}
+                  onChange={(e) =>
+                    setEmployment('shiftId', e.target.value ? Number(e.target.value) : null)
+                  }
+                >
+                  <option value="">
+                    {shiftOptions.phase === 'loading' ? 'กำลังโหลดกะการทำงาน…' : '— ไม่ระบุกะ —'}
+                  </option>
+                  {currentShiftMissing && (
+                    <option value={draft.employment.shiftId ?? ''}>
+                      #{draft.employment.shiftId} (ไม่พร้อมใช้งาน)
+                    </option>
+                  )}
+                  {shiftOptions.phase === 'ok' &&
+                    shiftOptions.shifts.map((shift) => (
+                      <option key={shift.id} value={shift.id}>
+                        {shift.shiftName}
                       </option>
-                      {currentShiftMissing && (
-                        <option value={draft.employment.shiftId ?? ''}>
-                          {loadedShiftName ?? `#${draft.employment.shiftId}`} (ไม่พร้อมใช้งาน)
-                        </option>
-                      )}
-                      {shiftOptions.phase === 'ok' &&
-                        shiftOptions.shifts.map((shift) => (
-                          <option key={shift.id} value={shift.id}>
-                            {shift.shiftName}
-                          </option>
-                        ))}
-                    </select>
-                    {shiftOptions.phase === 'error' && (
-                      <span className="text-[0.7rem] text-red-700">
-                        โหลดรายการกะการทำงานไม่สำเร็จ: {shiftOptions.message}
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  // Read-only here on purpose: PUT no longer writes shift_id
-                  // at all — a change after creation needs an effective date,
-                  // so it goes through the Shift History card's own form below.
-                  <input
-                    className={fieldControl}
-                    value={loadedShiftName ?? '— ไม่ระบุกะ —'}
-                    disabled
-                    readOnly
-                  />
+                    ))}
+                </select>
+                {shiftOptions.phase === 'error' && (
+                  <span className="text-[0.7rem] text-red-700">
+                    โหลดรายการกะการทำงานไม่สำเร็จ: {shiftOptions.message}
+                  </span>
                 )}
               </label>
               <label className={fieldLabel}>
@@ -590,7 +497,7 @@ export function EmployeeFormPage() {
                   </option>
                   {currentHolidayGroupMissing && (
                     <option value={draft.employment.holidayGroupId ?? ''}>
-                      {loadedHolidayGroupName ?? `#${draft.employment.holidayGroupId}`} (ไม่พร้อมใช้งาน)
+                      #{draft.employment.holidayGroupId} (ไม่พร้อมใช้งาน)
                     </option>
                   )}
                   {holidayGroupOptions.phase === 'ok' &&
@@ -610,60 +517,139 @@ export function EmployeeFormPage() {
           </section>
         </fieldset>
 
-        {/* Outside the form: issuing a code is its own action against a saved
-            employee, and a button inside a form would submit it. */}
-        {id !== null && canWrite && <LinkCodeCard employeeId={id} />}
-
-        {canWrite ? (
-          <div className="flex items-center gap-2.5 pt-1">
-            <button className={button('primary')} type="submit" disabled={saving}>
-              {saving ? 'กำลังบันทึก…' : 'บันทึก'}
-            </button>
-            <button
-              className={button()}
-              type="button"
-              onClick={() => void navigate('/employees')}
-              disabled={saving}
-            >
-              ยกเลิก
-            </button>
-            {!isNew && (
-              <button
-                className={button('danger')}
-                type="button"
-                onClick={() => void handleDelete()}
-                disabled={saving}
-              >
-                ลบ
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="flex items-center gap-2.5 pt-1">
-            <button
-              className={button()}
-              type="button"
-              onClick={() => void navigate('/employees')}
-            >
-              กลับ
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2.5 pt-1">
+          <button className={button('primary')} type="submit" disabled={saving}>
+            {saving ? 'กำลังบันทึก…' : 'บันทึก'}
+          </button>
+          <button className={button()} type="button" onClick={onCancel} disabled={saving}>
+            ยกเลิก
+          </button>
+        </div>
       </form>
+    </>
+  )
+}
 
-      {/* Outside the employee form, not just visually after it: this card
-          renders its own <form> for adding an entry, and a <form> nested
-          inside another <form> is invalid HTML — the browser silently
-          un-nests them, which both breaks the inner submit button and
-          throws a hydration-mismatch error to the console. Viewable by any
-          role that can see this employee at all — only the add-entry form
-          inside is gated on canWrite. */}
-      {id !== null && <EmployeePhotoCard employeeId={id} canWrite={canWrite} />}
+/** Editing an existing employee: header + delete action, then the 4 tabs. */
+function EditEmployeePage({ id, canWrite }: { id: number; canWrite: boolean }) {
+  const navigate = useNavigate()
+  const [employee, setEmployee] = useState<Employee | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [tab, setTab] = useState<EditTabValue>('basic')
 
-      {id !== null && <LeaveBalanceCard employeeId={id} canWrite={canWrite} />}
+  useEffect(() => {
+    const controller = new AbortController()
+    getEmployee(id, controller.signal)
+      .then((emp) => {
+        setEmployee(emp)
+        setLoading(false)
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setError(err instanceof Error ? err.message : 'request failed')
+        setLoading(false)
+      })
+    return () => controller.abort()
+  }, [id])
 
-      {id !== null && (
-        <ShiftHistoryCard employeeId={id} canWrite={canWrite} onChanged={refreshCurrentShift} />
+  // Re-fetches the employee after ShiftHistoryCard records a change — that
+  // card's own list is already up to date from its own reload, this only
+  // refreshes the read-only "current shift" field shown on the employment tab.
+  function refreshCurrentShift() {
+    getEmployee(id)
+      .then((emp) => setEmployee(emp))
+      .catch(() => {
+        /* best-effort refresh only */
+      })
+  }
+
+  async function handleDelete() {
+    if (!employee) return
+    if (!confirm(`ลบพนักงาน ${employee.employeeCode}?`)) return
+    setDeleting(true)
+    try {
+      await deleteEmployee(id)
+      notify.success('ลบพนักงานสำเร็จ')
+      void navigate('/employees')
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : 'delete failed')
+      setDeleting(false)
+    }
+  }
+
+  if (loading) return <p className={muted}>กำลังโหลด…</p>
+
+  return (
+    <>
+      <header className={pageHead}>
+        <div>
+          <p className={eyebrow}>
+            <Link
+              className="inline-flex items-center gap-1.5 text-slate-500 no-underline normal-case tracking-normal hover:text-navy"
+              to="/employees"
+            >
+              <ArrowLeft size={13} />
+              กลับไปรายชื่อพนักงาน
+            </Link>
+          </p>
+          <h1>{canWrite ? 'แก้ไขข้อมูลพนักงาน' : 'ข้อมูลพนักงาน'}</h1>
+          <p className={subtitle}>{employee ? `รหัส ${employee.employeeCode}` : null}</p>
+        </div>
+        {canWrite && employee && (
+          <button
+            className={button('danger')}
+            type="button"
+            onClick={() => void handleDelete()}
+            disabled={deleting}
+          >
+            ลบพนักงาน
+          </button>
+        )}
+      </header>
+
+      {!canWrite && (
+        <div className={alert('info')}>
+          <p className={alertTitle()}>โหมดอ่านอย่างเดียว</p>
+          <p className={muted}>สิทธิ์ของคุณดูข้อมูลได้อย่างเดียว จึงแก้ไขข้อมูลนี้ไม่ได้</p>
+        </div>
+      )}
+
+      {error && (
+        <div className={alert('danger')}>
+          <p className={alertTitle('danger')}>โหลดข้อมูลไม่สำเร็จ</p>
+          <p className={alertDetail}>{error}</p>
+        </div>
+      )}
+
+      {employee && (
+        <Tabs value={tab} onValueChange={(v) => setTab(v as EditTabValue)}>
+          <TabsList>
+            {EDIT_TABS.map((t) => (
+              <TabsTrigger key={t.value} value={t.value}>
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          <TabsContent value="basic">
+            <EmployeeBasicTab employee={employee} canWrite={canWrite} onSaved={setEmployee} />
+          </TabsContent>
+          <TabsContent value="employment">
+            <EmployeeEmploymentTab employee={employee} canWrite={canWrite} onSaved={setEmployee} />
+          </TabsContent>
+          <TabsContent value="leave">
+            <LeaveBalanceCard employeeId={employee.id} canWrite={canWrite} />
+          </TabsContent>
+          <TabsContent value="shift">
+            <ShiftHistoryCard
+              employeeId={employee.id}
+              canWrite={canWrite}
+              onChanged={refreshCurrentShift}
+            />
+          </TabsContent>
+        </Tabs>
       )}
     </>
   )

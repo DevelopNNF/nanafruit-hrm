@@ -1,5 +1,6 @@
 import type {
   Employee,
+  EmployeeBasicInput,
   EmployeeInput,
   EmployeeListResponse,
   EmployeePhotoCompleteInput,
@@ -7,6 +8,7 @@ import type {
   EmployeePhotoPresignResponse,
   EmployeePhotoResponse,
   EmployeeResponse,
+  EmploymentInput,
   LinkCodeResponse,
   ShiftAssignment,
   ShiftChangeInput,
@@ -37,12 +39,25 @@ export async function createEmployee(input: EmployeeInput): Promise<Employee> {
   return body.employee
 }
 
-export async function updateEmployee(
+export async function updateEmployeeBasic(
   id: number,
-  input: EmployeeInput
+  input: EmployeeBasicInput
 ): Promise<Employee> {
-  const res = await apiFetch(`/api/employees/${id}`, {
-    method: 'PUT',
+  const res = await apiFetch(`/api/employees/${id}/basic`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  const body = await unwrap<EmployeeResponse>(res)
+  return body.employee
+}
+
+export async function updateEmployeeEmployment(
+  id: number,
+  input: EmploymentInput
+): Promise<Employee> {
+  const res = await apiFetch(`/api/employees/${id}/employment`, {
+    method: 'PATCH',
     headers: jsonHeaders,
     body: JSON.stringify(input),
   })
