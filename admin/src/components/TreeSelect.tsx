@@ -122,7 +122,7 @@ function Row({
         <button
           type="button"
           onClick={onToggleExpanded}
-          className="flex size-6 shrink-0 items-center justify-center text-slate-400 hover:text-slate-600"
+          className="flex size-6 shrink-0 items-center justify-center text-slate-400 hover:text-slate-600 cursor-pointer"
         >
           <ChevronRight className={cn('size-3.5 transition-transform', isExpanded && 'rotate-90')} />
         </button>
@@ -136,7 +136,7 @@ function Row({
         aria-checked={mode === 'multiple' ? (indeterminate ? 'mixed' : checked) : undefined}
         onClick={onActivate}
         className={cn(
-          'flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-[0.8rem] hover:bg-slate-100',
+          'cursor-pointer flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-[0.8rem] hover:bg-slate-100',
           mode === 'single' && selected ? 'font-medium text-navy' : 'text-slate-900',
         )}
       >

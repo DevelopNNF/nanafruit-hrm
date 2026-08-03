@@ -5,6 +5,7 @@ import type { Department } from '@hrm/shared'
 import { listDepartments, updateDepartment } from '../../../api/departments'
 import { useCanWrite } from '../../../auth/meContext'
 import { notify } from '../../../notifications/notify'
+import { TreeSelect, type TreeSelectOption } from '../../../components/TreeSelect'
 import {
   alert,
   alertDetail,
@@ -33,6 +34,7 @@ function haystack(department: Department): string {
 export function DepartmentListPage() {
   const [state, setState] = useState<State>({ phase: 'loading' })
   const [query, setQuery] = useState('')
+  const [departmentFilter, setDepartmentFilter] = useState<number[]>([])
   const [togglingId, setTogglingId] = useState<number | null>(null)
   const navigate = useNavigate()
   const canWrite = useCanWrite()
@@ -53,12 +55,26 @@ export function DepartmentListPage() {
     return () => controller.abort()
   }, [])
 
+  const departmentTreeOptions: TreeSelectOption[] = useMemo(() => {
+    if (state.phase !== 'ok') return []
+    return state.departments.map((department) => ({
+      id: department.id,
+      label: department.deptName,
+      parentId: department.parentDepartmentId,
+    }))
+  }, [state])
+
+  const hasActiveFilter = query.trim() !== '' || departmentFilter.length > 0
+
   const visible = useMemo(() => {
     if (state.phase !== 'ok') return []
     const needle = query.trim().toLowerCase()
-    if (!needle) return state.departments
-    return state.departments.filter((department) => haystack(department).includes(needle))
-  }, [state, query])
+    return state.departments.filter((department) => {
+      if (needle && !haystack(department).includes(needle)) return false
+      if (departmentFilter.length > 0 && !departmentFilter.includes(department.id)) return false
+      return true
+    })
+  }, [state, query, departmentFilter])
 
   // No delete route: turning a department off is the entire lifecycle a
   // retired department has, so it's one click here rather than a trip
@@ -122,19 +138,29 @@ export function DepartmentListPage() {
       {state.phase === 'ok' && state.departments.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
-            <div className="relative flex max-w-88 min-w-0 flex-1 items-center">
-              <Search size={15} className="pointer-events-none absolute left-2.5 text-slate-500" />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="ค้นหารหัสแผนก ชื่อแผนก หรือหน่วยงานต้นสังกัด"
-                aria-label="ค้นหาแผนก"
-                className="w-full rounded-md border border-slate-200 bg-white py-2 pr-3 pl-9 text-[0.825rem] text-slate-900 placeholder:text-slate-500"
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+              <div className="relative flex max-w-88 min-w-0 flex-1 items-center">
+                <Search size={15} className="pointer-events-none absolute left-2.5 text-slate-500" />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="ค้นหารหัสแผนก ชื่อแผนก หรือหน่วยงานต้นสังกัด"
+                  aria-label="ค้นหาแผนก"
+                  className="w-full rounded-md border border-slate-200 bg-white py-2 pr-3 pl-9 text-[0.825rem] text-slate-900 placeholder:text-slate-500"
+                />
+              </div>
+              <TreeSelect
+                mode="multiple"
+                options={departmentTreeOptions}
+                value={departmentFilter}
+                onChange={setDepartmentFilter}
+                placeholder="กรองตามแผนก"
+                className="w-56"
               />
             </div>
             <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-              {query.trim()
+              {hasActiveFilter
                 ? `พบ ${visible.length} จาก ${state.departments.length} รายการ`
                 : `ทั้งหมด ${state.departments.length} รายการ`}
             </p>
@@ -142,8 +168,8 @@ export function DepartmentListPage() {
 
           {visible.length === 0 ? (
             <div className={cardEmpty}>
-              <p className="mb-1.5 font-semibold text-slate-900">ไม่พบแผนกที่ตรงกับคำค้น</p>
-              <p className={muted}>ลองใช้คำอื่น หรือล้างช่องค้นหา</p>
+              <p className="mb-1.5 font-semibold text-slate-900">ไม่พบแผนกที่ตรงกับเงื่อนไข</p>
+              <p className={muted}>ลองใช้คำอื่น หรือล้างตัวกรอง</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
