@@ -6,6 +6,7 @@ import { pool } from './db.js'
 import { healthRouter } from './routes/health.js'
 import { employeesRouter } from './routes/employees.js'
 import { jobsRouter } from './routes/jobs.js'
+import { departmentsRouter } from './routes/departments.js'
 import { shiftsRouter } from './routes/shifts.js'
 import { locationsRouter } from './routes/locations.js'
 import { attendanceRouter } from './routes/attendance.js'
@@ -67,6 +68,7 @@ app.use('/api', authRouter)
 app.use('/api', meRouter)
 app.use('/api', authenticate, employeesRouter)
 app.use('/api', authenticate, jobsRouter)
+app.use('/api', authenticate, departmentsRouter)
 app.use('/api', authenticate, shiftsRouter)
 app.use('/api', authenticate, locationsRouter)
 app.use('/api', authenticate, attendanceRouter)

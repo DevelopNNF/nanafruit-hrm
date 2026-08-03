@@ -88,6 +88,13 @@ export type EmploymentDetails = {
   /** master_jobs.job_title as of now, joined in for display. Derived from
    *  jobId, not writable directly — absent from EmploymentDetailsInput. */
   jobTitle: string
+  /** FK to master_departments.id. Required from day one, unlike shiftId/
+   *  holidayGroupId — every employee belongs to some department, even if
+   *  that's the UNASSIGNED placeholder seeded by the link migration. */
+  departmentId: number
+  /** master_departments.dept_name as of now, joined in for display. Derived
+   *  from departmentId, not writable directly — absent from EmploymentDetailsInput. */
+  departmentName: string
   /** FK to master_shifts.id, as of *today* — resolved from
    *  employee_shift_assignments, not stored directly. Nullable — not every
    *  employee has a shift assigned yet, unlike jobId. Writable on
@@ -117,12 +124,12 @@ export type EmploymentDetails = {
   shiftEndTime: string | null
 }
 
-/** Body of the employment half of POST/PUT — jobTitle, shiftName,
- *  holidayGroupName, shiftStartTime and shiftEndTime are read-only, so
- *  they're the fields on EmploymentDetails that aren't also inputs. */
+/** Body of the employment half of POST/PUT — jobTitle, departmentName,
+ *  shiftName, holidayGroupName, shiftStartTime and shiftEndTime are
+ *  read-only, so they're the fields on EmploymentDetails that aren't also inputs. */
 export type EmploymentDetailsInput = Omit<
   EmploymentDetails,
-  'jobTitle' | 'shiftName' | 'holidayGroupName' | 'shiftStartTime' | 'shiftEndTime'
+  'jobTitle' | 'departmentName' | 'shiftName' | 'holidayGroupName' | 'shiftStartTime' | 'shiftEndTime'
 >
 
 /** Body of POST /api/employees */
@@ -292,6 +299,34 @@ export type JobListResponse = { jobs: Job[] }
 
 /** GET /api/jobs/:id, POST, PUT */
 export type JobResponse = { job: Job }
+
+/* Department Master ---------------------------------------------------------- */
+
+/** A row in master_departments. parentDepartmentId is a self-reference for
+ *  the department hierarchy — null for a top-level department. */
+export type Department = {
+  id: number
+  deptCode: string
+  deptName: string
+  /** FK to master_departments.id, or null if this is a top-level department. */
+  parentDepartmentId: number | null
+  /** master_departments.dept_name of parentDepartmentId, joined in for
+   *  display. Derived, not writable directly — absent from DepartmentInput.
+   *  Null exactly when parentDepartmentId is null. */
+  parentDepartmentName: string | null
+  isActive: boolean
+}
+
+/** Body of POST /api/departments and PUT /api/departments/:id —
+ *  parentDepartmentName is read-only, so it's the field on Department that
+ *  isn't also an input. */
+export type DepartmentInput = Omit<Department, 'id' | 'parentDepartmentName'>
+
+/** GET /api/departments */
+export type DepartmentListResponse = { departments: Department[] }
+
+/** GET /api/departments/:id, POST, PUT */
+export type DepartmentResponse = { department: Department }
 
 /* Shift Master --------------------------------------------------------------- */
 

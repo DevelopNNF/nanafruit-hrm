@@ -27,6 +27,8 @@ export type AuditAction =
   | 'employee.line_linked'
   | 'job.create'
   | 'job.update'
+  | 'department.create'
+  | 'department.update'
   | 'shift.create'
   | 'shift.update'
   | 'location.create'

@@ -6,6 +6,7 @@ import {
   EMPLOYMENT_TYPES,
   GENDERS,
   TITLES,
+  type Department,
   type Employee,
   type EmployeeInput,
   type HolidayGroup,
@@ -14,6 +15,7 @@ import {
 } from '@hrm/shared'
 import { createEmployee, deleteEmployee, getEmployee } from '../api/employees'
 import { listJobs } from '../api/jobs'
+import { listDepartments } from '../api/departments'
 import { listShifts } from '../api/shifts'
 import { listHolidayGroups } from '../api/holidayGroups'
 import { DatePicker } from '../components/DatePicker'
@@ -61,6 +63,8 @@ const emptyDraft: EmployeeInput = {
     // 0 is not a real master_jobs id — it's the sentinel for "nothing picked
     // yet", matched by the disabled placeholder option in the Job Title select.
     jobId: 0,
+    // Same sentinel reasoning as jobId — 0 is not a real master_departments id.
+    departmentId: 0,
     employmentType: EMPLOYMENT_TYPES[0],
     // Unlike jobId, null is a real value here — shift assignment is optional —
     // so it doubles as both "nothing picked yet" and "deliberately unset".
@@ -119,6 +123,14 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
     | { phase: 'error'; message: string }
   const [jobOptions, setJobOptions] = useState<JobOptionsState>({ phase: 'loading' })
 
+  type DepartmentOptionsState =
+    | { phase: 'loading' }
+    | { phase: 'ok'; departments: Department[] }
+    | { phase: 'error'; message: string }
+  const [departmentOptions, setDepartmentOptions] = useState<DepartmentOptionsState>({
+    phase: 'loading',
+  })
+
   type ShiftOptionsState =
     | { phase: 'loading' }
     | { phase: 'ok'; shifts: Shift[] }
@@ -140,6 +152,25 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setJobOptions({
+          phase: 'error',
+          message: err instanceof Error ? err.message : 'request failed',
+        })
+      })
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    listDepartments(controller.signal)
+      .then((departments) =>
+        setDepartmentOptions({
+          phase: 'ok',
+          departments: departments.filter((department) => department.isActive),
+        })
+      )
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setDepartmentOptions({
           phase: 'error',
           message: err instanceof Error ? err.message : 'request failed',
         })
@@ -215,6 +246,12 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
   // draft on open.
   const currentJobMissing =
     draft.employment.jobId !== 0 && !activeJobIds.includes(draft.employment.jobId)
+
+  const activeDepartmentIds =
+    departmentOptions.phase === 'ok' ? departmentOptions.departments.map((d) => d.id) : []
+  const currentDepartmentMissing =
+    draft.employment.departmentId !== 0 &&
+    !activeDepartmentIds.includes(draft.employment.departmentId)
 
   const activeShiftIds = shiftOptions.phase === 'ok' ? shiftOptions.shifts.map((s) => s.id) : []
   const currentShiftMissing =
@@ -443,6 +480,38 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
                 {jobOptions.phase === 'error' && (
                   <span className="text-[0.7rem] text-red-700">
                     โหลดรายการตำแหน่งงานไม่สำเร็จ: {jobOptions.message}
+                  </span>
+                )}
+              </label>
+              <label className={fieldLabel}>
+                <span>
+                  แผนก (Department) <span className={requiredMark}>*</span>
+                </span>
+                <select
+                  required
+                  className={fieldControl}
+                  disabled={departmentOptions.phase === 'loading'}
+                  value={draft.employment.departmentId}
+                  onChange={(e) => setEmployment('departmentId', Number(e.target.value))}
+                >
+                  <option value={0} disabled>
+                    {departmentOptions.phase === 'loading' ? 'กำลังโหลดแผนก…' : '— เลือกแผนก —'}
+                  </option>
+                  {currentDepartmentMissing && (
+                    <option value={draft.employment.departmentId}>
+                      #{draft.employment.departmentId} (ไม่พร้อมใช้งาน)
+                    </option>
+                  )}
+                  {departmentOptions.phase === 'ok' &&
+                    departmentOptions.departments.map((department) => (
+                      <option key={department.id} value={department.id}>
+                        {department.deptName}
+                      </option>
+                    ))}
+                </select>
+                {departmentOptions.phase === 'error' && (
+                  <span className="text-[0.7rem] text-red-700">
+                    โหลดรายการแผนกไม่สำเร็จ: {departmentOptions.message}
                   </span>
                 )}
               </label>

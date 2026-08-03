@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
+  type Department,
   type Employee,
   type EmploymentInput,
   type Job,
@@ -9,6 +10,7 @@ import {
 } from '@hrm/shared'
 import { updateEmployeeEmployment } from '../api/employees'
 import { listJobs } from '../api/jobs'
+import { listDepartments } from '../api/departments'
 import { listHolidayGroups } from '../api/holidayGroups'
 import { DatePicker } from './DatePicker'
 import { notify } from '../notifications/notify'
@@ -31,6 +33,11 @@ type JobOptionsState =
   | { phase: 'ok'; jobs: Job[] }
   | { phase: 'error'; message: string }
 
+type DepartmentOptionsState =
+  | { phase: 'loading' }
+  | { phase: 'ok'; departments: Department[] }
+  | { phase: 'error'; message: string }
+
 type HolidayGroupOptionsState =
   | { phase: 'loading' }
   | { phase: 'ok'; holidayGroups: HolidayGroup[] }
@@ -42,6 +49,7 @@ function draftFrom(employee: Employee): EmploymentInput {
     hireDate: employee.employment.hireDate,
     employmentType: employee.employment.employmentType,
     jobId: employee.employment.jobId,
+    departmentId: employee.employment.departmentId,
     holidayGroupId: employee.employment.holidayGroupId,
   }
 }
@@ -78,6 +86,9 @@ export function EmployeeEmploymentTab({
   }
 
   const [jobOptions, setJobOptions] = useState<JobOptionsState>({ phase: 'loading' })
+  const [departmentOptions, setDepartmentOptions] = useState<DepartmentOptionsState>({
+    phase: 'loading',
+  })
   const [holidayGroupOptions, setHolidayGroupOptions] = useState<HolidayGroupOptionsState>({
     phase: 'loading',
   })
@@ -89,6 +100,25 @@ export function EmployeeEmploymentTab({
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setJobOptions({
+          phase: 'error',
+          message: err instanceof Error ? err.message : 'request failed',
+        })
+      })
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    listDepartments(controller.signal)
+      .then((departments) =>
+        setDepartmentOptions({
+          phase: 'ok',
+          departments: departments.filter((department) => department.isActive),
+        })
+      )
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setDepartmentOptions({
           phase: 'error',
           message: err instanceof Error ? err.message : 'request failed',
         })
@@ -139,6 +169,10 @@ export function EmployeeEmploymentTab({
   // selectable (labelled) rather than silently dropped out from under the
   // draft on open.
   const currentJobMissing = !activeJobIds.includes(draft.jobId)
+
+  const activeDepartmentIds =
+    departmentOptions.phase === 'ok' ? departmentOptions.departments.map((d) => d.id) : []
+  const currentDepartmentMissing = !activeDepartmentIds.includes(draft.departmentId)
 
   const activeHolidayGroupIds =
     holidayGroupOptions.phase === 'ok' ? holidayGroupOptions.holidayGroups.map((g) => g.id) : []
@@ -230,6 +264,35 @@ export function EmployeeEmploymentTab({
                 {jobOptions.phase === 'error' && (
                   <span className="text-[0.7rem] text-red-700">
                     โหลดรายการตำแหน่งงานไม่สำเร็จ: {jobOptions.message}
+                  </span>
+                )}
+              </label>
+              <label className={fieldLabel}>
+                <span>
+                  แผนก (Department) <span className={requiredMark}>*</span>
+                </span>
+                <select
+                  required
+                  className={fieldControl}
+                  disabled={departmentOptions.phase === 'loading'}
+                  value={draft.departmentId}
+                  onChange={(e) => set('departmentId', Number(e.target.value))}
+                >
+                  {currentDepartmentMissing && (
+                    <option value={draft.departmentId}>
+                      {employee.employment.departmentName} (ไม่พร้อมใช้งาน)
+                    </option>
+                  )}
+                  {departmentOptions.phase === 'ok' &&
+                    departmentOptions.departments.map((department) => (
+                      <option key={department.id} value={department.id}>
+                        {department.deptName}
+                      </option>
+                    ))}
+                </select>
+                {departmentOptions.phase === 'error' && (
+                  <span className="text-[0.7rem] text-red-700">
+                    โหลดรายการแผนกไม่สำเร็จ: {departmentOptions.message}
                   </span>
                 )}
               </label>

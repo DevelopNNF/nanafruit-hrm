@@ -40,6 +40,7 @@ const NAV: NavItem[] = [
     label: 'Master',
     icon: Database,
     children: [
+      { to: '/master/departments', label: 'แผนก (Department)' },
       { to: '/master/jobs', label: 'ตำแหน่งงาน (Job)' },
       { to: '/master/shifts', label: 'กะการทำงาน (Shift)' },
       { to: '/master/locations', label: 'พิกัดอนุญาต (Location)' },

@@ -29,6 +29,8 @@ export type EmployeeRow = {
   employment_type: string | null
   job_id: string | null // bigint, as a string for the same reason as id
   job_title: string | null
+  department_id: string | null
+  department_name: string | null
   shift_id: string | null
   shift_name: string | null
   shift_start_time: string | null
@@ -48,11 +50,13 @@ export const SELECT_EMPLOYEE = `
          e.nickname, e.gender,
          d.status, d.hire_date, d.employment_type,
          d.job_id, mj.job_title,
+         d.department_id, md.dept_name AS department_name,
          current_shift.shift_id, ms.shift_name, ms.shift_start_time, ms.shift_end_time,
          d.holiday_group_id, mhg.group_name AS holiday_group_name
   FROM employees e
   LEFT JOIN employment_details d ON d.employee_id = e.id
   LEFT JOIN master_jobs mj ON mj.id = d.job_id
+  LEFT JOIN master_departments md ON md.id = d.department_id
   ${currentShiftJoinSql('e.id')}
   LEFT JOIN master_shifts ms ON ms.id = current_shift.shift_id
   LEFT JOIN master_holiday_groups mhg ON mhg.id = d.holiday_group_id
@@ -71,7 +75,9 @@ export function rowToEmployee(row: EmployeeRow): Employee {
     row.hire_date === null ||
     row.employment_type === null ||
     row.job_id === null ||
-    row.job_title === null
+    row.job_title === null ||
+    row.department_id === null ||
+    row.department_name === null
   ) {
     throw new Error(`employee ${row.id} has no employment_details row`)
   }
@@ -92,6 +98,8 @@ export function rowToEmployee(row: EmployeeRow): Employee {
       employmentType: row.employment_type as Employee['employment']['employmentType'],
       jobId: Number(row.job_id),
       jobTitle: row.job_title,
+      departmentId: Number(row.department_id),
+      departmentName: row.department_name,
       shiftId: row.shift_id === null ? null : Number(row.shift_id),
       shiftName: row.shift_name,
       shiftStartTime: row.shift_start_time,

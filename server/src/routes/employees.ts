@@ -140,6 +140,14 @@ function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<Employ
     return { ok: false, message: 'employment.jobId is required and must be a positive integer' }
   }
 
+  const departmentId = requiredPositiveInt(emp, 'departmentId')
+  if (departmentId === null) {
+    return {
+      ok: false,
+      message: 'employment.departmentId is required and must be a positive integer',
+    }
+  }
+
   const holidayGroupId = optionalPositiveInt(emp, 'holidayGroupId')
   if (holidayGroupId === undefined) {
     return {
@@ -179,6 +187,7 @@ function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<Employ
       hireDate,
       employmentType: employmentType as EmploymentInput['employmentType'],
       jobId,
+      departmentId,
       holidayGroupId,
     },
   }
@@ -260,10 +269,11 @@ function isForeignKeyViolation(err: unknown): boolean {
  * than guessing. Postgres auto-names a column-level REFERENCES as
  * `<table>_<column>_fkey`.
  */
-function fkViolationField(err: unknown): 'job' | 'shift' | 'holidayGroup' | null {
+function fkViolationField(err: unknown): 'job' | 'department' | 'shift' | 'holidayGroup' | null {
   const constraint =
     typeof err === 'object' && err !== null ? (err as { constraint?: unknown }).constraint : null
   if (constraint === 'employment_details_job_id_fkey') return 'job'
+  if (constraint === 'employment_details_department_id_fkey') return 'department'
   if (constraint === 'employment_details_shift_id_fkey') return 'shift'
   if (constraint === 'employment_details_holiday_group_id_fkey') return 'holidayGroup'
   if (constraint === 'employee_shift_assignments_shift_id_fkey') return 'shift'
@@ -364,14 +374,15 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
 
       await client.query(
         `INSERT INTO employment_details
-           (employee_id, status, hire_date, employment_type, job_id, shift_id, holiday_group_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           (employee_id, status, hire_date, employment_type, job_id, department_id, shift_id, holiday_group_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           created.id,
           input.employment.status,
           input.employment.hireDate,
           input.employment.employmentType,
           input.employment.jobId,
+          input.employment.departmentId,
           input.employment.shiftId,
           input.employment.holidayGroupId,
         ]
@@ -419,6 +430,9 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
     }
     const fkField = fkViolationField(err)
     if (fkField === 'job') return fail(res, 400, `no job with id ${input.employment.jobId}`)
+    if (fkField === 'department') {
+      return fail(res, 400, `no department with id ${input.employment.departmentId}`)
+    }
     if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.employment.shiftId}`)
     if (fkField === 'holidayGroup') {
       return fail(res, 400, `no holiday group with id ${input.employment.holidayGroupId}`)
@@ -522,7 +536,7 @@ employeesRouter.patch(
         const { rowCount } = await client.query(
           `UPDATE employment_details SET
              status = $2, hire_date = $3, employment_type = $4,
-             job_id = $5, holiday_group_id = $6, updated_at = now()
+             job_id = $5, department_id = $6, holiday_group_id = $7, updated_at = now()
            WHERE employee_id = $1`,
           [
             id,
@@ -530,6 +544,7 @@ employeesRouter.patch(
             input.hireDate,
             input.employmentType,
             input.jobId,
+            input.departmentId,
             input.holidayGroupId,
           ]
         )
@@ -554,6 +569,9 @@ employeesRouter.patch(
     } catch (err) {
       const fkField = fkViolationField(err)
       if (fkField === 'job') return fail(res, 400, `no job with id ${input.jobId}`)
+      if (fkField === 'department') {
+        return fail(res, 400, `no department with id ${input.departmentId}`)
+      }
       if (fkField === 'holidayGroup') {
         return fail(res, 400, `no holiday group with id ${input.holidayGroupId}`)
       }
