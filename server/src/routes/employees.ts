@@ -6,6 +6,7 @@ import {
   GENDERS,
   ROLES,
   TITLES,
+  WORK_LOCATIONS,
   type EmployeeInput,
   type EmployeeListResponse,
   type AuthUser,
@@ -83,17 +84,34 @@ function optionalPositiveInt(source: Record<string, unknown>, key: string): numb
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
 }
 
+/** Standard Thai national ID checksum: the 13th digit is a weighted-sum
+ *  check over the first 12 (weights 13 down to 2), so a valid-looking but
+ *  mistyped number is rejected rather than merely being 13 digits. */
+function isValidThaiIdCardNumber(value: string): boolean {
+  if (!/^\d{13}$/.test(value)) return false
+  const digits = value.split('').map(Number)
+  let sum = 0
+  for (let i = 0; i < 12; i++) {
+    sum += (digits[i] as number) * (13 - i)
+  }
+  const check = (11 - (sum % 11)) % 10
+  return check === digits[12]
+}
+
 /** Shared by parseEmployeeInput (POST) and PATCH /employees/:id/basic. */
 function parseEmployeeBasicFields(raw: Record<string, unknown>): ParseResult<EmployeeBasicInput> {
   const fields = {
     employeeCode: requiredString(raw, 'employeeCode'),
     firstNameTh: requiredString(raw, 'firstNameTh'),
     lastNameTh: requiredString(raw, 'lastNameTh'),
-    firstNameEn: requiredString(raw, 'firstNameEn'),
-    lastNameEn: requiredString(raw, 'lastNameEn'),
   }
   for (const [key, value] of Object.entries(fields)) {
     if (value === null) return { ok: false, message: `${key} is required` }
+  }
+
+  const idCardNumber = requiredString(raw, 'idCardNumber')
+  if (idCardNumber === null || !isValidThaiIdCardNumber(idCardNumber)) {
+    return { ok: false, message: 'idCardNumber must be a valid 13-digit Thai national ID number' }
   }
 
   const title = requiredString(raw, 'title')
@@ -101,7 +119,20 @@ function parseEmployeeBasicFields(raw: Record<string, unknown>): ParseResult<Emp
     return { ok: false, message: `title must be one of: ${TITLES.join(', ')}` }
   }
 
-  // nickname is the only optional field: absent, null and '' all mean "none".
+  // firstNameEn/lastNameEn are optional: HR may not have the English name on
+  // file yet for every employee. Absent, null and '' all mean "none".
+  const firstNameEnRaw = raw['firstNameEn']
+  const firstNameEn =
+    typeof firstNameEnRaw === 'string' && firstNameEnRaw.trim() !== ''
+      ? firstNameEnRaw.trim()
+      : null
+  const lastNameEnRaw = raw['lastNameEn']
+  const lastNameEn =
+    typeof lastNameEnRaw === 'string' && lastNameEnRaw.trim() !== ''
+      ? lastNameEnRaw.trim()
+      : null
+
+  // nickname is optional too: absent, null and '' all mean "none".
   const nicknameRaw = raw['nickname']
   const nickname =
     typeof nicknameRaw === 'string' && nicknameRaw.trim() !== ''
@@ -122,11 +153,12 @@ function parseEmployeeBasicFields(raw: Record<string, unknown>): ParseResult<Emp
     ok: true,
     value: {
       employeeCode: fields.employeeCode as string,
+      idCardNumber,
       title: title as EmployeeBasicInput['title'],
       firstNameTh: fields.firstNameTh as string,
       lastNameTh: fields.lastNameTh as string,
-      firstNameEn: fields.firstNameEn as string,
-      lastNameEn: fields.lastNameEn as string,
+      firstNameEn,
+      lastNameEn,
       nickname,
       gender,
     },
@@ -180,12 +212,27 @@ function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<Employ
     return { ok: false, message: 'employment.hireDate must be a date as YYYY-MM-DD' }
   }
 
+  const startWorkingDate = requiredString(emp, 'startWorkingDate')
+  if (startWorkingDate === null || !isCalendarDate(startWorkingDate)) {
+    return { ok: false, message: 'employment.startWorkingDate must be a date as YYYY-MM-DD' }
+  }
+
+  const workLocation = requiredString(emp, 'workLocation')
+  if (workLocation === null || !(WORK_LOCATIONS as readonly string[]).includes(workLocation)) {
+    return {
+      ok: false,
+      message: `employment.workLocation must be one of: ${WORK_LOCATIONS.join(', ')}`,
+    }
+  }
+
   return {
     ok: true,
     value: {
       status: status as EmploymentInput['status'],
       hireDate,
+      startWorkingDate,
       employmentType: employmentType as EmploymentInput['employmentType'],
+      workLocation: workLocation as EmploymentInput['workLocation'],
       jobId,
       departmentId,
       holidayGroupId,
@@ -255,6 +302,16 @@ function isUniqueViolation(err: unknown): boolean {
   return (
     typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505'
   )
+}
+
+/** employees has two unique columns now — the constraint name says which one
+ *  actually failed rather than assuming it's always employee_code. */
+function uniqueViolationField(err: unknown): 'employeeCode' | 'idCardNumber' | null {
+  const constraint =
+    typeof err === 'object' && err !== null ? (err as { constraint?: unknown }).constraint : null
+  if (constraint === 'employees_employee_code_key') return 'employeeCode'
+  if (constraint === 'employees_id_card_number_key') return 'idCardNumber'
+  return null
 }
 
 function isForeignKeyViolation(err: unknown): boolean {
@@ -354,12 +411,13 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
     const employee = await withTransaction(async (client) => {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO employees
-           (employee_code, title, first_name_th, last_name_th,
+           (employee_code, id_card_number, title, first_name_th, last_name_th,
             first_name_en, last_name_en, nickname, gender)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id`,
         [
           input.employeeCode,
+          input.idCardNumber,
           input.title,
           input.firstNameTh,
           input.lastNameTh,
@@ -374,13 +432,16 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
 
       await client.query(
         `INSERT INTO employment_details
-           (employee_id, status, hire_date, employment_type, job_id, department_id, shift_id, holiday_group_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+           (employee_id, status, hire_date, start_working_date, employment_type, work_location,
+            job_id, department_id, shift_id, holiday_group_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           created.id,
           input.employment.status,
           input.employment.hireDate,
+          input.employment.startWorkingDate,
           input.employment.employmentType,
+          input.employment.workLocation,
           input.employment.jobId,
           input.employment.departmentId,
           input.employment.shiftId,
@@ -426,6 +487,10 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
     res.status(201).json(body)
   } catch (err) {
     if (isUniqueViolation(err)) {
+      const field = uniqueViolationField(err)
+      if (field === 'idCardNumber') {
+        return fail(res, 409, `เลขบัตรประชาชน ${input.idCardNumber} ถูกใช้งานแล้ว`)
+      }
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
     }
     const fkField = fkViolationField(err)
@@ -464,14 +529,15 @@ employeesRouter.patch('/employees/:id/basic', canWrite, async (req: Request, res
     const result = await withTransaction(async (client) => {
       const { rowCount } = await client.query(
         `UPDATE employees SET
-           employee_code = $2, title = $3,
-           first_name_th = $4, last_name_th = $5,
-           first_name_en = $6, last_name_en = $7,
-           nickname = $8, gender = $9, updated_at = now()
+           employee_code = $2, id_card_number = $3, title = $4,
+           first_name_th = $5, last_name_th = $6,
+           first_name_en = $7, last_name_en = $8,
+           nickname = $9, gender = $10, updated_at = now()
          WHERE id = $1`,
         [
           id,
           input.employeeCode,
+          input.idCardNumber,
           input.title,
           input.firstNameTh,
           input.lastNameTh,
@@ -503,6 +569,10 @@ employeesRouter.patch('/employees/:id/basic', canWrite, async (req: Request, res
     res.json(body)
   } catch (err) {
     if (isUniqueViolation(err)) {
+      const field = uniqueViolationField(err)
+      if (field === 'idCardNumber') {
+        return fail(res, 409, `เลขบัตรประชาชน ${input.idCardNumber} ถูกใช้งานแล้ว`)
+      }
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
     }
     handleUnexpected(res, err)
@@ -535,14 +605,17 @@ employeesRouter.patch(
         // shift").
         const { rowCount } = await client.query(
           `UPDATE employment_details SET
-             status = $2, hire_date = $3, employment_type = $4,
-             job_id = $5, department_id = $6, holiday_group_id = $7, updated_at = now()
+             status = $2, hire_date = $3, start_working_date = $4,
+             employment_type = $5, work_location = $6,
+             job_id = $7, department_id = $8, holiday_group_id = $9, updated_at = now()
            WHERE employee_id = $1`,
           [
             id,
             input.status,
             input.hireDate,
+            input.startWorkingDate,
             input.employmentType,
+            input.workLocation,
             input.jobId,
             input.departmentId,
             input.holidayGroupId,

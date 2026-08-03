@@ -18,9 +18,26 @@ import {
 const fieldGrid = 'grid gap-x-5 gap-y-4 grid-cols-[repeat(auto-fit,minmax(13rem,1fr))]'
 const sectionTitle = 'mb-5 border-b border-slate-200 pb-3 text-xs font-bold tracking-wider text-slate-500 uppercase'
 
+/** Custom controls (DatePicker/TreeSelect elsewhere) anchor their `required`
+ *  check on a zero-size hidden input, so the browser's native validation
+ *  bubble can end up invisible or mispositioned. Checking here and surfacing
+ *  it as a toast is the reliable path, regardless of what the browser does
+ *  with `required`. */
+function missingBasicFields(draft: EmployeeBasicInput): string[] {
+  const missing: string[] = []
+  if (!draft.employeeCode.trim()) missing.push('รหัสพนักงาน')
+  if (!draft.firstNameTh.trim()) missing.push('ชื่อ (ไทย)')
+  if (!draft.lastNameTh.trim()) missing.push('นามสกุล (ไทย)')
+  if (!draft.idCardNumber || !/^\d{13}$/.test(draft.idCardNumber)) {
+    missing.push('เลขบัตรประชาชน (13 หลัก)')
+  }
+  return missing
+}
+
 function draftFrom(employee: Employee): EmployeeBasicInput {
   return {
     employeeCode: employee.employeeCode,
+    idCardNumber: employee.idCardNumber,
     title: employee.title,
     firstNameTh: employee.firstNameTh,
     lastNameTh: employee.lastNameTh,
@@ -55,6 +72,11 @@ export function EmployeeBasicTab({
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
+    const missing = missingBasicFields(draft)
+    if (missing.length > 0) {
+      notify.error('กรอกข้อมูลไม่ครบ', `กรุณากรอก: ${missing.join(', ')}`)
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -79,7 +101,13 @@ export function EmployeeBasicTab({
         </div>
       )}
 
-      <form onSubmit={(e) => void handleSubmit(e)}>
+      {/* noValidate: native constraint validation blocks the submit event
+          before handleSubmit ever runs, and for the custom controls
+          elsewhere (DatePicker/TreeSelect's zero-size hidden `required`
+          input) it can do so with no visible bubble at all — silently
+          "nothing happens" on click. The missing-field toast below is the
+          one validation path that always runs and is always visible. */}
+      <form noValidate onSubmit={(e) => void handleSubmit(e)}>
         <fieldset disabled={!canWrite} className="min-w-0 border-0 p-0">
           <section className={`${card} mb-4`}>
             <h2 className={sectionTitle}>ข้อมูลพื้นฐาน (Basic information)</h2>
@@ -134,25 +162,33 @@ export function EmployeeBasicTab({
                 />
               </label>
               <label className={fieldLabel}>
-                <span>
-                  ชื่อ (EN) <span className={requiredMark}>*</span>
-                </span>
+                <span>ชื่อ (EN)</span>
                 <input
-                  required
                   className={fieldControl}
-                  value={draft.firstNameEn}
-                  onChange={(e) => set('firstNameEn', e.target.value)}
+                  value={draft.firstNameEn ?? ''}
+                  onChange={(e) => set('firstNameEn', e.target.value || null)}
+                />
+              </label>
+              <label className={fieldLabel}>
+                <span>นามสกุล (EN)</span>
+                <input
+                  className={fieldControl}
+                  value={draft.lastNameEn ?? ''}
+                  onChange={(e) => set('lastNameEn', e.target.value || null)}
                 />
               </label>
               <label className={fieldLabel}>
                 <span>
-                  นามสกุล (EN) <span className={requiredMark}>*</span>
+                  เลขบัตรประชาชน <span className={requiredMark}>*</span>
                 </span>
                 <input
                   required
+                  maxLength={13}
+                  inputMode="numeric"
+                  pattern="\d{13}"
                   className={fieldControl}
-                  value={draft.lastNameEn}
-                  onChange={(e) => set('lastNameEn', e.target.value)}
+                  value={draft.idCardNumber ?? ''}
+                  onChange={(e) => set('idCardNumber', e.target.value.replace(/\D/g, '') || null)}
                 />
               </label>
               <label className={fieldLabel}>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
+  WORK_LOCATIONS,
   type Department,
   type Employee,
   type EmploymentInput,
@@ -44,11 +45,28 @@ type HolidayGroupOptionsState =
   | { phase: 'ok'; holidayGroups: HolidayGroup[] }
   | { phase: 'error'; message: string }
 
+/** Custom controls (DatePicker/TreeSelect) anchor their `required` check on
+ *  a zero-size hidden input, so the browser's native validation bubble can
+ *  end up invisible or mispositioned. Checking here and surfacing it as a
+ *  toast is the reliable path, regardless of what the browser does with
+ *  `required`. */
+function missingEmploymentFields(draft: EmploymentInput): string[] {
+  const missing: string[] = []
+  if (!draft.hireDate) missing.push('วันที่จ้าง')
+  if (!draft.startWorkingDate) missing.push('วันที่เริ่มงาน')
+  if (!draft.workLocation) missing.push('สถานที่ปฏิบัติงาน')
+  if (!draft.jobId) missing.push('Job Title')
+  if (!draft.departmentId) missing.push('แผนก (Department)')
+  return missing
+}
+
 function draftFrom(employee: Employee): EmploymentInput {
   return {
     status: employee.employment.status,
     hireDate: employee.employment.hireDate,
+    startWorkingDate: employee.employment.startWorkingDate,
     employmentType: employee.employment.employmentType,
+    workLocation: employee.employment.workLocation,
     jobId: employee.employment.jobId,
     departmentId: employee.employment.departmentId,
     holidayGroupId: employee.employment.holidayGroupId,
@@ -152,6 +170,11 @@ export function EmployeeEmploymentTab({
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
+    const missing = missingEmploymentFields(draft)
+    if (missing.length > 0) {
+      notify.error('กรอกข้อมูลไม่ครบ', `กรุณากรอก: ${missing.join(', ')}`)
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -208,7 +231,13 @@ export function EmployeeEmploymentTab({
         </div>
       )}
 
-      <form className="" onSubmit={(e) => void handleSubmit(e)}>
+      {/* noValidate: native constraint validation blocks the submit event
+          before handleSubmit ever runs, and for the custom controls here
+          (DatePicker/TreeSelect's zero-size hidden `required` input) it can
+          do so with no visible bubble at all — silently "nothing happens"
+          on click. The missing-field toast below is the one validation path
+          that always runs and is always visible. */}
+      <form className="" noValidate onSubmit={(e) => void handleSubmit(e)}>
         <fieldset disabled={!canWrite} className="min-w-0 border-0 p-0">
           <section className={`${card} mb-4`}>
             <h2 className={sectionTitle}>ข้อมูลการจ้างงาน (Employment information)</h2>
@@ -242,6 +271,17 @@ export function EmployeeEmploymentTab({
               </label>
               <label className={fieldLabel}>
                 <span>
+                  วันที่เริ่มงาน <span className={requiredMark}>*</span>
+                </span>
+                <DatePicker
+                  required
+                  value={draft.startWorkingDate ?? ''}
+                  onChange={(value) => set('startWorkingDate', value)}
+                  className='w-full'
+                />
+              </label>
+              <label className={fieldLabel}>
+                <span>
                   ประเภทการจ้าง <span className={requiredMark}>*</span>
                 </span>
                 <select
@@ -254,6 +294,31 @@ export function EmployeeEmploymentTab({
                   {EMPLOYMENT_TYPES.map((type) => (
                     <option key={type} value={type}>
                       {type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fieldLabel}>
+                <span>
+                  สถานที่ปฏิบัติงาน <span className={requiredMark}>*</span>
+                </span>
+                <select
+                  required
+                  className={fieldControl}
+                  value={draft.workLocation ?? ''}
+                  onChange={(e) =>
+                    set(
+                      'workLocation',
+                      (e.target.value || null) as EmploymentInput['workLocation']
+                    )
+                  }
+                >
+                  <option value="" disabled>
+                    — เลือกสถานที่ปฏิบัติงาน —
+                  </option>
+                  {WORK_LOCATIONS.map((location) => (
+                    <option key={location} value={location}>
+                      {location}
                     </option>
                   ))}
                 </select>

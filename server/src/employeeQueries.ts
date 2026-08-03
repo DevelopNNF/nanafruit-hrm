@@ -17,16 +17,19 @@ type Queryable = Pick<pg.Pool, 'query'>
 export type EmployeeRow = {
   id: string // bigint: pg hands these back as strings to avoid precision loss
   employee_code: string
+  id_card_number: string | null
   title: string
   first_name_th: string
   last_name_th: string
-  first_name_en: string
-  last_name_en: string
+  first_name_en: string | null
+  last_name_en: string | null
   nickname: string | null
   gender: string | null
   status: string | null
   hire_date: string | null // 'YYYY-MM-DD' — see the DATE type parser in db.ts
+  start_working_date: string | null // 'YYYY-MM-DD'
   employment_type: string | null
+  work_location: string | null
   job_id: string | null // bigint, as a string for the same reason as id
   job_title: string | null
   department_id: string | null
@@ -45,10 +48,10 @@ export type EmployeeRow = {
 // column stopped being a safe "current shift" source the moment a change
 // could be scheduled for a future date with no job to flip it on arrival.
 export const SELECT_EMPLOYEE = `
-  SELECT e.id, e.employee_code, e.title,
+  SELECT e.id, e.employee_code, e.id_card_number, e.title,
          e.first_name_th, e.last_name_th, e.first_name_en, e.last_name_en,
          e.nickname, e.gender,
-         d.status, d.hire_date, d.employment_type,
+         d.status, d.hire_date, d.start_working_date, d.employment_type, d.work_location,
          d.job_id, mj.job_title,
          d.department_id, md.dept_name AS department_name,
          current_shift.shift_id, ms.shift_name, ms.shift_start_time, ms.shift_end_time,
@@ -85,6 +88,7 @@ export function rowToEmployee(row: EmployeeRow): Employee {
   return {
     id: Number(row.id),
     employeeCode: row.employee_code,
+    idCardNumber: row.id_card_number,
     title: row.title as Employee['title'],
     firstNameTh: row.first_name_th,
     lastNameTh: row.last_name_th,
@@ -95,7 +99,9 @@ export function rowToEmployee(row: EmployeeRow): Employee {
     employment: {
       status: row.status as Employee['employment']['status'],
       hireDate: row.hire_date,
+      startWorkingDate: row.start_working_date,
       employmentType: row.employment_type as Employee['employment']['employmentType'],
+      workLocation: row.work_location as Employee['employment']['workLocation'],
       jobId: Number(row.job_id),
       jobTitle: row.job_title,
       departmentId: Number(row.department_id),

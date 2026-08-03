@@ -51,12 +51,18 @@ export const EMPLOYEE_STATUSES = ['Active', 'Inactive'] as const
 export type EmployeeStatus = (typeof EMPLOYEE_STATUSES)[number]
 
 export const EMPLOYMENT_TYPES = [
-  'Permanent',
-  'Contract',
-  'Daily',
-  'Regularly',
+  'ประจำ (รายเดือน)',
+  'ประจำ (รายวัน)',
+  'สัญญาจ้าง',
+  'ชั่วคราว',
 ] as const
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number]
+
+/** Fixed pair of office locations, same reasoning as TITLES/GENDERS: not
+ *  something HR manages via CRUD, so a const array rather than a master
+ *  table. */
+export const WORK_LOCATIONS = ['เชียงใหม่', 'ลำพูน'] as const
+export type WorkLocation = (typeof WORK_LOCATIONS)[number]
 
 /**
  * `employment` is nested rather than flattened so the shape matches both the
@@ -65,11 +71,17 @@ export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number]
 export type Employee = {
   id: number
   employeeCode: string
+  /** 13-digit Thai national ID, checksum-validated. Nullable: existing
+   *  employees have never recorded this, and there is no honest default to
+   *  invent for them — same reasoning as GENDERS. */
+  idCardNumber: string | null
   title: Title
   firstNameTh: string
   lastNameTh: string
-  firstNameEn: string
-  lastNameEn: string
+  /** Nullable: HR may not have the English name on file yet for every
+   *  employee, unlike the Thai name, which stays required. */
+  firstNameEn: string | null
+  lastNameEn: string | null
   nickname: string | null
   /** Null until HR records it — see the comment on GENDERS. Only meaningful
    *  once set: a gender-restricted leave type simply can't be matched
@@ -82,7 +94,14 @@ export type EmploymentDetails = {
   status: EmployeeStatus
   /** Calendar date, `YYYY-MM-DD`. No time, no timezone. */
   hireDate: string
+  /** Calendar date, `YYYY-MM-DD`. Distinct from hireDate — HR tracks a
+   *  contract/hire date separately from the day work actually starts.
+   *  Nullable for the same reason idCardNumber is: existing employees have
+   *  never recorded it. */
+  startWorkingDate: string | null
   employmentType: EmploymentType
+  /** Nullable for the same reason startWorkingDate is. */
+  workLocation: WorkLocation | null
   /** FK to master_jobs.id. */
   jobId: number
   /** master_jobs.job_title as of now, joined in for display. Derived from

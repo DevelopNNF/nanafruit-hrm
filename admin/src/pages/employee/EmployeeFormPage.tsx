@@ -6,6 +6,7 @@ import {
   EMPLOYMENT_TYPES,
   GENDERS,
   TITLES,
+  WORK_LOCATIONS,
   type Department,
   type Employee,
   type EmployeeInput,
@@ -50,22 +51,25 @@ function today(): string {
 
 const emptyDraft: EmployeeInput = {
   employeeCode: '',
+  idCardNumber: null,
   title: TITLES[0],
   firstNameTh: '',
   lastNameTh: '',
-  firstNameEn: '',
-  lastNameEn: '',
+  firstNameEn: null,
+  lastNameEn: null,
   nickname: null,
   gender: null,
   employment: {
     status: EMPLOYEE_STATUSES[0],
     hireDate: today(),
+    startWorkingDate: null,
     // 0 is not a real master_jobs id — it's the sentinel for "nothing picked
     // yet", matched by the disabled placeholder option in the Job Title select.
     jobId: 0,
     // Same sentinel reasoning as jobId — 0 is not a real master_departments id.
     departmentId: 0,
     employmentType: EMPLOYMENT_TYPES[0],
+    workLocation: null,
     // Unlike jobId, null is a real value here — shift assignment is optional —
     // so it doubles as both "nothing picked yet" and "deliberately unset".
     shiftId: null,
@@ -73,6 +77,27 @@ const emptyDraft: EmployeeInput = {
     // assigned yet.
     holidayGroupId: null,
   },
+}
+
+/** Custom controls (DatePicker, and the Job/Department selects' 0 sentinel)
+ *  anchor their `required` check on a zero-size hidden input or an option
+ *  that's technically "selected", so the browser's native validation bubble
+ *  can end up invisible or simply not fire. Checking here and surfacing it
+ *  as a toast is the reliable path. */
+function missingEmployeeFields(draft: EmployeeInput): string[] {
+  const missing: string[] = []
+  if (!draft.employeeCode.trim()) missing.push('รหัสพนักงาน')
+  if (!draft.firstNameTh.trim()) missing.push('ชื่อ (ไทย)')
+  if (!draft.lastNameTh.trim()) missing.push('นามสกุล (ไทย)')
+  if (!draft.idCardNumber || !/^\d{13}$/.test(draft.idCardNumber)) {
+    missing.push('เลขบัตรประชาชน (13 หลัก)')
+  }
+  if (!draft.employment.hireDate) missing.push('วันที่จ้าง')
+  if (!draft.employment.startWorkingDate) missing.push('วันที่เริ่มงาน')
+  if (!draft.employment.workLocation) missing.push('สถานที่ปฏิบัติงาน')
+  if (draft.employment.jobId === 0) missing.push('Job Title')
+  if (draft.employment.departmentId === 0) missing.push('แผนก (Department)')
+  return missing
 }
 
 const fieldGrid = 'grid gap-x-5 gap-y-4 grid-cols-[repeat(auto-fit,minmax(13rem,1fr))]'
@@ -226,6 +251,11 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
+    const missing = missingEmployeeFields(draft)
+    if (missing.length > 0) {
+      notify.error('กรอกข้อมูลไม่ครบ', `กรุณากรอก: ${missing.join(', ')}`)
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -288,7 +318,14 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
         </div>
       )}
 
-      <form className="max-w-3xl" onSubmit={(e) => void handleSubmit(e)}>
+      {/* noValidate: native constraint validation blocks the submit event
+          before handleSubmit ever runs, and for the custom controls here
+          (DatePicker's zero-size hidden `required` input, the Job/Department
+          selects' disabled sentinel option) it can do so with no visible
+          bubble at all — silently "nothing happens" on click. The
+          missing-field toast below is the one validation path that always
+          runs and is always visible. */}
+      <form className="max-w-3xl" noValidate onSubmit={(e) => void handleSubmit(e)}>
         {/* One fieldset rather than a `disabled` on each control: a field added
             later is read-only by default instead of by remembering. */}
         <fieldset disabled={!canWrite} className="min-w-0 border-0 p-0">
@@ -347,25 +384,35 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
                 />
               </label>
               <label className={fieldLabel}>
-                <span>
-                  ชื่อ (EN) <span className={requiredMark}>*</span>
-                </span>
+                <span>ชื่อ (EN)</span>
                 <input
-                  required
                   className={fieldControl}
-                  value={draft.firstNameEn}
-                  onChange={(e) => setBasic('firstNameEn', e.target.value)}
+                  value={draft.firstNameEn ?? ''}
+                  onChange={(e) => setBasic('firstNameEn', e.target.value || null)}
+                />
+              </label>
+              <label className={fieldLabel}>
+                <span>นามสกุล (EN)</span>
+                <input
+                  className={fieldControl}
+                  value={draft.lastNameEn ?? ''}
+                  onChange={(e) => setBasic('lastNameEn', e.target.value || null)}
                 />
               </label>
               <label className={fieldLabel}>
                 <span>
-                  นามสกุล (EN) <span className={requiredMark}>*</span>
+                  เลขบัตรประชาชน <span className={requiredMark}>*</span>
                 </span>
                 <input
                   required
+                  maxLength={13}
+                  inputMode="numeric"
+                  pattern="\d{13}"
                   className={fieldControl}
-                  value={draft.lastNameEn}
-                  onChange={(e) => setBasic('lastNameEn', e.target.value)}
+                  value={draft.idCardNumber ?? ''}
+                  onChange={(e) =>
+                    setBasic('idCardNumber', e.target.value.replace(/\D/g, '') || null)
+                  }
                 />
               </label>
               <label className={fieldLabel}>
@@ -432,6 +479,16 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
               </label>
               <label className={fieldLabel}>
                 <span>
+                  วันที่เริ่มงาน <span className={requiredMark}>*</span>
+                </span>
+                <DatePicker
+                  required
+                  value={draft.employment.startWorkingDate ?? ''}
+                  onChange={(value) => setEmployment('startWorkingDate', value)}
+                />
+              </label>
+              <label className={fieldLabel}>
+                <span>
                   ประเภทการจ้าง <span className={requiredMark}>*</span>
                 </span>
                 <select
@@ -447,6 +504,31 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
                   {EMPLOYMENT_TYPES.map((type) => (
                     <option key={type} value={type}>
                       {type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fieldLabel}>
+                <span>
+                  สถานที่ปฏิบัติงาน <span className={requiredMark}>*</span>
+                </span>
+                <select
+                  required
+                  className={fieldControl}
+                  value={draft.employment.workLocation ?? ''}
+                  onChange={(e) =>
+                    setEmployment(
+                      'workLocation',
+                      (e.target.value || null) as EmployeeInput['employment']['workLocation']
+                    )
+                  }
+                >
+                  <option value="" disabled>
+                    — เลือกสถานที่ปฏิบัติงาน —
+                  </option>
+                  {WORK_LOCATIONS.map((location) => (
+                    <option key={location} value={location}>
+                      {location}
                     </option>
                   ))}
                 </select>
