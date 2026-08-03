@@ -4,6 +4,10 @@ import type {
   EmployeeListResponse,
   EmployeeResponse,
   LinkCodeResponse,
+  ShiftAssignment,
+  ShiftChangeInput,
+  ShiftChangeResponse,
+  ShiftHistoryResponse,
 } from '@hrm/shared'
 import { apiFetch, jsonHeaders, unwrap } from './client'
 
@@ -57,4 +61,23 @@ export async function deleteEmployee(id: number): Promise<void> {
   const res = await apiFetch(`/api/employees/${id}`, { method: 'DELETE' })
   // 204: nothing to unwrap, but a failure still needs to surface.
   if (!res.ok) await unwrap<never>(res)
+}
+
+export async function getShiftHistory(id: number, signal?: AbortSignal): Promise<ShiftAssignment[]> {
+  const res = await apiFetch(`/api/employees/${id}/shift-history`, { signal })
+  const body = await unwrap<ShiftHistoryResponse>(res)
+  return body.assignments
+}
+
+export async function createShiftChange(
+  id: number,
+  input: ShiftChangeInput
+): Promise<ShiftAssignment> {
+  const res = await apiFetch(`/api/employees/${id}/shift-changes`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  const body = await unwrap<ShiftChangeResponse>(res)
+  return body.assignment
 }

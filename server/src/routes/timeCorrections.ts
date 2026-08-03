@@ -19,6 +19,7 @@ import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
 import { findEmployeeById } from '../employeeQueries.js'
+import { getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
 import {
   findTimeCorrectionById,
   listTimeCorrections,
@@ -260,11 +261,17 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (re
       const employee = await findEmployeeById(employeeId, client)
       if (!employee) return { kind: 'conflict' as const, message: 'ไม่พบข้อมูลพนักงานของคำขอนี้' }
 
+      // The shift that applied *on the corrected date*, not employee's
+      // current one — approval can happen well after the request, and by
+      // then the employee may already be on a different shift. See
+      // shiftAssignmentQueries.ts's header comment.
+      const shiftId = await getShiftIdForDate(employeeId, toThailandDateString(eventTime), client)
+
       const { rows: insertedRows } = await client.query<{ id: string }>(
         `INSERT INTO attendance_events (employee_id, event_type, event_time, source, shift_id)
          VALUES ($1, $2, $3, 'admin_correction', $4)
          RETURNING id`,
-        [employeeId, eventType, row.requested_event_time, employee.employment.shiftId]
+        [employeeId, eventType, row.requested_event_time, shiftId]
       )
       const resultingEventId = Number(insertedRows[0]?.id)
       if (!resultingEventId) throw new Error('insert into attendance_events returned no id')

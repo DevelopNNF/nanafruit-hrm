@@ -88,8 +88,12 @@ export type EmploymentDetails = {
   /** master_jobs.job_title as of now, joined in for display. Derived from
    *  jobId, not writable directly — absent from EmploymentDetailsInput. */
   jobTitle: string
-  /** FK to master_shifts.id. Nullable — not every employee has a shift
-   *  assigned yet, unlike jobId. */
+  /** FK to master_shifts.id, as of *today* — resolved from
+   *  employee_shift_assignments, not stored directly. Nullable — not every
+   *  employee has a shift assigned yet, unlike jobId. Writable on
+   *  EmploymentDetailsInput only for POST /api/employees (the employee's
+   *  first assignment); PUT /api/employees/:id ignores it; shift changes
+   *  after creation go through POST /api/employees/:id/shift-changes. */
   shiftId: number | null
   /** master_shifts.shift_name as of now, joined in for display. Derived from
    *  shiftId, not writable directly — absent from EmploymentDetailsInput.
@@ -131,6 +135,49 @@ export type EmployeeListResponse = { employees: Employee[] }
 
 /** GET /api/employees/:id, POST, PATCH */
 export type EmployeeResponse = { employee: Employee }
+
+/* Shift History ------------------------------------------------------------- */
+
+/** A row in employee_shift_assignments: one interval during which a given
+ *  shift applied to an employee. The source of truth for "what shift was in
+ *  effect on date X" — see that migration's comment for why
+ *  employment_details.shift_id stopped being it. */
+export type ShiftAssignment = {
+  id: number
+  shiftId: number | null
+  /** 'YYYY-MM-DD'. */
+  effectiveFrom: string
+  /** 'YYYY-MM-DD', or null if this is the currently open-ended assignment. */
+  effectiveTo: string | null
+  note: string | null
+  createdByKind: string
+  createdById: string
+  /** ISO 8601. */
+  createdAt: string
+}
+
+/**
+ * Body of POST /api/employees/:id/shift-changes.
+ *
+ * `effectiveTo` absent or null means a permanent change (HR/Admin, from the
+ * employee edit screen). Set, it's a temporary swap: the employee's
+ * previous shift resumes automatically the day after, no separate action
+ * needed. Either way `effectiveFrom` must be today or later — backdating is
+ * not allowed, since attendance already snapshots the shift that applied at
+ * clock-in time and doesn't need correcting after the fact.
+ */
+export type ShiftChangeInput = {
+  shiftId: number | null
+  effectiveFrom: string
+  effectiveTo?: string | null
+  note?: string | null
+}
+
+/** POST /api/employees/:id/shift-changes */
+export type ShiftChangeResponse = { assignment: ShiftAssignment }
+
+/** GET /api/employees/:id/shift-history — most recent interval first. */
+export type ShiftHistoryResponse = { assignments: ShiftAssignment[] }
 
 /**
  * Machine-readable reason on an ApiError, for the cases where the client has to

@@ -18,6 +18,7 @@ type Queryable = Pick<pg.Pool, 'query'>
 export type AuditAction =
   | 'employee.create'
   | 'employee.update'
+  | 'employee.shift_change'
   | 'employee.delete'
   | 'employee.link_code_issued'
   | 'employee.line_linked'

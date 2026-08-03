@@ -23,6 +23,7 @@ import { listHolidayGroups } from '../api/holidayGroups'
 import { DatePicker } from '../components/DatePicker'
 import { LinkCodeCard } from '../components/LinkCodeCard'
 import { LeaveBalanceCard } from '../components/LeaveBalanceCard'
+import { ShiftHistoryCard } from '../components/ShiftHistoryCard'
 import { useCanWrite } from '../auth/meContext'
 import { notify } from '../notifications/notify'
 import {
@@ -208,6 +209,24 @@ export function EmployeeFormPage() {
 
     return () => controller.abort()
   }, [id])
+
+  // Re-fetches just the "current shift" the page shows after
+  // ShiftHistoryCard records a change — that card's own list is already up
+  // to date from its own reload, this only refreshes this page's display.
+  function refreshCurrentShift() {
+    if (id === null) return
+    getEmployee(id)
+      .then((employee) => {
+        setDraft((prev) => ({
+          ...prev,
+          employment: { ...prev.employment, shiftId: employee.employment.shiftId },
+        }))
+        setLoadedShiftName(employee.employment.shiftName)
+      })
+      .catch(() => {
+        /* best-effort refresh only */
+      })
+  }
 
   function setBasic<K extends keyof EmployeeInput>(key: K, value: EmployeeInput[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }))
@@ -507,33 +526,47 @@ export function EmployeeFormPage() {
               </label>
               <label className={fieldLabel}>
                 <span>กะการทำงาน (Shift)</span>
-                <select
-                  className={fieldControl}
-                  disabled={shiftOptions.phase === 'loading'}
-                  value={draft.employment.shiftId ?? ''}
-                  onChange={(e) =>
-                    setEmployment('shiftId', e.target.value ? Number(e.target.value) : null)
-                  }
-                >
-                  <option value="">
-                    {shiftOptions.phase === 'loading' ? 'กำลังโหลดกะการทำงาน…' : '— ไม่ระบุกะ —'}
-                  </option>
-                  {currentShiftMissing && (
-                    <option value={draft.employment.shiftId ?? ''}>
-                      {loadedShiftName ?? `#${draft.employment.shiftId}`} (ไม่พร้อมใช้งาน)
-                    </option>
-                  )}
-                  {shiftOptions.phase === 'ok' &&
-                    shiftOptions.shifts.map((shift) => (
-                      <option key={shift.id} value={shift.id}>
-                        {shift.shiftName}
+                {isNew ? (
+                  <>
+                    <select
+                      className={fieldControl}
+                      disabled={shiftOptions.phase === 'loading'}
+                      value={draft.employment.shiftId ?? ''}
+                      onChange={(e) =>
+                        setEmployment('shiftId', e.target.value ? Number(e.target.value) : null)
+                      }
+                    >
+                      <option value="">
+                        {shiftOptions.phase === 'loading' ? 'กำลังโหลดกะการทำงาน…' : '— ไม่ระบุกะ —'}
                       </option>
-                    ))}
-                </select>
-                {shiftOptions.phase === 'error' && (
-                  <span className="text-[0.7rem] text-red-700">
-                    โหลดรายการกะการทำงานไม่สำเร็จ: {shiftOptions.message}
-                  </span>
+                      {currentShiftMissing && (
+                        <option value={draft.employment.shiftId ?? ''}>
+                          {loadedShiftName ?? `#${draft.employment.shiftId}`} (ไม่พร้อมใช้งาน)
+                        </option>
+                      )}
+                      {shiftOptions.phase === 'ok' &&
+                        shiftOptions.shifts.map((shift) => (
+                          <option key={shift.id} value={shift.id}>
+                            {shift.shiftName}
+                          </option>
+                        ))}
+                    </select>
+                    {shiftOptions.phase === 'error' && (
+                      <span className="text-[0.7rem] text-red-700">
+                        โหลดรายการกะการทำงานไม่สำเร็จ: {shiftOptions.message}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  // Read-only here on purpose: PUT no longer writes shift_id
+                  // at all — a change after creation needs an effective date,
+                  // so it goes through the Shift History card's own form below.
+                  <input
+                    className={fieldControl}
+                    value={loadedShiftName ?? '— ไม่ระบุกะ —'}
+                    disabled
+                    readOnly
+                  />
                 )}
               </label>
               <label className={fieldLabel}>
@@ -625,6 +658,10 @@ export function EmployeeFormPage() {
           role that can see this employee at all — only the add-entry form
           inside is gated on canWrite. */}
       {id !== null && <LeaveBalanceCard employeeId={id} canWrite={canWrite} />}
+
+      {id !== null && (
+        <ShiftHistoryCard employeeId={id} canWrite={canWrite} onChanged={refreshCurrentShift} />
+      )}
     </>
   )
 }

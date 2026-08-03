@@ -11,6 +11,9 @@ import {
   type AuthUser,
   type EmployeeResponse,
   type LinkCodeResponse,
+  type ShiftChangeInput,
+  type ShiftChangeResponse,
+  type ShiftHistoryResponse,
 } from '@hrm/shared'
 import { LINK_CODE_TTL_MS, generateLinkCode, hashLinkCode } from '../auth/linkCode.js'
 import { pool, withTransaction } from '../db.js'
@@ -23,6 +26,11 @@ import {
   rowToEmployee,
   type EmployeeRow,
 } from '../employeeQueries.js'
+import {
+  createShiftChange,
+  listShiftAssignments,
+  toThailandDateString,
+} from '../shiftAssignmentQueries.js'
 
 export const employeesRouter = Router()
 
@@ -219,7 +227,43 @@ function fkViolationField(err: unknown): 'job' | 'shift' | 'holidayGroup' | null
   if (constraint === 'employment_details_job_id_fkey') return 'job'
   if (constraint === 'employment_details_shift_id_fkey') return 'shift'
   if (constraint === 'employment_details_holiday_group_id_fkey') return 'holidayGroup'
+  if (constraint === 'employee_shift_assignments_shift_id_fkey') return 'shift'
   return null
+}
+
+/** Hand-rolled, same style as parseEmployeeInput. */
+function parseShiftChangeInput(body: unknown): ParseResult<ShiftChangeInput> {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, message: 'body must be a JSON object' }
+  }
+  const raw = body as Record<string, unknown>
+
+  const shiftId = optionalPositiveInt(raw, 'shiftId')
+  if (shiftId === undefined) {
+    return { ok: false, message: 'shiftId must be a positive integer or null' }
+  }
+
+  const effectiveFrom = requiredString(raw, 'effectiveFrom')
+  if (effectiveFrom === null || !isCalendarDate(effectiveFrom)) {
+    return { ok: false, message: 'effectiveFrom must be a date as YYYY-MM-DD' }
+  }
+
+  const effectiveToRaw = raw['effectiveTo']
+  let effectiveTo: string | null = null
+  if (effectiveToRaw !== undefined && effectiveToRaw !== null) {
+    if (typeof effectiveToRaw !== 'string' || !isCalendarDate(effectiveToRaw)) {
+      return { ok: false, message: 'effectiveTo must be a date as YYYY-MM-DD, or null' }
+    }
+    effectiveTo = effectiveToRaw
+  }
+  if (effectiveTo !== null && effectiveTo < effectiveFrom) {
+    return { ok: false, message: 'effectiveTo must be on or after effectiveFrom' }
+  }
+
+  const noteRaw = raw['note']
+  const note = typeof noteRaw === 'string' && noteRaw.trim() !== '' ? noteRaw.trim() : null
+
+  return { ok: true, value: { shiftId, effectiveFrom, effectiveTo, note } }
 }
 
 employeesRouter.get('/employees', canRead, async (_req: Request, res: Response) => {
@@ -294,6 +338,25 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
         ]
       )
 
+      // The employee's first shift assignment, if given one at creation —
+      // employment_details.shift_id above is written too (existing columns
+      // aren't dropped yet) but nothing reads it as "current" any more; this
+      // row is what getShiftIdForDate/currentShiftJoinSql actually resolve.
+      if (input.employment.shiftId !== null) {
+        await client.query(
+          `INSERT INTO employee_shift_assignments
+             (employee_id, shift_id, effective_from, created_by_kind, created_by_id)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            created.id,
+            input.employment.shiftId,
+            input.employment.hireDate,
+            actor.kind,
+            actor.kind === 'admin' ? actor.oid : String(actor.employeeId),
+          ]
+        )
+      }
+
       await recordAudit(client, {
         actor,
         action: 'employee.create',
@@ -362,10 +425,17 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
       )
       if (rowCount === 0) return 'not-found' as const
 
+      // shift_id is deliberately absent here: this is a full-replace edit,
+      // but shift changes need an effective date and go through
+      // POST /employees/:id/shift-changes instead, which is the only writer
+      // of employee_shift_assignments (and, since 023, the only thing any
+      // read path trusts for "current shift"). input.employment.shiftId is
+      // still part of the body — EmployeeInput is shared with POST — it's
+      // just not written here.
       await client.query(
         `UPDATE employment_details SET
            status = $2, hire_date = $3, employment_type = $4,
-           job_id = $5, shift_id = $6, holiday_group_id = $7, updated_at = now()
+           job_id = $5, holiday_group_id = $6, updated_at = now()
          WHERE employee_id = $1`,
         [
           id,
@@ -373,7 +443,6 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
           input.employment.hireDate,
           input.employment.employmentType,
           input.employment.jobId,
-          input.employment.shiftId,
           input.employment.holidayGroupId,
         ]
       )
@@ -402,7 +471,6 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
     }
     const fkField = fkViolationField(err)
     if (fkField === 'job') return fail(res, 400, `no job with id ${input.employment.jobId}`)
-    if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.employment.shiftId}`)
     if (fkField === 'holidayGroup') {
       return fail(res, 400, `no holiday group with id ${input.employment.holidayGroupId}`)
     }
@@ -410,6 +478,117 @@ employeesRouter.put('/employees/:id', canWrite, async (req: Request, res: Respon
     handleUnexpected(res, err)
   }
 })
+
+employeesRouter.post(
+  '/employees/:id/shift-changes',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    const parsed = parseShiftChangeInput(req.body)
+    if (!parsed.ok) return fail(res, 400, parsed.message)
+    const input = parsed.value
+
+    // No backdating: attendance already snapshots the shift that applied at
+    // clock-in time (see attendance_events' shift_id), so there is nothing
+    // for a backdated shift change to correct, only history to rewrite.
+    const today = toThailandDateString(new Date())
+    if (input.effectiveFrom < today) {
+      return fail(
+        res,
+        400,
+        'effectiveFrom ต้องเป็นวันนี้หรือวันในอนาคตเท่านั้น ไม่สามารถเปลี่ยนกะย้อนหลังได้'
+      )
+    }
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const employee = await findEmployeeById(id, client)
+        if (!employee) return { kind: 'not-found' as const }
+        if (input.effectiveFrom < employee.employment.hireDate) {
+          return { kind: 'before-hire' as const }
+        }
+
+        const outcome = await createShiftChange(client, {
+          employeeId: id,
+          shiftId: input.shiftId,
+          effectiveFrom: input.effectiveFrom,
+          effectiveTo: input.effectiveTo ?? null,
+          note: input.note ?? null,
+          createdByKind: actor.kind,
+          createdById: actor.oid,
+        })
+        if (outcome.kind !== 'ok') return outcome
+
+        await recordAudit(client, {
+          actor,
+          action: 'employee.shift_change',
+          entityId: id,
+          detail: {
+            employeeCode: employee.employeeCode,
+            shiftId: outcome.assignment.shiftId,
+            previousShiftId: outcome.previousShiftId,
+            effectiveFrom: outcome.assignment.effectiveFrom,
+            effectiveTo: outcome.assignment.effectiveTo,
+            note: outcome.assignment.note,
+          },
+        })
+        return outcome
+      })
+
+      if (result.kind === 'not-found') return fail(res, 404, `no employee with id ${id}`)
+      if (result.kind === 'before-hire') {
+        return fail(res, 400, 'effectiveFrom ต้องไม่ก่อนวันที่เริ่มงานของพนักงาน')
+      }
+      if (result.kind === 'no_baseline') {
+        return fail(
+          res,
+          400,
+          'พนักงานคนนี้ยังไม่มีกะถาวรที่กำหนดไว้ ไม่สามารถสลับกะชั่วคราวได้ กรุณากำหนดกะถาวรก่อน'
+        )
+      }
+      if (result.kind === 'overlap') {
+        return fail(
+          res,
+          409,
+          'ช่วงเวลาที่ระบุทับกับการเปลี่ยนกะที่ตั้งไว้ล่วงหน้าแล้ว กรุณาตรวจสอบประวัติการเปลี่ยนกะ'
+        )
+      }
+
+      const body: ShiftChangeResponse = { assignment: result.assignment }
+      res.status(201).json(body)
+    } catch (err) {
+      const fkField = fkViolationField(err)
+      if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.shiftId}`)
+      if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in shift change')
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+employeesRouter.get(
+  '/employees/:id/shift-history',
+  canRead,
+  async (req: Request, res: Response) => {
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const employee = await findEmployeeById(id)
+      if (!employee) return fail(res, 404, `no employee with id ${id}`)
+
+      const assignments = await listShiftAssignments(id)
+      const body: ShiftHistoryResponse = { assignments }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
 
 // Issues a one-time code the employee types into liff/ to claim their record.
 // A write, and an identity-granting one, so canWrite rather than canRead.

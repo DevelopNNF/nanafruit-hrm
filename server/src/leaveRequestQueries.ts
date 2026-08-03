@@ -8,6 +8,7 @@
 import type pg from 'pg'
 import type { LeaveRequest, LeaveRequestListItem, LeaveRequestStatus } from '@hrm/shared'
 import { pool } from './db.js'
+import { currentShiftJoinSql } from './shiftAssignmentQueries.js'
 
 type Queryable = Pick<pg.Pool, 'query'>
 
@@ -265,6 +266,11 @@ export async function loadLeaveDayContext(
   endDate: string,
   db: Queryable = pool
 ): Promise<{ shift: ShiftDayInfo | null; holidayDates: ReadonlySet<string> }> {
+  // Shift comes from employee_shift_assignments (the shift in effect today),
+  // not employment_details.shift_id — see that migration's comment. This
+  // still runs once, at submission time, and total_days is frozen from
+  // there (see this file's header comment); a later shift change does not
+  // retroactively change it, same as before.
   const { rows: shiftRows } = await db.query<{
     workdays: number | null
     shift_start_time: string | null
@@ -276,7 +282,8 @@ export async function loadLeaveDayContext(
     `SELECT ms.workdays, ms.shift_start_time, ms.shift_end_time,
             ms.break_start_time, ms.break_end_time, d.holiday_group_id
      FROM employment_details d
-     LEFT JOIN master_shifts ms ON ms.id = d.shift_id
+     ${currentShiftJoinSql('d.employee_id')}
+     LEFT JOIN master_shifts ms ON ms.id = current_shift.shift_id
      WHERE d.employee_id = $1`,
     [employeeId]
   )

@@ -40,19 +40,35 @@ export async function buildMonthCalendar(
 ): Promise<CalendarDay[]> {
   const { startDate, endDate } = monthRange(year, month)
 
-  const { rows: shiftRows } = await db.query<{
-    workdays: number | null
-    holiday_group_id: string | null
-  }>(
-    `SELECT ms.workdays, d.holiday_group_id
-     FROM employment_details d
-     LEFT JOIN master_shifts ms ON ms.id = d.shift_id
-     WHERE d.employee_id = $1`,
+  const { rows: detailsRows } = await db.query<{ holiday_group_id: string | null }>(
+    `SELECT holiday_group_id FROM employment_details WHERE employee_id = $1`,
     [employeeId]
   )
-  const shiftRow = shiftRows[0]
-  const workdays = shiftRow?.workdays ?? null
-  const holidayGroupId = shiftRow?.holiday_group_id ?? null
+  const holidayGroupId = detailsRows[0]?.holiday_group_id ?? null
+
+  // Every assignment interval touching [startDate, endDate], not just
+  // "today's" shift: a past or future month can straddle a shift change, and
+  // each day in it must be classified by whichever shift actually applied
+  // *that* day, not by employment_details.shift_id's one current value.
+  const { rows: shiftRows } = await db.query<{
+    effective_from: string
+    effective_to: string | null
+    workdays: number | null
+  }>(
+    `SELECT esa.effective_from, esa.effective_to, ms.workdays
+     FROM employee_shift_assignments esa
+     LEFT JOIN master_shifts ms ON ms.id = esa.shift_id
+     WHERE esa.employee_id = $1 AND esa.effective_from <= $3
+       AND (esa.effective_to IS NULL OR esa.effective_to >= $2)
+     ORDER BY esa.effective_from`,
+    [employeeId, startDate, endDate]
+  )
+  const workdaysOn = (dateStr: string): number | null => {
+    const row = shiftRows.find(
+      (r) => r.effective_from <= dateStr && (r.effective_to === null || r.effective_to >= dateStr)
+    )
+    return row?.workdays ?? null
+  }
 
   const holidays = new Map<string, string>()
   if (holidayGroupId !== null) {
@@ -93,6 +109,7 @@ export async function buildMonthCalendar(
 
     let status: CalendarDayStatus
     let label: string | null
+    const workdays = workdaysOn(dateStr)
 
     if (leaveDays.has(dateStr)) {
       status = 'leave'

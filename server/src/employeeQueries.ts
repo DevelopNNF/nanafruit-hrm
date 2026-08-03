@@ -4,6 +4,7 @@
 import type pg from 'pg'
 import type { Employee } from '@hrm/shared'
 import { pool } from './db.js'
+import { currentShiftJoinSql } from './shiftAssignmentQueries.js'
 
 /** Anything that can run a query: the pool, or one client inside a transaction. */
 type Queryable = Pick<pg.Pool, 'query'>
@@ -36,18 +37,24 @@ export type EmployeeRow = {
   holiday_group_name: string | null
 }
 
+// shift_id/shift_name/shift_start_time/shift_end_time come from
+// employee_shift_assignments (the shift in effect *today*), not
+// employment_details.shift_id — see that migration's comment for why the
+// column stopped being a safe "current shift" source the moment a change
+// could be scheduled for a future date with no job to flip it on arrival.
 export const SELECT_EMPLOYEE = `
   SELECT e.id, e.employee_code, e.title,
          e.first_name_th, e.last_name_th, e.first_name_en, e.last_name_en,
          e.nickname, e.gender,
          d.status, d.hire_date, d.employment_type,
          d.job_id, mj.job_title,
-         d.shift_id, ms.shift_name, ms.shift_start_time, ms.shift_end_time,
+         current_shift.shift_id, ms.shift_name, ms.shift_start_time, ms.shift_end_time,
          d.holiday_group_id, mhg.group_name AS holiday_group_name
   FROM employees e
   LEFT JOIN employment_details d ON d.employee_id = e.id
   LEFT JOIN master_jobs mj ON mj.id = d.job_id
-  LEFT JOIN master_shifts ms ON ms.id = d.shift_id
+  ${currentShiftJoinSql('e.id')}
+  LEFT JOIN master_shifts ms ON ms.id = current_shift.shift_id
   LEFT JOIN master_holiday_groups mhg ON mhg.id = d.holiday_group_id
 `
 
