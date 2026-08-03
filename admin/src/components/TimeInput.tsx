@@ -4,7 +4,7 @@
 // That's exactly the ambiguity ("10 PM" read as 10 in the morning) this exists
 // to remove: these dropdowns never show AM/PM, so there's nothing to misread.
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 type Props = {
   /** '' for unset, otherwise 'HH:MM'. */
@@ -33,13 +33,18 @@ export function TimeInput({ value, onChange, required }: Props) {
   const [hour, setHour] = useState(() => splitValue(value)[0])
   const [minute, setMinute] = useState(() => splitValue(value)[1])
 
-  // Re-sync when `value` changes for a reason other than this component's own
-  // onChange — loading an existing shift, or a parent-level reset/cancel.
-  useEffect(() => {
+  // Re-syncs when `value` changes for a reason other than this component's
+  // own onChange — loading an existing shift, or a parent-level reset/cancel.
+  // Adjusted during render (React's documented pattern for resetting state
+  // when a prop changes) rather than in an effect, so the new value lands in
+  // the same commit instead of flashing the stale hour/minute for one frame.
+  const [prevValue, setPrevValue] = useState(value)
+  if (value !== prevValue) {
+    setPrevValue(value)
     const [nextHour, nextMinute] = splitValue(value)
     setHour(nextHour)
     setMinute(nextMinute)
-  }, [value])
+  }
 
   function commit(nextHour: string, nextMinute: string) {
     setHour(nextHour)

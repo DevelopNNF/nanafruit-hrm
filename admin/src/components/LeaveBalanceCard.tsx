@@ -19,6 +19,16 @@ type EntryState =
   | { phase: 'ok'; entries: LeaveBalanceEntry[] }
   | { phase: 'error'; message: string }
 
+/** A fetch result tagged with the params it was fetched for, so the render
+ * can tell a fresh result from one that belongs to a since-changed
+ * employeeId/year/reloadKey (and show 'loading' for the latter) without ever
+ * needing to reset state to 'loading' from inside the effect itself. */
+type FetchResult<T extends { phase: string }> = T & {
+  employeeId: number
+  year: number
+  reloadKey: number
+}
+
 type LeaveTypeOptionsState =
   | { phase: 'loading' }
   | { phase: 'ok'; leaveTypes: LeaveType[] }
@@ -56,13 +66,39 @@ export function LeaveBalanceCard({
   canWrite: boolean
 }) {
   const [year, setYear] = useState(currentYear())
-  const [summaryState, setSummaryState] = useState<SummaryState>({ phase: 'loading' })
-  const [entryState, setEntryState] = useState<EntryState>({ phase: 'loading' })
+  // Bumped to force a refetch (e.g. after adding an entry) without the
+  // employeeId/year themselves changing.
+  const [reloadKey, setReloadKey] = useState(0)
+  const [summaryResult, setSummaryResult] = useState<FetchResult<
+    { phase: 'ok'; summaries: LeaveBalanceSummary[] } | { phase: 'error'; message: string }
+  > | null>(null)
+  const [entryResult, setEntryResult] = useState<FetchResult<
+    { phase: 'ok'; entries: LeaveBalanceEntry[] } | { phase: 'error'; message: string }
+  > | null>(null)
   const [leaveTypeOptions, setLeaveTypeOptions] = useState<LeaveTypeOptionsState>({
     phase: 'loading',
   })
   const [draft, setDraft] = useState<LeaveBalanceEntryInput>(emptyEntryDraft)
   const [adding, setAdding] = useState(false)
+
+  // A result only reflects the currently-selected employeeId/year/reloadKey
+  // if its tag matches; otherwise a fetch for the new params is in flight (or
+  // about to be), so render 'loading' for it — instead of resetting state to
+  // 'loading' synchronously from inside the effect below.
+  const summaryState: SummaryState =
+    summaryResult &&
+    summaryResult.employeeId === employeeId &&
+    summaryResult.year === year &&
+    summaryResult.reloadKey === reloadKey
+      ? summaryResult
+      : { phase: 'loading' }
+  const entryState: EntryState =
+    entryResult &&
+    entryResult.employeeId === employeeId &&
+    entryResult.year === year &&
+    entryResult.reloadKey === reloadKey
+      ? entryResult
+      : { phase: 'loading' }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -87,60 +123,49 @@ export function LeaveBalanceCard({
 
   useEffect(() => {
     const controller = new AbortController()
-    setSummaryState({ phase: 'loading' })
 
     listLeaveBalanceSummaries(employeeId, year, controller.signal)
-      .then((summaries) => setSummaryState({ phase: 'ok', summaries }))
+      .then((summaries) =>
+        setSummaryResult({ employeeId, year, reloadKey, phase: 'ok', summaries })
+      )
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
-        setSummaryState({
+        setSummaryResult({
+          employeeId,
+          year,
+          reloadKey,
           phase: 'error',
           message: err instanceof Error ? err.message : 'request failed',
         })
       })
 
     return () => controller.abort()
-  }, [employeeId, year])
+  }, [employeeId, year, reloadKey])
 
   useEffect(() => {
     const controller = new AbortController()
-    setEntryState({ phase: 'loading' })
 
     listLeaveBalanceEntries(employeeId, year, controller.signal)
-      .then((entries) => setEntryState({ phase: 'ok', entries }))
+      .then((entries) => setEntryResult({ employeeId, year, reloadKey, phase: 'ok', entries }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
-        setEntryState({
+        setEntryResult({
+          employeeId,
+          year,
+          reloadKey,
           phase: 'error',
           message: err instanceof Error ? err.message : 'request failed',
         })
       })
 
     return () => controller.abort()
-  }, [employeeId, year])
+  }, [employeeId, year, reloadKey])
 
   function reload() {
     // Cheapest correct way to reflect a new entry everywhere it shows: ask
     // the server again rather than guessing how one row changes two
     // independently-derived views (the summary is a SUM, not a local total).
-    setSummaryState({ phase: 'loading' })
-    setEntryState({ phase: 'loading' })
-    listLeaveBalanceSummaries(employeeId, year)
-      .then((summaries) => setSummaryState({ phase: 'ok', summaries }))
-      .catch((err: unknown) =>
-        setSummaryState({
-          phase: 'error',
-          message: err instanceof Error ? err.message : 'request failed',
-        })
-      )
-    listLeaveBalanceEntries(employeeId, year)
-      .then((entries) => setEntryState({ phase: 'ok', entries }))
-      .catch((err: unknown) =>
-        setEntryState({
-          phase: 'error',
-          message: err instanceof Error ? err.message : 'request failed',
-        })
-      )
+    setReloadKey((key) => key + 1)
   }
 
   async function handleAdd(event: React.FormEvent) {

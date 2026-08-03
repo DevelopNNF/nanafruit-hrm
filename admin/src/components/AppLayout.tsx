@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
 import {
@@ -129,9 +129,15 @@ export function AppLayout() {
   // is picked so it never lingers over the page it just navigated to.
   const [mobileOpen, setMobileOpen] = useState(false)
 
-  useEffect(() => {
+  // Closes on every route change. Adjusted during render (React's documented
+  // pattern for resetting state when a prop changes) rather than in an
+  // effect, since an effect would commit the still-open drawer for one frame
+  // before closing it on the next render.
+  const [mobileOpenForPathname, setMobileOpenForPathname] = useState(location.pathname)
+  if (location.pathname !== mobileOpenForPathname) {
+    setMobileOpenForPathname(location.pathname)
     setMobileOpen(false)
-  }, [location.pathname])
+  }
 
   return (
     <div className="flex flex-1 flex-col shell:flex-row">
