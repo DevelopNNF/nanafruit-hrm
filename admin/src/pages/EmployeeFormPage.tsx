@@ -21,6 +21,7 @@ import { listJobs } from '../api/jobs'
 import { listShifts } from '../api/shifts'
 import { listHolidayGroups } from '../api/holidayGroups'
 import { DatePicker } from '../components/DatePicker'
+import { EmployeePhotoCard } from '../components/EmployeePhotoCard'
 import { LinkCodeCard } from '../components/LinkCodeCard'
 import { LeaveBalanceCard } from '../components/LeaveBalanceCard'
 import { ShiftHistoryCard } from '../components/ShiftHistoryCard'
@@ -657,6 +658,8 @@ export function EmployeeFormPage() {
           throws a hydration-mismatch error to the console. Viewable by any
           role that can see this employee at all — only the add-entry form
           inside is gated on canWrite. */}
+      {id !== null && <EmployeePhotoCard employeeId={id} canWrite={canWrite} />}
+
       {id !== null && <LeaveBalanceCard employeeId={id} canWrite={canWrite} />}
 
       {id !== null && (

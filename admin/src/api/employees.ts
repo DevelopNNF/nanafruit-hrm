@@ -2,6 +2,10 @@ import type {
   Employee,
   EmployeeInput,
   EmployeeListResponse,
+  EmployeePhotoCompleteInput,
+  EmployeePhotoPresignInput,
+  EmployeePhotoPresignResponse,
+  EmployeePhotoResponse,
   EmployeeResponse,
   LinkCodeResponse,
   ShiftAssignment,
@@ -80,4 +84,47 @@ export async function createShiftChange(
   })
   const body = await unwrap<ShiftChangeResponse>(res)
   return body.assignment
+}
+
+/** Step 1 of a photo upload: a presigned PUT URL good for a few minutes. */
+export async function presignEmployeePhotoUpload(
+  id: number,
+  input: EmployeePhotoPresignInput
+): Promise<EmployeePhotoPresignResponse> {
+  const res = await apiFetch(`/api/employees/${id}/photo/presign-upload`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  return unwrap<EmployeePhotoPresignResponse>(res)
+}
+
+/** Step 2: tell the server the direct-to-R2 PUT finished. */
+export async function completeEmployeePhotoUpload(
+  id: number,
+  key: string
+): Promise<Employee> {
+  const input: EmployeePhotoCompleteInput = { key }
+  const res = await apiFetch(`/api/employees/${id}/photo/complete`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  const body = await unwrap<EmployeeResponse>(res)
+  return body.employee
+}
+
+/** A fresh presigned GET URL, or null if the employee has no photo. */
+export async function getEmployeePhotoUrl(
+  id: number,
+  signal?: AbortSignal
+): Promise<string | null> {
+  const res = await apiFetch(`/api/employees/${id}/photo`, { signal })
+  const body = await unwrap<EmployeePhotoResponse>(res)
+  return body.url
+}
+
+export async function deleteEmployeePhoto(id: number): Promise<void> {
+  const res = await apiFetch(`/api/employees/${id}/photo`, { method: 'DELETE' })
+  if (!res.ok) await unwrap<never>(res)
 }

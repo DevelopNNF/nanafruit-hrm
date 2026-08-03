@@ -9,6 +9,8 @@ import {
   type EmployeeInput,
   type EmployeeListResponse,
   type AuthUser,
+  type EmployeePhotoPresignResponse,
+  type EmployeePhotoResponse,
   type EmployeeResponse,
   type LinkCodeResponse,
   type ShiftChangeInput,
@@ -31,6 +33,12 @@ import {
   listShiftAssignments,
   toThailandDateString,
 } from '../shiftAssignmentQueries.js'
+import {
+  deletePhotoObject,
+  headPhoto,
+  presignPhotoUpload,
+  presignPhotoView,
+} from '../storage/employeePhotos.js'
 
 export const employeesRouter = Router()
 
@@ -584,6 +592,178 @@ employeesRouter.get(
       const assignments = await listShiftAssignments(id)
       const body: ShiftHistoryResponse = { assignments }
       res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Step 1 of the upload: hand out a presigned PUT URL. Nothing is written to
+// the database here — the employee row only changes once /complete confirms
+// the browser's direct-to-R2 upload actually landed, so an abandoned upload
+// (tab closed mid-PUT) leaves no bookkeeping behind, just an unreferenced
+// object in R2.
+employeesRouter.post(
+  '/employees/:id/photo/presign-upload',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    const raw = req.body as Record<string, unknown>
+    const mimeType = typeof raw['mimeType'] === 'string' ? raw['mimeType'] : null
+    const sizeBytes = typeof raw['sizeBytes'] === 'number' ? raw['sizeBytes'] : null
+    if (mimeType === null || sizeBytes === null) {
+      return fail(res, 400, 'mimeType (string) and sizeBytes (number) are required')
+    }
+
+    try {
+      const employee = await findEmployeeById(id)
+      if (!employee) return fail(res, 404, `no employee with id ${id}`)
+
+      const presigned = await presignPhotoUpload(id, mimeType, sizeBytes)
+      if (!presigned.ok) return fail(res, 400, presigned.message)
+
+      const body: EmployeePhotoPresignResponse = {
+        uploadUrl: presigned.uploadUrl,
+        key: presigned.key,
+      }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Step 2: the browser tells us its PUT to R2 finished. headPhoto confirms the
+// object is actually there before we trust the key — the browser is telling
+// the truth as far as it knows, but its PUT could still have failed
+// mid-flight without the JS ever seeing an error.
+employeesRouter.post(
+  '/employees/:id/photo/complete',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    const raw = req.body as Record<string, unknown>
+    const key = typeof raw['key'] === 'string' ? raw['key'] : null
+    if (key === null || !key.startsWith(`employees/${id}/photo/`)) {
+      return fail(res, 400, `key must be a string under employees/${id}/photo/`)
+    }
+
+    try {
+      const exists = await headPhoto(key)
+      if (!exists) {
+        return fail(res, 400, 'no object found at that key — the upload may not have finished')
+      }
+
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{ photo_key: string | null }>(
+          'SELECT photo_key FROM employees WHERE id = $1 FOR UPDATE',
+          [id]
+        )
+        const row = rows[0]
+        if (!row) return 'not-found' as const
+
+        await client.query('UPDATE employees SET photo_key = $2 WHERE id = $1', [id, key])
+
+        await recordAudit(client, {
+          actor,
+          action: 'employee.photo_update',
+          entityId: id,
+          detail: { key },
+        })
+
+        return { previousKey: row.photo_key }
+      })
+
+      if (result === 'not-found') return fail(res, 404, `no employee with id ${id}`)
+
+      // Old object is only worth removing once the new one is committed —
+      // best-effort, and never lets R2 cleanup fail a request that otherwise
+      // succeeded.
+      if (result.previousKey !== null && result.previousKey !== key) {
+        await deletePhotoObject(result.previousKey)
+      }
+
+      const employee = await findEmployeeById(id)
+      if (!employee) throw new Error('employee vanished after photo update')
+
+      const body: EmployeeResponse = { employee }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Regenerated on every call rather than cached anywhere: the URL is only
+// good for a few minutes, so there is nothing worth storing.
+employeesRouter.get(
+  '/employees/:id/photo',
+  canRead,
+  async (req: Request, res: Response) => {
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const { rows } = await pool.query<{ photo_key: string | null }>(
+        'SELECT photo_key FROM employees WHERE id = $1',
+        [id]
+      )
+      const row = rows[0]
+      if (!row) return fail(res, 404, `no employee with id ${id}`)
+
+      const url = row.photo_key === null ? null : await presignPhotoView(row.photo_key)
+      const body: EmployeePhotoResponse = { url }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+employeesRouter.delete(
+  '/employees/:id/photo',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{ photo_key: string | null }>(
+          'SELECT photo_key FROM employees WHERE id = $1 FOR UPDATE',
+          [id]
+        )
+        const row = rows[0]
+        if (!row) return 'not-found' as const
+        if (row.photo_key === null) return 'no-photo' as const
+
+        await client.query('UPDATE employees SET photo_key = NULL WHERE id = $1', [id])
+
+        await recordAudit(client, {
+          actor,
+          action: 'employee.photo_delete',
+          entityId: id,
+          detail: { key: row.photo_key },
+        })
+
+        return { deletedKey: row.photo_key }
+      })
+
+      if (result === 'not-found') return fail(res, 404, `no employee with id ${id}`)
+      if (result === 'no-photo') return res.status(204).end()
+
+      await deletePhotoObject(result.deletedKey)
+      res.status(204).end()
     } catch (err) {
       handleUnexpected(res, err)
     }

@@ -136,6 +136,31 @@ export type EmployeeListResponse = { employees: Employee[] }
 /** GET /api/employees/:id, POST, PATCH */
 export type EmployeeResponse = { employee: Employee }
 
+/* Employee Photo -------------------------------------------------------------
+ * Stored in Cloudflare R2, never inline on Employee: photo_key is an internal
+ * R2 object key, not a URL, and it's private — the only way to reach the
+ * image is a presigned URL minted by GET /api/employees/:id/photo.
+ */
+
+export const EMPLOYEE_PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const
+export type EmployeePhotoMimeType = (typeof EMPLOYEE_PHOTO_MIME_TYPES)[number]
+export const EMPLOYEE_PHOTO_MAX_BYTES = 5 * 1024 * 1024
+
+/** Body of POST /api/employees/:id/photo/presign-upload */
+export type EmployeePhotoPresignInput = {
+  mimeType: EmployeePhotoMimeType
+  sizeBytes: number
+}
+/** Response of the same — uploadUrl is a presigned PUT, good for a few minutes. */
+export type EmployeePhotoPresignResponse = { uploadUrl: string; key: string }
+
+/** Body of POST /api/employees/:id/photo/complete */
+export type EmployeePhotoCompleteInput = { key: string }
+
+/** GET /api/employees/:id/photo — url is a presigned GET, or null if the
+ *  employee has no photo. Regenerated on every call, nothing to cache. */
+export type EmployeePhotoResponse = { url: string | null }
+
 /* Shift History ------------------------------------------------------------- */
 
 /** A row in employee_shift_assignments: one interval during which a given
