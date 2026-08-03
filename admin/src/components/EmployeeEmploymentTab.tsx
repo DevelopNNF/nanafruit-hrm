@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
@@ -13,6 +13,7 @@ import { listJobs } from '../api/jobs'
 import { listDepartments } from '../api/departments'
 import { listHolidayGroups } from '../api/holidayGroups'
 import { DatePicker } from './DatePicker'
+import { TreeSelect, type TreeSelectOption } from './TreeSelect'
 import { notify } from '../notifications/notify'
 import {
   alert,
@@ -174,6 +175,25 @@ export function EmployeeEmploymentTab({
     departmentOptions.phase === 'ok' ? departmentOptions.departments.map((d) => d.id) : []
   const currentDepartmentMissing = !activeDepartmentIds.includes(draft.departmentId)
 
+  const departmentTreeOptions: TreeSelectOption[] = useMemo(() => {
+    const options: TreeSelectOption[] =
+      departmentOptions.phase === 'ok'
+        ? departmentOptions.departments.map((department) => ({
+            id: department.id,
+            label: department.deptName,
+            parentId: department.parentDepartmentId,
+          }))
+        : []
+    if (currentDepartmentMissing) {
+      options.push({
+        id: draft.departmentId,
+        label: `${employee.employment.departmentName} (ไม่พร้อมใช้งาน)`,
+        parentId: null,
+      })
+    }
+    return options
+  }, [departmentOptions, currentDepartmentMissing, draft.departmentId, employee.employment.departmentName])
+
   const activeHolidayGroupIds =
     holidayGroupOptions.phase === 'ok' ? holidayGroupOptions.holidayGroups.map((g) => g.id) : []
   const currentHolidayGroupMissing =
@@ -271,25 +291,16 @@ export function EmployeeEmploymentTab({
                 <span>
                   แผนก (Department) <span className={requiredMark}>*</span>
                 </span>
-                <select
+                <TreeSelect
+                  mode="single"
                   required
-                  className={fieldControl}
-                  disabled={departmentOptions.phase === 'loading'}
+                  options={departmentTreeOptions}
                   value={draft.departmentId}
-                  onChange={(e) => set('departmentId', Number(e.target.value))}
-                >
-                  {currentDepartmentMissing && (
-                    <option value={draft.departmentId}>
-                      {employee.employment.departmentName} (ไม่พร้อมใช้งาน)
-                    </option>
-                  )}
-                  {departmentOptions.phase === 'ok' &&
-                    departmentOptions.departments.map((department) => (
-                      <option key={department.id} value={department.id}>
-                        {department.deptName}
-                      </option>
-                    ))}
-                </select>
+                  onChange={(value) => value !== null && set('departmentId', value)}
+                  placeholder="เลือกแผนก"
+                  disabled={departmentOptions.phase === 'loading'}
+                  loading={departmentOptions.phase === 'loading'}
+                />
                 {departmentOptions.phase === 'error' && (
                   <span className="text-[0.7rem] text-red-700">
                     โหลดรายการแผนกไม่สำเร็จ: {departmentOptions.message}

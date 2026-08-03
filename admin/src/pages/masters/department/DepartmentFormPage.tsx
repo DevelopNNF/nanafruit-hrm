@@ -10,6 +10,7 @@ import {
 } from '../../../api/departments'
 import { useCanWrite } from '../../../auth/meContext'
 import { notify } from '../../../notifications/notify'
+import { TreeSelect, type TreeSelectOption } from '../../../components/TreeSelect'
 import {
   alert,
   alertDetail,
@@ -127,6 +128,16 @@ export function DepartmentFormPage() {
     return excludingSelfAndDescendants(departmentOptions.departments, id)
   }, [departmentOptions, id])
 
+  const parentTreeOptions: TreeSelectOption[] = useMemo(
+    () =>
+      parentOptions.map((department) => ({
+        id: department.id,
+        label: department.deptName,
+        parentId: department.parentDepartmentId,
+      })),
+    [parentOptions],
+  )
+
   function set<K extends keyof DepartmentInput>(key: K, value: DepartmentInput[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }))
   }
@@ -217,25 +228,16 @@ export function DepartmentFormPage() {
               </label>
               <label className={fieldLabel}>
                 <span>หน่วยงานต้นสังกัด (Parent Department)</span>
-                <select
-                  className={fieldControl}
+                <TreeSelect
+                  mode="single"
+                  options={parentTreeOptions}
+                  value={draft.parentDepartmentId}
+                  onChange={(value) => set('parentDepartmentId', value)}
+                  clearLabel="— ไม่มีหน่วยงานต้นสังกัด —"
+                  placeholder="เลือกหน่วยงานต้นสังกัด"
                   disabled={departmentOptions.phase === 'loading'}
-                  value={draft.parentDepartmentId ?? ''}
-                  onChange={(e) =>
-                    set('parentDepartmentId', e.target.value ? Number(e.target.value) : null)
-                  }
-                >
-                  <option value="">
-                    {departmentOptions.phase === 'loading'
-                      ? 'กำลังโหลดรายการแผนก…'
-                      : '— ไม่มีหน่วยงานต้นสังกัด —'}
-                  </option>
-                  {parentOptions.map((department) => (
-                    <option key={department.id} value={department.id}>
-                      {department.deptName}
-                    </option>
-                  ))}
-                </select>
+                  loading={departmentOptions.phase === 'loading'}
+                />
                 {departmentOptions.phase === 'error' && (
                   <span className="text-[0.7rem] text-red-700">
                     โหลดรายการแผนกไม่สำเร็จ: {departmentOptions.message}
