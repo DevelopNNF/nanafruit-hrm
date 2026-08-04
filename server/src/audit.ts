@@ -50,6 +50,11 @@ export type AuditAction =
   | 'leave_request.cancel'
   | 'leave_request.approve'
   | 'leave_request.reject'
+  | 'shift_change_request.create'
+  | 'shift_change_request.update'
+  | 'shift_change_request.cancel'
+  | 'shift_change_request.approve'
+  | 'shift_change_request.reject'
 
 type Entry = {
   actor: AuthUser

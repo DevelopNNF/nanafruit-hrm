@@ -173,6 +173,11 @@ export function CalendarScreen({ onBack }: Props) {
                 {STATUS_LABEL[selectedDay.status]}
                 {selectedDay.label ? ` · ${selectedDay.label}` : ''}
               </p>
+              <p className="hint">
+                {selectedDay.shiftName
+                  ? `กะ: ${selectedDay.shiftName} (${selectedDay.shiftStartTime?.slice(0, 5)}-${selectedDay.shiftEndTime?.slice(0, 5)})`
+                  : 'ไม่มีกะที่กำหนดไว้'}
+              </p>
             </div>
           )}
         </>

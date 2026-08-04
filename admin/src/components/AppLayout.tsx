@@ -55,6 +55,7 @@ const NAV: NavItem[] = [
     children: [
       { to: '/attendance', label: 'รายละเอียดการลงเวลา'},
       { to: '/time-corrections', label: 'คำขอแก้ไขเวลา'},
+      { to: '/shift-change-requests', label: 'คำขอเปลี่ยนกะ'},
     ],
   },
   {

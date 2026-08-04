@@ -49,13 +49,22 @@ export async function buildMonthCalendar(
   // Every assignment interval touching [startDate, endDate], not just
   // "today's" shift: a past or future month can straddle a shift change, and
   // each day in it must be classified by whichever shift actually applied
-  // *that* day, not by employment_details.shift_id's one current value.
+  // *that* day, not by employment_details.shift_id's one current value. This
+  // is also where an approved shift_change_requests swap shows up — approval
+  // writes it into this same ledger (see createShiftChange), so a day it
+  // covers resolves here exactly like any other assignment, with no separate
+  // join against shift_change_requests needed.
   const { rows: shiftRows } = await db.query<{
     effective_from: string
     effective_to: string | null
+    shift_id: string | null
+    shift_name: string | null
+    shift_start_time: string | null
+    shift_end_time: string | null
     workdays: number | null
   }>(
-    `SELECT esa.effective_from, esa.effective_to, ms.workdays
+    `SELECT esa.effective_from, esa.effective_to, esa.shift_id,
+            ms.shift_name, ms.shift_start_time, ms.shift_end_time, ms.workdays
      FROM employee_shift_assignments esa
      LEFT JOIN master_shifts ms ON ms.id = esa.shift_id
      WHERE esa.employee_id = $1 AND esa.effective_from <= $3
@@ -63,12 +72,10 @@ export async function buildMonthCalendar(
      ORDER BY esa.effective_from`,
     [employeeId, startDate, endDate]
   )
-  const workdaysOn = (dateStr: string): number | null => {
-    const row = shiftRows.find(
+  const shiftOn = (dateStr: string) =>
+    shiftRows.find(
       (r) => r.effective_from <= dateStr && (r.effective_to === null || r.effective_to >= dateStr)
-    )
-    return row?.workdays ?? null
-  }
+    ) ?? null
 
   const holidays = new Map<string, string>()
   if (holidayGroupId !== null) {
@@ -109,7 +116,8 @@ export async function buildMonthCalendar(
 
     let status: CalendarDayStatus
     let label: string | null
-    const workdays = workdaysOn(dateStr)
+    const shiftRow = shiftOn(dateStr)
+    const workdays = shiftRow?.workdays ?? null
 
     if (leaveDays.has(dateStr)) {
       status = 'leave'
@@ -125,7 +133,15 @@ export async function buildMonthCalendar(
       label = null
     }
 
-    days.push({ date: dateStr, status, label })
+    days.push({
+      date: dateStr,
+      status,
+      label,
+      shiftId: shiftRow?.shift_id == null ? null : Number(shiftRow.shift_id),
+      shiftName: shiftRow?.shift_name ?? null,
+      shiftStartTime: shiftRow?.shift_start_time ?? null,
+      shiftEndTime: shiftRow?.shift_end_time ?? null,
+    })
   }
 
   return days

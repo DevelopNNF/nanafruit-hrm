@@ -26,6 +26,8 @@ import { TimeCorrectionListPage } from './pages/time_correction/TimeCorrectionLi
 import { TimeCorrectionDetailPage } from './pages/time_correction/TimeCorrectionDetailPage'
 import { LeaveRequestListPage } from './pages/leave_requests/LeaveRequestListPage'
 import { LeaveRequestDetailPage } from './pages/leave_requests/LeaveRequestDetailPage'
+import { ShiftChangeRequestListPage } from './pages/shift_change_requests/ShiftChangeRequestListPage'
+import { ShiftChangeRequestDetailPage } from './pages/shift_change_requests/ShiftChangeRequestDetailPage'
 import { HealthPage } from './pages/HealthPage'
 
 /**
@@ -84,6 +86,8 @@ const router = createBrowserRouter([
       { path: 'time-corrections/:id', element: <TimeCorrectionDetailPage /> },
       { path: 'leave-requests', element: <LeaveRequestListPage /> },
       { path: 'leave-requests/:id', element: <LeaveRequestDetailPage /> },
+      { path: 'shift-change-requests', element: <ShiftChangeRequestListPage /> },
+      { path: 'shift-change-requests/:id', element: <ShiftChangeRequestDetailPage /> },
       { path: 'leave-balances/bulk-grant', element: <LeaveBalanceBulkGrantPage /> },
       { path: 'master/jobs', element: <JobListPage /> },
       { path: 'master/jobs/new', element: <KeyedJobForm /> },

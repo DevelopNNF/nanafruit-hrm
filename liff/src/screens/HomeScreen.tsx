@@ -7,7 +7,7 @@ type Profile = {
   pictureUrl?: string
 }
 
-export type SubScreen = 'leave' | 'correction' | 'profile' | 'calendar'
+export type SubScreen = 'leave' | 'correction' | 'shiftChange' | 'profile' | 'calendar'
 
 type Props = {
   onNavigate: (screen: SubScreen) => void
@@ -58,6 +58,10 @@ export function HomeScreen({ onNavigate }: Props) {
         </button>
         <button type="button" className="nav-item" onClick={() => onNavigate('correction')}>
           แก้ไขเวลา
+          <span aria-hidden="true">→</span>
+        </button>
+        <button type="button" className="nav-item" onClick={() => onNavigate('shiftChange')}>
+          ขอเปลี่ยนกะ
           <span aria-hidden="true">→</span>
         </button>
         <button type="button" className="nav-item" onClick={() => onNavigate('profile')}>

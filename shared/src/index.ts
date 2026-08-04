@@ -848,6 +848,115 @@ export type TimeCorrectionDetailResponse = { request: TimeCorrectionListItem }
  *  every time, never optional. */
 export type TimeCorrectionRejectRequest = { reason: string }
 
+/* Shift Change Requests -------------------------------------------------------
+ *
+ * The employee-initiated counterpart to ShiftChangeInput/POST
+ * /api/employees/:id/shift-changes — same decision-workflow shape as
+ * LeaveRequest (four statuses, one decision), but always for a single day,
+ * and editable by the employee (PUT) any number of times before it's
+ * decided, not just cancellable.
+ */
+
+export const SHIFT_CHANGE_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
+export type ShiftChangeRequestStatus = (typeof SHIFT_CHANGE_REQUEST_STATUSES)[number]
+
+/** A row in shift_change_requests: one employee asking to swap into a
+ *  different shift for a single calendar day. currentShiftName/newShiftName
+ *  are joined in for display, same reasoning as LeaveRequest.leaveTypeName. */
+export type ShiftChangeRequest = {
+  id: number
+  employeeId: number
+  /** Calendar date, `YYYY-MM-DD`. Always a single day — see the migration's
+   *  comment on why this maps onto createShiftChange's temporary-swap case. */
+  requestedDate: string
+  /** Snapshot of the shift in effect on requestedDate at submission time, for
+   *  display only ("changing from X"). Null if the employee had no shift
+   *  assigned on that date. */
+  currentShiftId: number | null
+  currentShiftName: string | null
+  newShiftId: number
+  newShiftName: string
+  reason: string
+  /** R2 object key of an attached photo, or null — same pattern as
+   *  Employee.photo_key. Never a URL; view it via
+   *  GET /shift-change-requests/:id/attachment. */
+  attachmentKey: string | null
+  status: ShiftChangeRequestStatus
+  /** The admin's display name at decision time. Null while pending/cancelled. */
+  decidedByName: string | null
+  /** ISO 8601. Null while pending/cancelled. */
+  decidedAt: string | null
+  /** Required when status is 'rejected', null otherwise. */
+  decisionReason: string | null
+  /** FK to the employee_shift_assignments row this request created. Null
+   *  unless approved. */
+  resultingAssignmentId: number | null
+  /** ISO 8601. */
+  createdAt: string
+  /** ISO 8601. Bumped on every edit while pending. */
+  updatedAt: string
+}
+
+/** A request as admin/ sees it: the employee joined in for display, same
+ *  shape as LeaveRequestListItem. */
+export type ShiftChangeRequestListItem = ShiftChangeRequest & {
+  employeeCode: string
+  employeeName: string
+}
+
+/** Body of POST /api/shift-change-requests and PUT
+ *  /api/shift-change-requests/:id — same shape for both: an edit while
+ *  pending replaces the whole request rather than patching one field.
+ *  employeeId is not an input — the server derives it from the caller's
+ *  employee session, never the client. attachmentKey is not here — it's set
+ *  separately via the presign/complete pair below, once the file has
+ *  actually landed in R2. */
+export type ShiftChangeRequestInput = {
+  requestedDate: string
+  newShiftId: number
+  reason: string
+}
+
+/** POST /api/shift-change-requests, PUT /api/shift-change-requests/:id */
+export type ShiftChangeRequestResponse = { request: ShiftChangeRequest }
+
+/** GET /api/shift-change-requests/me — an employee's own requests, no
+ *  employee join needed since it's implicitly them. */
+export type ShiftChangeRequestMineResponse = { requests: ShiftChangeRequest[] }
+
+/** GET /api/shift-change-requests */
+export type ShiftChangeRequestListResponse = { requests: ShiftChangeRequestListItem[] }
+
+/** GET /api/shift-change-requests/:id, POST .../approve, POST .../reject */
+export type ShiftChangeRequestDetailResponse = { request: ShiftChangeRequestListItem }
+
+/** Body of POST /api/shift-change-requests/:id/reject — a reason is required
+ *  every time, never optional. */
+export type ShiftChangeRequestRejectRequest = { reason: string }
+
+/* Shift change request attachment --------------------------------------------
+ * Same R2 presign/PUT/complete flow as employee photos (see that section),
+ * scoped to one request instead of one employee, and reusing the same
+ * mime-type/size limits — there's no reason a swap-agreement photo needs a
+ * different cap than a profile photo.
+ */
+
+/** Body of POST /api/shift-change-requests/:id/attachment/presign-upload */
+export type ShiftChangeAttachmentPresignInput = {
+  mimeType: EmployeePhotoMimeType
+  sizeBytes: number
+}
+/** Response of the same — uploadUrl is a presigned PUT, good for a few minutes. */
+export type ShiftChangeAttachmentPresignResponse = { uploadUrl: string; key: string }
+
+/** Body of POST /api/shift-change-requests/:id/attachment/complete */
+export type ShiftChangeAttachmentCompleteInput = { key: string }
+
+/** GET /api/shift-change-requests/:id/attachment — url is a presigned GET, or
+ *  null if the request has no attachment. Regenerated on every call, nothing
+ *  to cache. */
+export type ShiftChangeAttachmentResponse = { url: string | null }
+
 /* Calendar -------------------------------------------------------------- */
 
 /**
@@ -870,6 +979,18 @@ export type CalendarDay = {
   /** holidayName when status is 'holiday', leaveTypeName when status is
    *  'leave', null otherwise. */
   label: string | null
+  /** The shift in effect on this date, resolved from
+   *  employee_shift_assignments the same way getShiftIdForDate does — which
+   *  already reflects an approved shift_change_requests swap on the day it
+   *  applies (createShiftChange writes the swap into that same ledger), so
+   *  this needs no separate lookup against shift_change_requests itself.
+   *  Null exactly when the employee had no shift assigned on this date. */
+  shiftId: number | null
+  shiftName: string | null
+  /** Wall-clock 'HH:MM:SS', same as master_shifts' own columns. Null exactly
+   *  when shiftId is null. */
+  shiftStartTime: string | null
+  shiftEndTime: string | null
 }
 
 /** GET /api/calendar/me?year=YYYY&month=MM — one calendar month, in date order. */

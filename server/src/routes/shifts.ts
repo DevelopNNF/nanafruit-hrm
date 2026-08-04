@@ -145,6 +145,21 @@ shiftsRouter.get('/shifts', canRead, async (_req: Request, res: Response) => {
   }
 })
 
+// No requireRole: unlike the full list, this is also what liff's shift-change
+// request form reads to populate its "new shift" picker, and an employee
+// session carries no roles to check — same reasoning as GET /leave-types/active.
+shiftsRouter.get('/shifts/active', async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query<ShiftRow>(
+      `${SELECT_SHIFT} WHERE is_active = true ORDER BY shift_code`
+    )
+    const body: ShiftListResponse = { shifts: rows.map(rowToShift) }
+    res.json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
+
 shiftsRouter.get('/shifts/:id', canRead, async (req: Request, res: Response) => {
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
