@@ -619,6 +619,17 @@
   opacity: 0.6;
 }
 
+.calendar-dot.swap_workday {
+  background: #3b6df6;
+  border-color: #3b6df6;
+}
+
+.calendar-dot.swap_dayoff {
+  background: #3b6df6;
+  border-color: #3b6df6;
+  opacity: 0.45;
+}
+
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -662,6 +673,16 @@
 .calendar-day.leave {
   background: rgba(6, 199, 85, 0.14);
   color: #046b30;
+}
+
+.calendar-day.swap_workday {
+  background: rgba(59, 109, 246, 0.16);
+  color: #1d3fad;
+}
+
+.calendar-day.swap_dayoff {
+  background: rgba(59, 109, 246, 0.09);
+  color: #1d3fad;
 }
 
 .calendar-day.today {

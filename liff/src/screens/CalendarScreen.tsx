@@ -29,6 +29,8 @@ const STATUS_LABEL: Record<CalendarDayStatus, string> = {
   weekly_off: 'วันหยุดประจำสัปดาห์',
   holiday: 'Holiday',
   leave: 'ลา',
+  swap_workday: 'สลับวันทำงาน',
+  swap_dayoff: 'สลับวันหยุด',
 }
 
 function messageFor(err: unknown): string {
@@ -124,6 +126,14 @@ export function CalendarScreen({ onBack }: Props) {
         <span className="calendar-legend-item">
           <span className="calendar-dot leave" />
           ลา
+        </span>
+        <span className="calendar-legend-item">
+          <span className="calendar-dot swap_workday" />
+          สลับวันทำงาน
+        </span>
+        <span className="calendar-legend-item">
+          <span className="calendar-dot swap_dayoff" />
+          สลับวันหยุด
         </span>
       </div>
 

@@ -55,6 +55,11 @@ export type AuditAction =
   | 'shift_change_request.cancel'
   | 'shift_change_request.approve'
   | 'shift_change_request.reject'
+  | 'day_off_swap_request.create'
+  | 'day_off_swap_request.update'
+  | 'day_off_swap_request.cancel'
+  | 'day_off_swap_request.approve'
+  | 'day_off_swap_request.reject'
 
 type Entry = {
   actor: AuthUser

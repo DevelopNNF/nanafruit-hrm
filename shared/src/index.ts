@@ -957,19 +957,127 @@ export type ShiftChangeAttachmentCompleteInput = { key: string }
  *  to cache. */
 export type ShiftChangeAttachmentResponse = { url: string | null }
 
+/* Day Off Swap Requests --------------------------------------------------
+ *
+ * The employee-initiated "สลับวันหยุด" request: work on workDate (currently
+ * a holiday or the employee's weekly off) in exchange for taking offDate
+ * (currently a scheduled workday) off instead. Same four-state
+ * pending/approved/rejected/cancelled decision-workflow shape as
+ * ShiftChangeRequest, editable by the employee (PUT) any number of times
+ * before it's decided — but always TWO linked dates with fixed,
+ * non-interchangeable roles, never one.
+ *
+ * Unlike ShiftChangeRequest, approval never touches employee_shift_assignments
+ * — the employee's standing shift already applies on workDate regardless of
+ * its classification, so nothing needs writing there. Once approved, this
+ * request row is itself the source of truth CalendarDay reads directly (see
+ * CalendarDayStatus 'swap_workday'/'swap_dayoff' below).
+ */
+
+export const DAY_OFF_SWAP_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
+export type DayOffSwapRequestStatus = (typeof DAY_OFF_SWAP_REQUEST_STATUSES)[number]
+
+/** A row in day_off_swap_requests: one employee asking to work on workDate
+ *  in exchange for taking offDate off instead. Fixed roles — never
+ *  interchangeable, unlike a plain single-date request. */
+export type DayOffSwapRequest = {
+  id: number
+  employeeId: number
+  /** Calendar date, `YYYY-MM-DD`. Currently a holiday or weekly off; becomes
+   *  a workday once approved. */
+  workDate: string
+  /** Calendar date, `YYYY-MM-DD`. Currently a scheduled workday; becomes a
+   *  day off once approved. */
+  offDate: string
+  /** Snapshot of workDate's classification at submission time, for display
+   *  only — once approved it no longer classifies this way (see
+   *  CalendarDayStatus 'swap_workday'). */
+  workDateOriginalStatus: 'holiday' | 'weekly_off'
+  /** Holiday name, snapshotted at submission time. Null when
+   *  workDateOriginalStatus is 'weekly_off'. */
+  workDateOriginalLabel: string | null
+  /** The shift the employee will work on workDate, resolved live from
+   *  employee_shift_assignments the same way getShiftIdForDate does — no
+   *  shift picker on this request, it always follows the employee's
+   *  standing shift. Null exactly when they have no shift assigned on
+   *  workDate. */
+  workShiftId: number | null
+  workShiftName: string | null
+  /** Wall-clock 'HH:MM:SS'. Null exactly when workShiftId is null. */
+  workShiftStartTime: string | null
+  workShiftEndTime: string | null
+  reason: string
+  status: DayOffSwapRequestStatus
+  /** The admin's display name at decision time. Null while pending/cancelled. */
+  decidedByName: string | null
+  /** ISO 8601. Null while pending/cancelled. */
+  decidedAt: string | null
+  /** Required when status is 'rejected', null otherwise. */
+  decisionReason: string | null
+  /** ISO 8601. */
+  createdAt: string
+  /** ISO 8601. Bumped on every edit while pending. */
+  updatedAt: string
+}
+
+/** A request as admin/ sees it: the employee joined in for display, same
+ *  shape as ShiftChangeRequestListItem. */
+export type DayOffSwapRequestListItem = DayOffSwapRequest & {
+  employeeCode: string
+  employeeName: string
+}
+
+/** Body of POST /api/day-off-swap-requests and PUT
+ *  /api/day-off-swap-requests/:id — same shape for both: an edit while
+ *  pending replaces the whole request rather than patching one field.
+ *  employeeId is not an input — the server derives it from the caller's
+ *  employee session, never the client. */
+export type DayOffSwapRequestInput = {
+  workDate: string
+  offDate: string
+  reason: string
+}
+
+/** POST /api/day-off-swap-requests, PUT /api/day-off-swap-requests/:id */
+export type DayOffSwapRequestResponse = { request: DayOffSwapRequest }
+
+/** GET /api/day-off-swap-requests/me — an employee's own requests, no
+ *  employee join needed since it's implicitly them. */
+export type DayOffSwapRequestMineResponse = { requests: DayOffSwapRequest[] }
+
+/** GET /api/day-off-swap-requests */
+export type DayOffSwapRequestListResponse = { requests: DayOffSwapRequestListItem[] }
+
+/** GET /api/day-off-swap-requests/:id, POST .../approve, POST .../reject */
+export type DayOffSwapRequestDetailResponse = { request: DayOffSwapRequestListItem }
+
+/** Body of POST /api/day-off-swap-requests/:id/reject — a reason is required
+ *  every time, never optional. */
+export type DayOffSwapRequestRejectRequest = { reason: string }
+
 /* Calendar -------------------------------------------------------------- */
 
 /**
  * One day's classification on an employee's monthly calendar, in priority
- * order (a day can only be one of these, so an approved leave wins over a
- * holiday, which wins over a plain weekly off):
+ * order (a day can only be one of these):
+ * 'swap_workday' — an approved day_off_swap_requests row makes this date a
+ * workday, overriding whatever it would otherwise classify as.
+ * 'swap_dayoff' — an approved day_off_swap_requests row makes this date a
+ * day off, overriding whatever it would otherwise classify as.
  * 'leave' — an approved leave_requests row covers this date.
  * 'holiday' — this date is in the employee's holiday group.
  * 'weekly_off' — this date is outside the employee's shift's workdays bitmask.
  * 'workday' — everything else, including every day when the employee has no
  * shift assigned yet (no bitmask to check against).
  */
-export const CALENDAR_DAY_STATUSES = ['workday', 'weekly_off', 'holiday', 'leave'] as const
+export const CALENDAR_DAY_STATUSES = [
+  'workday',
+  'weekly_off',
+  'holiday',
+  'leave',
+  'swap_workday',
+  'swap_dayoff',
+] as const
 export type CalendarDayStatus = (typeof CALENDAR_DAY_STATUSES)[number]
 
 export type CalendarDay = {
@@ -977,7 +1085,9 @@ export type CalendarDay = {
   date: string
   status: CalendarDayStatus
   /** holidayName when status is 'holiday', leaveTypeName when status is
-   *  'leave', null otherwise. */
+   *  'leave', the swap's workDateOriginalLabel when status is
+   *  'swap_workday' (null if it was a weekly_off, not a named holiday),
+   *  null otherwise (including 'swap_dayoff'). */
   label: string | null
   /** The shift in effect on this date, resolved from
    *  employee_shift_assignments the same way getShiftIdForDate does — which

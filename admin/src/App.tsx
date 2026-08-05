@@ -28,6 +28,8 @@ import { LeaveRequestListPage } from './pages/leave_requests/LeaveRequestListPag
 import { LeaveRequestDetailPage } from './pages/leave_requests/LeaveRequestDetailPage'
 import { ShiftChangeRequestListPage } from './pages/shift_change_requests/ShiftChangeRequestListPage'
 import { ShiftChangeRequestDetailPage } from './pages/shift_change_requests/ShiftChangeRequestDetailPage'
+import { DayOffSwapRequestListPage } from './pages/day_off_swap_requests/DayOffSwapRequestListPage'
+import { DayOffSwapRequestDetailPage } from './pages/day_off_swap_requests/DayOffSwapRequestDetailPage'
 import { HealthPage } from './pages/HealthPage'
 
 /**
@@ -88,6 +90,8 @@ const router = createBrowserRouter([
       { path: 'leave-requests/:id', element: <LeaveRequestDetailPage /> },
       { path: 'shift-change-requests', element: <ShiftChangeRequestListPage /> },
       { path: 'shift-change-requests/:id', element: <ShiftChangeRequestDetailPage /> },
+      { path: 'day-off-swap-requests', element: <DayOffSwapRequestListPage /> },
+      { path: 'day-off-swap-requests/:id', element: <DayOffSwapRequestDetailPage /> },
       { path: 'leave-balances/bulk-grant', element: <LeaveBalanceBulkGrantPage /> },
       { path: 'master/jobs', element: <JobListPage /> },
       { path: 'master/jobs/new', element: <KeyedJobForm /> },
