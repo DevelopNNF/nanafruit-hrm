@@ -50,7 +50,7 @@ const NAV: NavItem[] = [
   },
   {
     type: 'group',
-    label: 'การลงเวลา',
+    label: 'จัดการเวลา',
     icon: Clock,
     children: [
       { to: '/attendance', label: 'รายละเอียดการลงเวลา'},
