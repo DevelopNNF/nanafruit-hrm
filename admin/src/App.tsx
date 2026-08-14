@@ -20,6 +20,8 @@ import { LeaveTypeListPage } from './pages/masters/leave_type/LeaveTypeListPage'
 import { LeaveTypeFormPage } from './pages/masters/leave_type/LeaveTypeFormPage'
 import { HolidayGroupListPage } from './pages/masters/holiday_group/HolidayGroupListPage'
 import { HolidayGroupFormPage } from './pages/masters/holiday_group/HolidayGroupFormPage'
+import { OvertimeGroupListPage } from './pages/masters/overtime_group/OvertimeGroupListPage'
+import { OvertimeGroupFormPage } from './pages/masters/overtime_group/OvertimeGroupFormPage'
 import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
 import { TimeCorrectionListPage } from './pages/time_correction/TimeCorrectionListPage'
@@ -72,6 +74,11 @@ function KeyedHolidayGroupForm() {
   return <HolidayGroupFormPage key={id ?? 'new'} />
 }
 
+function KeyedOvertimeGroupForm() {
+  const { id } = useParams()
+  return <OvertimeGroupFormPage key={id ?? 'new'} />
+}
+
 // /employees/new is matched before /employees/:id so "new" is never read as an id.
 const router = createBrowserRouter([
   {
@@ -111,6 +118,9 @@ const router = createBrowserRouter([
       { path: 'master/holidays', element: <HolidayGroupListPage /> },
       { path: 'master/holidays/new', element: <KeyedHolidayGroupForm /> },
       { path: 'master/holidays/:id', element: <KeyedHolidayGroupForm /> },
+      { path: 'master/overtime-groups', element: <OvertimeGroupListPage /> },
+      { path: 'master/overtime-groups/new', element: <KeyedOvertimeGroupForm /> },
+      { path: 'master/overtime-groups/:id', element: <KeyedOvertimeGroupForm /> },
       { path: 'health', element: <HealthPage /> },
       { path: '*', element: <Navigate to="/dashboard" replace /> },
     ],

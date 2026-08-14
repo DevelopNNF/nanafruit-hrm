@@ -8,11 +8,13 @@ import {
   type EmploymentInput,
   type Job,
   type HolidayGroup,
+  type OvertimeGroup,
 } from '@hrm/shared'
 import { updateEmployeeEmployment } from '../api/employees'
 import { listJobs } from '../api/jobs'
 import { listDepartments } from '../api/departments'
 import { listHolidayGroups } from '../api/holidayGroups'
+import { listOvertimeGroups } from '../api/overtimeGroups'
 import { DatePicker } from './DatePicker'
 import { TreeSelect, type TreeSelectOption } from './TreeSelect'
 import { notify } from '../notifications/notify'
@@ -45,6 +47,11 @@ type HolidayGroupOptionsState =
   | { phase: 'ok'; holidayGroups: HolidayGroup[] }
   | { phase: 'error'; message: string }
 
+type OvertimeGroupOptionsState =
+  | { phase: 'loading' }
+  | { phase: 'ok'; overtimeGroups: OvertimeGroup[] }
+  | { phase: 'error'; message: string }
+
 /** Custom controls (DatePicker/TreeSelect) anchor their `required` check on
  *  a zero-size hidden input, so the browser's native validation bubble can
  *  end up invisible or mispositioned. Checking here and surfacing it as a
@@ -70,6 +77,7 @@ function draftFrom(employee: Employee): EmploymentInput {
     jobId: employee.employment.jobId,
     departmentId: employee.employment.departmentId,
     holidayGroupId: employee.employment.holidayGroupId,
+    overtimeGroupId: employee.employment.overtimeGroupId,
   }
 }
 
@@ -109,6 +117,9 @@ export function EmployeeEmploymentTab({
     phase: 'loading',
   })
   const [holidayGroupOptions, setHolidayGroupOptions] = useState<HolidayGroupOptionsState>({
+    phase: 'loading',
+  })
+  const [overtimeGroupOptions, setOvertimeGroupOptions] = useState<OvertimeGroupOptionsState>({
     phase: 'loading',
   })
 
@@ -157,6 +168,25 @@ export function EmployeeEmploymentTab({
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setHolidayGroupOptions({
+          phase: 'error',
+          message: err instanceof Error ? err.message : 'request failed',
+        })
+      })
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    listOvertimeGroups(controller.signal)
+      .then((overtimeGroups) =>
+        setOvertimeGroupOptions({
+          phase: 'ok',
+          overtimeGroups: overtimeGroups.filter((group) => group.isActive),
+        })
+      )
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setOvertimeGroupOptions({
           phase: 'error',
           message: err instanceof Error ? err.message : 'request failed',
         })
@@ -221,6 +251,11 @@ export function EmployeeEmploymentTab({
     holidayGroupOptions.phase === 'ok' ? holidayGroupOptions.holidayGroups.map((g) => g.id) : []
   const currentHolidayGroupMissing =
     draft.holidayGroupId !== null && !activeHolidayGroupIds.includes(draft.holidayGroupId)
+
+  const activeOvertimeGroupIds =
+    overtimeGroupOptions.phase === 'ok' ? overtimeGroupOptions.overtimeGroups.map((g) => g.id) : []
+  const currentOvertimeGroupMissing =
+    draft.overtimeGroupId !== null && !activeOvertimeGroupIds.includes(draft.overtimeGroupId)
 
   return (
     <>
@@ -413,6 +448,39 @@ export function EmployeeEmploymentTab({
                 {holidayGroupOptions.phase === 'error' && (
                   <span className="text-[0.7rem] text-red-700">
                     โหลดรายการกลุ่มวันหยุดไม่สำเร็จ: {holidayGroupOptions.message}
+                  </span>
+                )}
+              </label>
+              <label className={fieldLabel}>
+                <span>กลุ่มการทำงานล่วงเวลา (Overtime Group)</span>
+                <select
+                  className={fieldControl}
+                  disabled={overtimeGroupOptions.phase === 'loading'}
+                  value={draft.overtimeGroupId ?? ''}
+                  onChange={(e) =>
+                    set('overtimeGroupId', e.target.value ? Number(e.target.value) : null)
+                  }
+                >
+                  <option value="">
+                    {overtimeGroupOptions.phase === 'loading'
+                      ? 'กำลังโหลดกลุ่มการทำงานล่วงเวลา…'
+                      : '— ไม่ระบุกลุ่ม —'}
+                  </option>
+                  {currentOvertimeGroupMissing && (
+                    <option value={draft.overtimeGroupId ?? ''}>
+                      {employee.employment.overtimeGroupName ?? `#${draft.overtimeGroupId}`} (ไม่พร้อมใช้งาน)
+                    </option>
+                  )}
+                  {overtimeGroupOptions.phase === 'ok' &&
+                    overtimeGroupOptions.overtimeGroups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.groupName}
+                      </option>
+                    ))}
+                </select>
+                {overtimeGroupOptions.phase === 'error' && (
+                  <span className="text-[0.7rem] text-red-700">
+                    โหลดรายการกลุ่มการทำงานล่วงเวลาไม่สำเร็จ: {overtimeGroupOptions.message}
                   </span>
                 )}
               </label>

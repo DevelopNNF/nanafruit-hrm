@@ -223,6 +223,14 @@ function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<Employ
     }
   }
 
+  const overtimeGroupId = optionalPositiveInt(emp, 'overtimeGroupId')
+  if (overtimeGroupId === undefined) {
+    return {
+      ok: false,
+      message: 'employment.overtimeGroupId must be a positive integer or null',
+    }
+  }
+
   const status = requiredString(emp, 'status')
   if (status === null || !(EMPLOYEE_STATUSES as readonly string[]).includes(status)) {
     return {
@@ -271,6 +279,7 @@ function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<Employ
       jobId,
       departmentId,
       holidayGroupId,
+      overtimeGroupId,
     },
   }
 }
@@ -477,18 +486,21 @@ function isForeignKeyViolation(err: unknown): boolean {
 }
 
 /**
- * job_id, shift_id and holiday_group_id are all FKs on employment_details, so
- * a 23503 needs the constraint name to say which one actually failed rather
- * than guessing. Postgres auto-names a column-level REFERENCES as
- * `<table>_<column>_fkey`.
+ * job_id, shift_id, holiday_group_id and overtime_group_id are all FKs on
+ * employment_details, so a 23503 needs the constraint name to say which one
+ * actually failed rather than guessing. Postgres auto-names a column-level
+ * REFERENCES as `<table>_<column>_fkey`.
  */
-function fkViolationField(err: unknown): 'job' | 'department' | 'shift' | 'holidayGroup' | null {
+function fkViolationField(
+  err: unknown
+): 'job' | 'department' | 'shift' | 'holidayGroup' | 'overtimeGroup' | null {
   const constraint =
     typeof err === 'object' && err !== null ? (err as { constraint?: unknown }).constraint : null
   if (constraint === 'employment_details_job_id_fkey') return 'job'
   if (constraint === 'employment_details_department_id_fkey') return 'department'
   if (constraint === 'employment_details_shift_id_fkey') return 'shift'
   if (constraint === 'employment_details_holiday_group_id_fkey') return 'holidayGroup'
+  if (constraint === 'employment_details_overtime_group_id_fkey') return 'overtimeGroup'
   if (constraint === 'employee_shift_assignments_shift_id_fkey') return 'shift'
   return null
 }
@@ -589,8 +601,8 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
       await client.query(
         `INSERT INTO employment_details
            (employee_id, status, hire_date, start_working_date, employment_type, work_location,
-            job_id, department_id, shift_id, holiday_group_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            job_id, department_id, shift_id, holiday_group_id, overtime_group_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           created.id,
           input.employment.status,
@@ -602,6 +614,7 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
           input.employment.departmentId,
           input.employment.shiftId,
           input.employment.holidayGroupId,
+          input.employment.overtimeGroupId,
         ]
       )
 
@@ -657,6 +670,9 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
     if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.employment.shiftId}`)
     if (fkField === 'holidayGroup') {
       return fail(res, 400, `no holiday group with id ${input.employment.holidayGroupId}`)
+    }
+    if (fkField === 'overtimeGroup') {
+      return fail(res, 400, `no overtime group with id ${input.employment.overtimeGroupId}`)
     }
     if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in employment')
     handleUnexpected(res, err)
@@ -763,7 +779,8 @@ employeesRouter.patch(
           `UPDATE employment_details SET
              status = $2, hire_date = $3, start_working_date = $4,
              employment_type = $5, work_location = $6,
-             job_id = $7, department_id = $8, holiday_group_id = $9, updated_at = now()
+             job_id = $7, department_id = $8, holiday_group_id = $9, overtime_group_id = $10,
+             updated_at = now()
            WHERE employee_id = $1`,
           [
             id,
@@ -775,6 +792,7 @@ employeesRouter.patch(
             input.jobId,
             input.departmentId,
             input.holidayGroupId,
+            input.overtimeGroupId,
           ]
         )
         if (rowCount === 0) return 'not-found' as const
@@ -803,6 +821,9 @@ employeesRouter.patch(
       }
       if (fkField === 'holidayGroup') {
         return fail(res, 400, `no holiday group with id ${input.holidayGroupId}`)
+      }
+      if (fkField === 'overtimeGroup') {
+        return fail(res, 400, `no overtime group with id ${input.overtimeGroupId}`)
       }
       if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in employment')
       handleUnexpected(res, err)

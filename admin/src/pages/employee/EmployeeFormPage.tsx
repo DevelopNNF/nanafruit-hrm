@@ -77,6 +77,9 @@ const emptyDraft: EmployeeInput = {
     // Same reasoning as shiftId — not every employee has a holiday calendar
     // assigned yet.
     holidayGroupId: null,
+    // Same reasoning as holidayGroupId — not every employee has an OT rate
+    // schedule assigned yet.
+    overtimeGroupId: null,
   },
 }
 

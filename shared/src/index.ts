@@ -132,6 +132,13 @@ export type EmploymentDetails = {
    *  Derived from holidayGroupId, not writable directly — absent from
    *  EmploymentDetailsInput. Null exactly when holidayGroupId is null. */
   holidayGroupName: string | null
+  /** FK to master_overtime_groups.id. Nullable — same reasoning as
+   *  holidayGroupId: not every employee has an OT rate schedule assigned yet. */
+  overtimeGroupId: number | null
+  /** master_overtime_groups.group_name as of now, joined in for display.
+   *  Derived from overtimeGroupId, not writable directly — absent from
+   *  EmploymentDetailsInput. Null exactly when overtimeGroupId is null. */
+  overtimeGroupName: string | null
   /** master_shifts.shift_start_time/shift_end_time as of now, joined in
    *  purely so liff's leave-request form can prefill a default time range
    *  without needing its own route into master_shifts (which is admin-only).
@@ -144,11 +151,18 @@ export type EmploymentDetails = {
 }
 
 /** Body of the employment half of POST/PUT — jobTitle, departmentName,
- *  shiftName, holidayGroupName, shiftStartTime and shiftEndTime are
- *  read-only, so they're the fields on EmploymentDetails that aren't also inputs. */
+ *  shiftName, holidayGroupName, overtimeGroupName, shiftStartTime and
+ *  shiftEndTime are read-only, so they're the fields on EmploymentDetails
+ *  that aren't also inputs. */
 export type EmploymentDetailsInput = Omit<
   EmploymentDetails,
-  'jobTitle' | 'departmentName' | 'shiftName' | 'holidayGroupName' | 'shiftStartTime' | 'shiftEndTime'
+  | 'jobTitle'
+  | 'departmentName'
+  | 'shiftName'
+  | 'holidayGroupName'
+  | 'overtimeGroupName'
+  | 'shiftStartTime'
+  | 'shiftEndTime'
 >
 
 /** Body of POST /api/employees */
@@ -762,6 +776,51 @@ export type HolidayListResponse = { holidays: Holiday[] }
 
 /** POST /api/holiday-groups/:groupId/holidays, PUT /api/holidays/:id */
 export type HolidayResponse = { holiday: Holiday }
+
+/* Overtime Group Master ------------------------------------------------------
+ *
+ * Which OT rate schedule an employee is assigned to. Unlike Holiday Group,
+ * there is no child table: the five rate multipliers and the rounding rule
+ * are a fixed set of columns per group, not a list of variable length, so
+ * they live directly on this one row rather than one level down.
+ */
+
+/** Minutes an OT period is rounded to before it's calculated — see the
+ *  migration's comment for why this is a closed set rather than a numeric
+ *  range. 0 = ไม่ปัด (no rounding). */
+export const OVERTIME_ROUNDING_MINUTES = [0, 15, 30, 60] as const
+export type OvertimeRoundingMinutes = (typeof OVERTIME_ROUNDING_MINUTES)[number]
+
+/** A row in master_overtime_groups. Every rate is a multiplier of the
+ *  employee's normal hourly wage (1.0, 1.5, 2.0, 3.0, ...), matching the
+ *  Thai Labor Protection Act's OT categories — see the migration's comment
+ *  for what each of the five covers. */
+export type OvertimeGroup = {
+  id: number
+  groupCode: string
+  groupName: string
+  /** นอกเวลา วันทำงานปกติ — OT after hours on a normal workday. */
+  rateOtWorkday: number
+  /** ในเวลา นอกวันทำงาน — in-hours pay on a scheduled day off. */
+  rateNormalDayoff: number
+  /** นอกเวลา นอกวันทำงานปกติ — OT on a scheduled day off. */
+  rateOtDayoff: number
+  /** ในเวลา วันหยุดพิเศษ — in-hours pay on a holiday (see master_holidays). */
+  rateNormalHoliday: number
+  /** นอกเวลา วันหยุดพิเศษ — OT on a holiday. */
+  rateOtHoliday: number
+  roundingMinutes: OvertimeRoundingMinutes
+  isActive: boolean
+}
+
+/** Body of POST /api/overtime-groups and PUT /api/overtime-groups/:id */
+export type OvertimeGroupInput = Omit<OvertimeGroup, 'id'>
+
+/** GET /api/overtime-groups */
+export type OvertimeGroupListResponse = { overtimeGroups: OvertimeGroup[] }
+
+/** GET /api/overtime-groups/:id, POST, PUT */
+export type OvertimeGroupResponse = { overtimeGroup: OvertimeGroup }
 
 /* Attendance ---------------------------------------------------------------- */
 

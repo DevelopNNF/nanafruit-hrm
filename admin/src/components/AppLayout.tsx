@@ -46,6 +46,7 @@ const NAV: NavItem[] = [
       { to: '/master/locations', label: 'พิกัดอนุญาต (Location)' },
       { to: '/master/leave-types', label: 'ประเภทการลา (Leave Type)' },
       { to: '/master/holidays', label: 'วันหยุด (Holiday)' },
+      { to: '/master/overtime-groups', label: 'กลุ่มการทำงานล่วงเวลา (Overtime Group)' },
     ],
   },
   {
