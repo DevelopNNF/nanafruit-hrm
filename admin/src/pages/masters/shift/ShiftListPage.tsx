@@ -93,6 +93,8 @@ export function ShiftListPage() {
         breakStartTime: shift.breakStartTime,
         breakEndTime: shift.breakEndTime,
         workdays: shift.workdays,
+        lateGraceMinutes: shift.lateGraceMinutes,
+        earlyLeaveGraceMinutes: shift.earlyLeaveGraceMinutes,
         isActive: !shift.isActive,
       })
       setState({

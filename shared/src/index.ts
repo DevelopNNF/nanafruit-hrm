@@ -466,6 +466,10 @@ export type Shift = {
   breakEndTime: string | null
   /** Bitmask over WORKDAYS: which days this shift applies to. */
   workdays: number
+  /** Minutes after shiftStartTime a check-in is still on-time. 0 = no grace. */
+  lateGraceMinutes: number
+  /** Minutes before shiftEndTime a check-out still counts as on-time. 0 = no grace. */
+  earlyLeaveGraceMinutes: number
   isActive: boolean
 }
 

@@ -16,12 +16,15 @@ export type ShiftRow = {
   break_start_time: string | null
   break_end_time: string | null
   workdays: number
+  late_grace_minutes: number
+  early_leave_grace_minutes: number
   is_active: boolean
 }
 
 export const SELECT_SHIFT = `
   SELECT id, shift_code, shift_name, shift_start_time, shift_end_time,
-         break_start_time, break_end_time, workdays, is_active
+         break_start_time, break_end_time, workdays,
+         late_grace_minutes, early_leave_grace_minutes, is_active
   FROM master_shifts
 `
 
@@ -35,6 +38,8 @@ export function rowToShift(row: ShiftRow): Shift {
     breakStartTime: row.break_start_time,
     breakEndTime: row.break_end_time,
     workdays: row.workdays,
+    lateGraceMinutes: row.late_grace_minutes,
+    earlyLeaveGraceMinutes: row.early_leave_grace_minutes,
     isActive: row.is_active,
   }
 }

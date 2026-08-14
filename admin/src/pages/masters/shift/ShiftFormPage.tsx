@@ -30,6 +30,8 @@ const emptyDraft: ShiftInput = {
   breakStartTime: null,
   breakEndTime: null,
   workdays: 0,
+  lateGraceMinutes: 0,
+  earlyLeaveGraceMinutes: 0,
   isActive: true,
 }
 
@@ -68,6 +70,8 @@ export function ShiftFormPage() {
           breakStartTime: toInputTime(shift.breakStartTime) || null,
           breakEndTime: toInputTime(shift.breakEndTime) || null,
           workdays: shift.workdays,
+          lateGraceMinutes: shift.lateGraceMinutes,
+          earlyLeaveGraceMinutes: shift.earlyLeaveGraceMinutes,
           isActive: shift.isActive,
         })
         setHasBreak(shift.breakStartTime !== null)
@@ -260,6 +264,33 @@ export function ShiftFormPage() {
                   <span className="font-semibold text-slate-900">{formatWorkMinutes(workMinutes)}</span>
                 )}
               </p>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className={fieldLabel}>
+                  <span>อนุโลมเข้าสาย (นาที)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    className={fieldControl}
+                    value={draft.lateGraceMinutes}
+                    onChange={(e) => set('lateGraceMinutes', Math.max(0, Number(e.target.value) || 0))}
+                  />
+                </label>
+                <label className={fieldLabel}>
+                  <span>อนุโลมออกก่อนเวลา (นาที)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    className={fieldControl}
+                    value={draft.earlyLeaveGraceMinutes}
+                    onChange={(e) =>
+                      set('earlyLeaveGraceMinutes', Math.max(0, Number(e.target.value) || 0))
+                    }
+                  />
+                </label>
+              </div>
 
               <div className={fieldLabel}>
                 <span>

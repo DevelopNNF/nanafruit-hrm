@@ -103,6 +103,24 @@ function parseShiftInput(body: unknown): ParseResult<ShiftInput> {
     return { ok: false, message: `workdays must be an integer between 0 and ${WORKDAYS_MASK}` }
   }
 
+  const lateGraceMinutesRaw = raw['lateGraceMinutes']
+  if (
+    typeof lateGraceMinutesRaw !== 'number' ||
+    !Number.isInteger(lateGraceMinutesRaw) ||
+    lateGraceMinutesRaw < 0
+  ) {
+    return { ok: false, message: 'lateGraceMinutes must be a non-negative integer' }
+  }
+
+  const earlyLeaveGraceMinutesRaw = raw['earlyLeaveGraceMinutes']
+  if (
+    typeof earlyLeaveGraceMinutesRaw !== 'number' ||
+    !Number.isInteger(earlyLeaveGraceMinutesRaw) ||
+    earlyLeaveGraceMinutesRaw < 0
+  ) {
+    return { ok: false, message: 'earlyLeaveGraceMinutes must be a non-negative integer' }
+  }
+
   const isActiveRaw = raw['isActive']
   if (typeof isActiveRaw !== 'boolean') {
     return { ok: false, message: 'isActive must be a boolean' }
@@ -118,6 +136,8 @@ function parseShiftInput(body: unknown): ParseResult<ShiftInput> {
       breakStartTime,
       breakEndTime,
       workdays: workdaysRaw,
+      lateGraceMinutes: lateGraceMinutesRaw,
+      earlyLeaveGraceMinutes: earlyLeaveGraceMinutesRaw,
       isActive: isActiveRaw,
     },
   }
@@ -188,8 +208,9 @@ shiftsRouter.post('/shifts', canWrite, async (req: Request, res: Response) => {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO master_shifts
            (shift_code, shift_name, shift_start_time, shift_end_time,
-            break_start_time, break_end_time, workdays, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            break_start_time, break_end_time, workdays,
+            late_grace_minutes, early_leave_grace_minutes, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id`,
         [
           input.shiftCode,
@@ -199,6 +220,8 @@ shiftsRouter.post('/shifts', canWrite, async (req: Request, res: Response) => {
           input.breakStartTime,
           input.breakEndTime,
           input.workdays,
+          input.lateGraceMinutes,
+          input.earlyLeaveGraceMinutes,
           input.isActive,
         ]
       )
@@ -242,7 +265,8 @@ shiftsRouter.put('/shifts/:id', canWrite, async (req: Request, res: Response) =>
       const { rowCount } = await client.query(
         `UPDATE master_shifts SET
            shift_code = $2, shift_name = $3, shift_start_time = $4, shift_end_time = $5,
-           break_start_time = $6, break_end_time = $7, workdays = $8, is_active = $9,
+           break_start_time = $6, break_end_time = $7, workdays = $8,
+           late_grace_minutes = $9, early_leave_grace_minutes = $10, is_active = $11,
            updated_at = now()
          WHERE id = $1`,
         [
@@ -254,6 +278,8 @@ shiftsRouter.put('/shifts/:id', canWrite, async (req: Request, res: Response) =>
           input.breakStartTime,
           input.breakEndTime,
           input.workdays,
+          input.lateGraceMinutes,
+          input.earlyLeaveGraceMinutes,
           input.isActive,
         ]
       )
