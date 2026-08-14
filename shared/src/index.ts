@@ -298,6 +298,77 @@ export type LinkCodeResponse = {
   expiresAt: string
 }
 
+/* Employee Finance ------------------------------------------------------------
+ *
+ * Wage, bank, social security and withholding-tax settings for one employee.
+ * A separate tab/table from Employee/EmploymentDetails, and read/written
+ * through its own routes rather than nested onto Employee — canRead there is
+ * every HRM role, but this is salary data, so its routes require HR/Admin for
+ * both read and write (see server/src/routes/employees.ts).
+ */
+
+export const WAGE_TYPES = ['รายเดือน', 'รายวัน'] as const
+export type WageType = (typeof WAGE_TYPES)[number]
+
+export const PAYMENT_METHODS = ['เงินสด', 'โอน', 'เช็ค'] as const
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number]
+
+export const SOCIAL_SECURITY_TYPES = [
+  'ไม่คิดประกันสังคม',
+  'คิดตามฐานเงินเดือนจริงที่ได้รับ (หักจากค่าจ้าง)',
+  'คิดตามฐานเงินเดือนจริงที่ได้รับ (บริษัทจ่ายให้)',
+  'คิดตามมาตรา 39',
+  'คิดคงที่ทุกเดือน',
+  'คิดตามสูตรคำนวณ',
+] as const
+export type SocialSecurityType = (typeof SOCIAL_SECURITY_TYPES)[number]
+
+export const TAX_TYPES = [
+  'ไม่คิดภาษี',
+  'คิดภาษี ภงด.1 ใหม่ทุกเดือน (หักจากค่าจ้าง)',
+  'คิดภาษี ภงด.1 ใหม่ทุกเดือน (บริษัทจ่ายให้)',
+  'คิดภาษี ภงด.1 คงที่ทุกเดือน',
+  'คิดภาษี ภงด.1 เป็น % ของรายได้',
+] as const
+export type TaxType = (typeof TAX_TYPES)[number]
+
+/** A row in employee_finance. Absent (no row saved yet) is represented as
+ *  `null` on EmployeeFinanceResponse, not as this type with empty fields —
+ *  there is no honest default to invent for wageAmount/bankAccountNumber. */
+export type EmployeeFinance = {
+  wageType: WageType
+  wageAmount: number
+  paymentMethod: PaymentMethod
+  /** Fixed to 'ไทยพาณิชย์ (SCB)' for now — the company uses one bank today,
+   *  so this is a stored default rather than a picker. Read-only: absent
+   *  from EmployeeFinanceInput. */
+  bankName: string
+  bankBranchCode: string | null
+  bankAccountNumber: string
+  socialSecurityType: SocialSecurityType
+  /** Required exactly when socialSecurityType is 'คิดคงที่ทุกเดือน', null
+   *  otherwise — enforced by a DB CHECK, not just convention, same as
+   *  taxFixedAmount below. */
+  socialSecurityFixedAmount: number | null
+  taxType: TaxType
+  /** Required exactly when taxType is 'คิดภาษี ภงด.1 คงที่ทุกเดือน', null
+   *  otherwise. */
+  taxFixedAmount: number | null
+  /** Calendar date, `YYYY-MM-DD`, always the 1st of the month — the month
+   *  withholding tax starts being calculated from. A real date rather than a
+   *  bare 1-12 month number so it doesn't go silently ambiguous across
+   *  years. Null if not set. */
+  taxStartMonth: string | null
+}
+
+/** Body of PATCH /api/employees/:id/finance — bankName is read-only, so it's
+ *  the field on EmployeeFinance that isn't also an input. */
+export type EmployeeFinanceInput = Omit<EmployeeFinance, 'bankName'>
+
+/** GET /api/employees/:id/finance, PATCH — null means no finance data has
+ *  been saved for this employee yet. */
+export type EmployeeFinanceResponse = { finance: EmployeeFinance | null }
+
 /* Job Master --------------------------------------------------------------- */
 
 /** A row in master_jobs. Row order in the list is the id's stand-in in the UI. */

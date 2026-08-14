@@ -5,12 +5,18 @@ import {
   EMPLOYMENT_TYPES,
   GENDERS,
   ROLES,
+  SOCIAL_SECURITY_TYPES,
+  TAX_TYPES,
   TITLES,
+  WAGE_TYPES,
+  PAYMENT_METHODS,
   WORK_LOCATIONS,
   type EmployeeInput,
   type EmployeeListResponse,
   type AuthUser,
   type EmployeeBasicInput,
+  type EmployeeFinanceInput,
+  type EmployeeFinanceResponse,
   type EmploymentInput,
   type EmployeePhotoPresignResponse,
   type EmployeePhotoResponse,
@@ -32,6 +38,11 @@ import {
   type EmployeeRow,
 } from '../employeeQueries.js'
 import {
+  findEmployeeFinanceById,
+  rowToEmployeeFinance,
+  type EmployeeFinanceRow,
+} from '../employeeFinanceQueries.js'
+import {
   createShiftChange,
   listShiftAssignments,
   toThailandDateString,
@@ -50,6 +61,11 @@ export const employeesRouter = Router()
 // rather than inside them so that a new route cannot forget to ask.
 const canRead = requireRole(...ROLES)
 const canWrite = requireRole('HRM.HR', 'HRM.Admin')
+
+// employee_finance is salary/bank data, not a scheduling detail — narrower
+// than canRead/canWrite above (which let Viewer read), same reasoning as
+// locations.ts' canWrite. Both read and write require HR/Admin.
+const canReadWriteFinance = requireRole('HRM.HR', 'HRM.Admin')
 
 /**
  * The caller, for the audit log. canWrite has already established that they are
@@ -75,6 +91,25 @@ function requiredString(
 function requiredPositiveInt(source: Record<string, unknown>, key: string): number | null {
   const value = source[key]
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null
+}
+
+/** Unlike requiredPositiveInt, allows the fractional baht/satang that wage
+ *  and social security/tax amounts are quoted in. */
+function requiredPositiveNumber(source: Record<string, unknown>, key: string): number | null {
+  const value = source[key]
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+/** Absent and null both mean "not applicable" — used for the fixed amounts
+ *  that only apply under one choice of socialSecurityType/taxType. Present
+ *  and not a positive finite number is a validation failure (undefined). */
+function optionalPositiveNumber(
+  source: Record<string, unknown>,
+  key: string
+): number | null | undefined {
+  const value = source[key]
+  if (value === null || value === undefined) return null
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
 /** Absent and null both mean "no shift assigned". */
@@ -236,6 +271,127 @@ function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<Employ
       jobId,
       departmentId,
       holidayGroupId,
+    },
+  }
+}
+
+/** Shared by GET's absence of validation and PATCH /employees/:id/finance —
+ *  really just the latter, but kept alongside parseEmployeeBasicFields/
+ *  parseEmploymentFields for the same reason those are split out. */
+function parseEmployeeFinanceFields(raw: Record<string, unknown>): ParseResult<EmployeeFinanceInput> {
+  const wageType = requiredString(raw, 'wageType')
+  if (wageType === null || !(WAGE_TYPES as readonly string[]).includes(wageType)) {
+    return { ok: false, message: `wageType must be one of: ${WAGE_TYPES.join(', ')}` }
+  }
+
+  const wageAmount = requiredPositiveNumber(raw, 'wageAmount')
+  if (wageAmount === null) {
+    return { ok: false, message: 'wageAmount is required and must be a positive number' }
+  }
+
+  const paymentMethod = requiredString(raw, 'paymentMethod')
+  if (paymentMethod === null || !(PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
+    return { ok: false, message: `paymentMethod must be one of: ${PAYMENT_METHODS.join(', ')}` }
+  }
+
+  const bankBranchCodeRaw = raw['bankBranchCode']
+  const bankBranchCode =
+    typeof bankBranchCodeRaw === 'string' && bankBranchCodeRaw.trim() !== ''
+      ? bankBranchCodeRaw.trim()
+      : null
+
+  const bankAccountNumber = requiredString(raw, 'bankAccountNumber')
+  if (bankAccountNumber === null) {
+    return { ok: false, message: 'bankAccountNumber is required' }
+  }
+
+  const socialSecurityType = requiredString(raw, 'socialSecurityType')
+  if (
+    socialSecurityType === null ||
+    !(SOCIAL_SECURITY_TYPES as readonly string[]).includes(socialSecurityType)
+  ) {
+    return {
+      ok: false,
+      message: `socialSecurityType must be one of: ${SOCIAL_SECURITY_TYPES.join(', ')}`,
+    }
+  }
+
+  const socialSecurityFixedAmount = optionalPositiveNumber(raw, 'socialSecurityFixedAmount')
+  if (socialSecurityFixedAmount === undefined) {
+    return {
+      ok: false,
+      message: 'socialSecurityFixedAmount must be a positive number or null',
+    }
+  }
+  // Mirrors the DB's social_security_fixed_amount_consistency CHECK — caught
+  // here first so the error names the field rather than surfacing as a raw
+  // constraint violation.
+  const socialSecurityNeedsFixedAmount = socialSecurityType === 'คิดคงที่ทุกเดือน'
+  if (socialSecurityNeedsFixedAmount && socialSecurityFixedAmount === null) {
+    return {
+      ok: false,
+      message: 'socialSecurityFixedAmount is required when socialSecurityType is "คิดคงที่ทุกเดือน"',
+    }
+  }
+  if (!socialSecurityNeedsFixedAmount && socialSecurityFixedAmount !== null) {
+    return {
+      ok: false,
+      message: 'socialSecurityFixedAmount must be null unless socialSecurityType is "คิดคงที่ทุกเดือน"',
+    }
+  }
+
+  const taxType = requiredString(raw, 'taxType')
+  if (taxType === null || !(TAX_TYPES as readonly string[]).includes(taxType)) {
+    return { ok: false, message: `taxType must be one of: ${TAX_TYPES.join(', ')}` }
+  }
+
+  const taxFixedAmount = optionalPositiveNumber(raw, 'taxFixedAmount')
+  if (taxFixedAmount === undefined) {
+    return { ok: false, message: 'taxFixedAmount must be a positive number or null' }
+  }
+  const taxNeedsFixedAmount = taxType === 'คิดภาษี ภงด.1 คงที่ทุกเดือน'
+  if (taxNeedsFixedAmount && taxFixedAmount === null) {
+    return {
+      ok: false,
+      message: 'taxFixedAmount is required when taxType is "คิดภาษี ภงด.1 คงที่ทุกเดือน"',
+    }
+  }
+  if (!taxNeedsFixedAmount && taxFixedAmount !== null) {
+    return {
+      ok: false,
+      message: 'taxFixedAmount must be null unless taxType is "คิดภาษี ภงด.1 คงที่ทุกเดือน"',
+    }
+  }
+
+  const taxStartMonthRaw = raw['taxStartMonth']
+  let taxStartMonth: string | null = null
+  if (taxStartMonthRaw !== null && taxStartMonthRaw !== undefined) {
+    if (
+      typeof taxStartMonthRaw !== 'string' ||
+      !isCalendarDate(taxStartMonthRaw) ||
+      !taxStartMonthRaw.endsWith('-01')
+    ) {
+      return {
+        ok: false,
+        message: 'taxStartMonth must be the 1st of a month as YYYY-MM-01, or null',
+      }
+    }
+    taxStartMonth = taxStartMonthRaw
+  }
+
+  return {
+    ok: true,
+    value: {
+      wageType: wageType as EmployeeFinanceInput['wageType'],
+      wageAmount,
+      paymentMethod: paymentMethod as EmployeeFinanceInput['paymentMethod'],
+      bankBranchCode,
+      bankAccountNumber,
+      socialSecurityType: socialSecurityType as EmployeeFinanceInput['socialSecurityType'],
+      socialSecurityFixedAmount,
+      taxType: taxType as EmployeeFinanceInput['taxType'],
+      taxFixedAmount,
+      taxStartMonth,
     },
   }
 }
@@ -649,6 +805,114 @@ employeesRouter.patch(
         return fail(res, 400, `no holiday group with id ${input.holidayGroupId}`)
       }
       if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in employment')
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+employeesRouter.get(
+  '/employees/:id/finance',
+  canReadWriteFinance,
+  async (req: Request, res: Response) => {
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const employee = await findEmployeeById(id)
+      if (!employee) return fail(res, 404, `no employee with id ${id}`)
+
+      // null is a real answer, not an error: most existing employees have no
+      // employee_finance row yet, since this tab is new.
+      const finance = await findEmployeeFinanceById(id)
+      const body: EmployeeFinanceResponse = { finance }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Upsert rather than plain UPDATE: employment_details is guaranteed to exist
+// (created alongside the employee), but employee_finance is not — this may be
+// the first save for an employee who predates the Finance tab.
+employeesRouter.patch(
+  '/employees/:id/finance',
+  canReadWriteFinance,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    if (typeof req.body !== 'object' || req.body === null) {
+      return fail(res, 400, 'body must be a JSON object')
+    }
+    const parsed = parseEmployeeFinanceFields(req.body as Record<string, unknown>)
+    if (!parsed.ok) return fail(res, 400, parsed.message)
+    const input: EmployeeFinanceInput = parsed.value
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const { rowCount: employeeExists } = await client.query(
+          'SELECT 1 FROM employees WHERE id = $1',
+          [id]
+        )
+        if (employeeExists === 0) return 'not-found' as const
+
+        const { rows } = await client.query<EmployeeFinanceRow>(
+          `INSERT INTO employee_finance
+             (employee_id, wage_type, wage_amount, payment_method, bank_branch_code,
+              bank_account_number, social_security_type, social_security_fixed_amount,
+              tax_type, tax_fixed_amount, tax_start_month)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           ON CONFLICT (employee_id) DO UPDATE SET
+             wage_type = EXCLUDED.wage_type,
+             wage_amount = EXCLUDED.wage_amount,
+             payment_method = EXCLUDED.payment_method,
+             bank_branch_code = EXCLUDED.bank_branch_code,
+             bank_account_number = EXCLUDED.bank_account_number,
+             social_security_type = EXCLUDED.social_security_type,
+             social_security_fixed_amount = EXCLUDED.social_security_fixed_amount,
+             tax_type = EXCLUDED.tax_type,
+             tax_fixed_amount = EXCLUDED.tax_fixed_amount,
+             tax_start_month = EXCLUDED.tax_start_month,
+             updated_at = now()
+           RETURNING wage_type, wage_amount, payment_method, bank_name, bank_branch_code,
+                     bank_account_number, social_security_type, social_security_fixed_amount,
+                     tax_type, tax_fixed_amount, tax_start_month`,
+          [
+            id,
+            input.wageType,
+            input.wageAmount,
+            input.paymentMethod,
+            input.bankBranchCode,
+            input.bankAccountNumber,
+            input.socialSecurityType,
+            input.socialSecurityFixedAmount,
+            input.taxType,
+            input.taxFixedAmount,
+            input.taxStartMonth,
+          ]
+        )
+        const row = rows[0]
+        if (!row) throw new Error('upsert into employee_finance returned no row')
+
+        await recordAudit(client, {
+          actor,
+          action: 'employee.finance_update',
+          entityId: id,
+          detail: { wageType: input.wageType, paymentMethod: input.paymentMethod },
+        })
+
+        return rowToEmployeeFinance(row)
+      })
+
+      if (result === 'not-found') return fail(res, 404, `no employee with id ${id}`)
+
+      const body: EmployeeFinanceResponse = { finance: result }
+      res.json(body)
+    } catch (err) {
       handleUnexpected(res, err)
     }
   }

@@ -19,6 +19,7 @@ export type AuditAction =
   | 'employee.create'
   | 'employee.basic_update'
   | 'employee.employment_update'
+  | 'employee.finance_update'
   | 'employee.shift_change'
   | 'employee.photo_update'
   | 'employee.photo_delete'

@@ -22,6 +22,7 @@ import { listHolidayGroups } from '../../api/holidayGroups'
 import { DatePicker } from '../../components/DatePicker'
 import { EmployeeBasicTab } from '../../components/EmployeeBasicTab'
 import { EmployeeEmploymentTab } from '../../components/EmployeeEmploymentTab'
+import { EmployeeFinanceTab } from '../../components/EmployeeFinanceTab'
 import { LeaveBalanceCard } from '../../components/LeaveBalanceCard'
 import { ShiftHistoryCard } from '../../components/ShiftHistoryCard'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
@@ -106,6 +107,11 @@ const sectionTitle = 'mb-5 border-b border-slate-200 pb-3 text-xs font-bold trac
 const EDIT_TABS = [
   { value: 'basic', label: 'รูปพนักงาน & ข้อมูลพื้นฐาน' },
   { value: 'employment', label: 'ข้อมูลการจ้างงาน' },
+  // Salary/bank data — HR/Admin only, unlike every other tab here. Filtered
+  // out of the rendered list for a Viewer below rather than left visible and
+  // merely disabled: the route behind it (canReadWriteFinance) would 403 a
+  // Viewer's GET too, so a visible-but-broken tab would be worse than none.
+  { value: 'finance', label: 'การเงิน' },
   { value: 'leave', label: 'สิทธิการลา' },
   { value: 'shift', label: 'การเปลี่ยนกะ' },
 ] as const
@@ -777,7 +783,7 @@ function EditEmployeePage({ id, canWrite }: { id: number; canWrite: boolean }) {
       {employee && (
         <Tabs value={tab} onValueChange={(v) => setTab(v as EditTabValue)}>
           <TabsList>
-            {EDIT_TABS.map((t) => (
+            {EDIT_TABS.filter((t) => t.value !== 'finance' || canWrite).map((t) => (
               <TabsTrigger key={t.value} value={t.value}>
                 {t.label}
               </TabsTrigger>
@@ -790,6 +796,11 @@ function EditEmployeePage({ id, canWrite }: { id: number; canWrite: boolean }) {
           <TabsContent value="employment">
             <EmployeeEmploymentTab employee={employee} canWrite={canWrite} onSaved={setEmployee} />
           </TabsContent>
+          {canWrite && (
+            <TabsContent value="finance">
+              <EmployeeFinanceTab employeeId={employee.id} canWrite={canWrite} />
+            </TabsContent>
+          )}
           <TabsContent value="leave">
             <LeaveBalanceCard employeeId={employee.id} canWrite={canWrite} />
           </TabsContent>

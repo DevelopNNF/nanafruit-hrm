@@ -1,6 +1,9 @@
 import type {
   Employee,
   EmployeeBasicInput,
+  EmployeeFinance,
+  EmployeeFinanceInput,
+  EmployeeFinanceResponse,
   EmployeeInput,
   EmployeeListResponse,
   EmployeePhotoCompleteInput,
@@ -63,6 +66,31 @@ export async function updateEmployeeEmployment(
   })
   const body = await unwrap<EmployeeResponse>(res)
   return body.employee
+}
+
+/** null means no finance data has been saved for this employee yet. */
+export async function getEmployeeFinance(
+  id: number,
+  signal?: AbortSignal
+): Promise<EmployeeFinance | null> {
+  const res = await apiFetch(`/api/employees/${id}/finance`, { signal })
+  const body = await unwrap<EmployeeFinanceResponse>(res)
+  return body.finance
+}
+
+export async function updateEmployeeFinance(
+  id: number,
+  input: EmployeeFinanceInput
+): Promise<EmployeeFinance> {
+  const res = await apiFetch(`/api/employees/${id}/finance`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  const body = await unwrap<EmployeeFinanceResponse>(res)
+  // PATCH always upserts a row, so unlike GET this can't come back null.
+  if (!body.finance) throw new Error('finance update returned no data')
+  return body.finance
 }
 
 /**
