@@ -24,6 +24,7 @@ import { OvertimeGroupListPage } from './pages/masters/overtime_group/OvertimeGr
 import { OvertimeGroupFormPage } from './pages/masters/overtime_group/OvertimeGroupFormPage'
 import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
+import { AttendanceDailyListPage } from './pages/attendance_daily/AttendanceDailyListPage'
 import { TimeCorrectionListPage } from './pages/time_correction/TimeCorrectionListPage'
 import { TimeCorrectionDetailPage } from './pages/time_correction/TimeCorrectionDetailPage'
 import { LeaveRequestListPage } from './pages/leave_requests/LeaveRequestListPage'
@@ -91,6 +92,7 @@ const router = createBrowserRouter([
       { path: 'employees/new', element: <KeyedEmployeeForm /> },
       { path: 'employees/:id', element: <KeyedEmployeeForm /> },
       { path: 'attendance', element: <AttendanceListPage /> },
+      { path: 'attendance/daily', element: <AttendanceDailyListPage /> },
       { path: 'time-corrections', element: <TimeCorrectionListPage /> },
       { path: 'time-corrections/:id', element: <TimeCorrectionDetailPage /> },
       { path: 'leave-requests', element: <LeaveRequestListPage /> },

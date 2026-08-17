@@ -914,6 +914,121 @@ export type AttendanceListItem = AttendanceEvent & {
 /** GET /api/attendance */
 export type AttendanceListResponse = { events: AttendanceListItem[] }
 
+/* Attendance Daily -----------------------------------------------------------
+ *
+ * The computed daily verdict, one row per employee per work-date — what the
+ * attendance:compute batch job writes into attendance_daily. Derived data:
+ * every field here is recomputable from attendance_events plus the
+ * assignment/holiday/leave/swap ledgers, so this is a report to read, never a
+ * record to edit. There is no POST/PUT/PATCH counterpart for that reason.
+ */
+
+/**
+ * Whether work was expected on a date, and whether it happened.
+ *
+ * Late and early departure are deliberately absent: they're magnitudes
+ * (lateMinutes / earlyLeaveMinutes), not statuses, so a day that is both late
+ * and cut short needs no combinatorial status of its own. The UI composes its
+ * badges from this value plus those minute counts.
+ */
+export const ATTENDANCE_DAY_STATUSES = [
+  /** Work expected, both punches matched. */
+  'present',
+  /** Work expected, exactly one punch matched — usually a forgotten clock-out. */
+  'incomplete',
+  /** Work expected, no punches at all. */
+  'absent',
+  /** No work expected, and none happened. */
+  'day_off',
+  /** No work expected, but punches exist — a day off worked. */
+  'unscheduled_work',
+] as const
+export type AttendanceDayStatus = (typeof ATTENDANCE_DAY_STATUSES)[number]
+
+/** A row in attendance_daily, with the employee and shift joined in for
+ *  display — same reasoning as AttendanceListItem. */
+export type AttendanceDailyItem = {
+  id: number
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  /** Calendar date, `YYYY-MM-DD`. For an overnight shift this is the day the
+   *  shift STARTED, so a 22:00–07:00 shift beginning on the 14th is the 14th. */
+  workDate: string
+  shiftId: number | null
+  shiftCode: string | null
+  shiftName: string | null
+  /** How the calendar classified the date, before attendance was considered. */
+  dayStatus: CalendarDayStatus
+  attendanceStatus: AttendanceDayStatus
+  /** ISO 8601. The shift's own window. Both null when no shift applied. */
+  expectedCheckInAt: string | null
+  expectedCheckOutAt: string | null
+  /** ISO 8601. When the employee was really due in and out, after approved
+   *  leave was carved out of the shift window — equal to the expected pair on
+   *  an ordinary day, narrower on a partial-leave day, both null when nothing
+   *  was owed. This, not the expected pair, is what lateness was measured
+   *  against, and what a timesheet should show. */
+  effectiveCheckInAt: string | null
+  effectiveCheckOutAt: string | null
+  /** ISO 8601. The matched punches, or null where none was found. */
+  actualCheckInAt: string | null
+  actualCheckOutAt: string | null
+  /** Minutes past the time they were due in. 0 when within the shift's grace
+   *  period — grace decides whether lateness counts, not how much of it. */
+  lateMinutes: number
+  earlyLeaveMinutes: number
+  /** Minutes of the expected work intervals actually present for, net of the
+   *  unpaid break and any leave. Null unless both punches matched. */
+  workedMinutes: number | null
+  /** Minutes the day owed, net of break and leave. Null when no shift applied. */
+  expectedWorkMinutes: number | null
+  /** Working minutes excused by approved leave. */
+  leaveMinutes: number
+  isOvernight: boolean
+  /** ISO 8601 — when the batch job last recomputed this row. */
+  computedAt: string
+}
+
+/** Counts over the whole filtered range, not just the returned page, so the
+ *  figures stay right even when the list is truncated. `late` and `earlyLeave`
+ *  count minute totals rather than statuses, matching how the badges read. */
+export type AttendanceDailySummary = {
+  total: number
+  present: number
+  late: number
+  earlyLeave: number
+  absent: number
+  incomplete: number
+  /** ISO 8601 — the freshest computed_at in range, or null when the range has
+   *  no rows yet (the job hasn't covered these dates). */
+  lastComputedAt: string | null
+}
+
+/** Filters for GET /api/attendance/daily. Mostly attendanceStatus values, plus
+ *  'late'/'early_leave'/'leave', which are minute-count filters rather than
+ *  statuses — they're what someone actually wants to narrow a report to. */
+export const ATTENDANCE_DAILY_FILTERS = [
+  'present',
+  'late',
+  'early_leave',
+  'leave',
+  'absent',
+  'incomplete',
+  'day_off',
+  'unscheduled_work',
+] as const
+export type AttendanceDailyFilter = (typeof ATTENDANCE_DAILY_FILTERS)[number]
+
+/** GET /api/attendance/daily */
+export type AttendanceDailyListResponse = {
+  days: AttendanceDailyItem[]
+  summary: AttendanceDailySummary
+  /** True when the range held more rows than were returned — the summary still
+   *  counts all of them. */
+  truncated: boolean
+}
+
 /* Time Correction Requests --------------------------------------------------- */
 
 /**
