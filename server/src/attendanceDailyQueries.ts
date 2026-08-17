@@ -14,43 +14,29 @@
 // Everything written here is derived data — see 037_create_attendance_daily.sql.
 
 import type pg from 'pg'
+import type {
+  AttendanceDailyFilter,
+  AttendanceDailyItem,
+  AttendanceDailySummary,
+  AttendanceDayStatus,
+  CalendarDayStatus,
+} from '@hrm/shared'
 import { pool } from './db.js'
 import { parseDateOnlyUtc, toDateOnlyString } from './leaveRequestQueries.js'
 import { matchAttendanceForDates, type MatchedAttendanceDay } from './attendanceMatchingQueries.js'
 
 type Queryable = Pick<pg.Pool, 'query'>
 
-/**
- * Whether work was expected on a date, and whether it happened.
- *
- * Late and early-leave are deliberately *not* statuses here — they're
- * magnitudes reported alongside, so a day that is both late and short
- * doesn't need a combinatorial status of its own.
- */
-export const ATTENDANCE_DAY_STATUSES = [
-  /** Work expected, both punches matched. */
-  'present',
-  /** Work expected, exactly one punch matched — usually a forgotten clock-out. */
-  'incomplete',
-  /** Work expected, no punches at all. */
-  'absent',
-  /** No work expected, and none happened. */
-  'day_off',
-  /** No work expected, but punches exist — a day off worked, which the OT
-   *  rates in master_overtime_groups are what ultimately price. */
-  'unscheduled_work',
-] as const
-export type AttendanceDayStatus = (typeof ATTENDANCE_DAY_STATUSES)[number]
-
 export type AttendanceDayVerdict = {
   status: AttendanceDayStatus
-  /** Minutes past the shift's start, or 0 when within grace / not applicable.
-   *  See computeAttendanceDay for why this is the full amount rather than the
-   *  excess over grace. */
+  /** Minutes past the time the employee was due in, or 0 when within grace /
+   *  not applicable. See computeAttendanceDay for why this is the full amount
+   *  rather than the excess over grace. */
   lateMinutes: number
   earlyLeaveMinutes: number
-  /** Clamped to the shift window and net of the scheduled break. Null unless
-   *  both punches matched — one punch alone can't measure a duration. */
+  /** Minutes of the expected work intervals the employee was actually present
+   *  for. Null unless both punches matched — one punch alone can't measure a
+   *  duration. */
   workedMinutes: number | null
 }
 
@@ -58,21 +44,20 @@ function minutesBetweenInstants(from: Date, to: Date): number {
   return Math.round((to.getTime() - from.getTime()) / 60_000)
 }
 
-/** Minutes the two instant ranges have in common — 0 when they don't touch. */
-function overlapMinutes(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): number {
-  const start = Math.max(aStart.getTime(), bStart.getTime())
-  const end = Math.min(aEnd.getTime(), bEnd.getTime())
-  return end <= start ? 0 : Math.round((end - start) / 60_000)
-}
-
 /**
  * The verdict for one already-matched work-date.
  *
- * Work counts as expected when a shift applied *and* the day classified as
- * 'workday' or 'swap_workday'. The other four CalendarDayStatus values
- * (weekly_off, holiday, leave, swap_dayoff) all mean nothing was scheduled —
- * this is the judgment resolveExpectedShiftWindows deliberately left to its
- * caller rather than baking in.
+ * Work counts as expected when the day owed any working minutes at all —
+ * expectedWorkMinutes > 0, which resolveExpectedShiftWindows has already
+ * worked out by carving the unpaid break and any approved leave out of the
+ * shift window. That single test covers every case uniformly: a day off owes
+ * nothing, full-day leave owes nothing, and a half-day leave still owes the
+ * half that wasn't taken.
+ *
+ * Lateness and early departure are measured against effectiveCheckInAt /
+ * effectiveCheckOutAt — when the employee was really due in and out — not the
+ * raw shift window. Someone on morning leave who arrives at 13:00 for a
+ * 13:00 restart is on time, not four hours late.
  *
  * Grace decides *whether* lateness counts, not how much of it: with a
  * 15-minute grace, arriving 20 minutes late records 20, not 5. That matches
@@ -82,8 +67,7 @@ function overlapMinutes(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): num
 export function computeAttendanceDay(day: MatchedAttendanceDay): AttendanceDayVerdict {
   const hasCheckIn = day.actualCheckInAt !== null
   const hasCheckOut = day.actualCheckOutAt !== null
-  const workExpected =
-    day.shiftId !== null && (day.status === 'workday' || day.status === 'swap_workday')
+  const workExpected = day.expectedWorkMinutes > 0
 
   if (!workExpected) {
     return {
@@ -98,61 +82,51 @@ export function computeAttendanceDay(day: MatchedAttendanceDay): AttendanceDayVe
     return { status: 'absent', lateMinutes: 0, earlyLeaveMinutes: 0, workedMinutes: null }
   }
 
-  // workExpected already guarantees a shift applied, so the expected instants
-  // are set — see ExpectedShiftWindow, where they're null exactly when
-  // shiftId is.
-  const expectedCheckIn = new Date(day.expectedCheckInAt!)
-  const expectedCheckOut = new Date(day.expectedCheckOutAt!)
+  // workExpected means at least one work interval survived, so the effective
+  // bounds are set — see ExpectedShiftWindow, where they're null exactly when
+  // nothing was owed.
+  const dueIn = new Date(day.effectiveCheckInAt!)
+  const dueOut = new Date(day.effectiveCheckOutAt!)
   const lateGrace = day.lateGraceMinutes ?? 0
   const earlyGrace = day.earlyLeaveGraceMinutes ?? 0
 
   let lateMinutes = 0
   if (day.actualCheckInAt !== null) {
     const actual = new Date(day.actualCheckInAt)
-    const allowedUntil = new Date(expectedCheckIn.getTime() + lateGrace * 60_000)
-    if (actual > allowedUntil) lateMinutes = minutesBetweenInstants(expectedCheckIn, actual)
+    const allowedUntil = new Date(dueIn.getTime() + lateGrace * 60_000)
+    if (actual > allowedUntil) lateMinutes = minutesBetweenInstants(dueIn, actual)
   }
 
   let earlyLeaveMinutes = 0
   if (day.actualCheckOutAt !== null) {
     const actual = new Date(day.actualCheckOutAt)
-    const allowedFrom = new Date(expectedCheckOut.getTime() - earlyGrace * 60_000)
-    if (actual < allowedFrom) earlyLeaveMinutes = minutesBetweenInstants(actual, expectedCheckOut)
+    const allowedFrom = new Date(dueOut.getTime() - earlyGrace * 60_000)
+    if (actual < allowedFrom) earlyLeaveMinutes = minutesBetweenInstants(actual, dueOut)
   }
 
   if (!hasCheckIn || !hasCheckOut) {
     return { status: 'incomplete', lateMinutes, earlyLeaveMinutes, workedMinutes: null }
   }
 
-  // Clamped to the shift: arriving early or staying late doesn't inflate the
-  // day's worked minutes, because that overhang is OT and gets priced by its
-  // own rate rather than counted here.
-  const clampedStart = new Date(
-    Math.max(new Date(day.actualCheckInAt!).getTime(), expectedCheckIn.getTime())
-  )
-  const clampedEnd = new Date(
-    Math.min(new Date(day.actualCheckOutAt!).getTime(), expectedCheckOut.getTime())
-  )
-  const spanMinutes = Math.max(0, minutesBetweenInstants(clampedStart, clampedEnd))
-
-  // Subtract only the part of the break the employee was actually present
-  // for: someone who left at 11:00 never reached a 12:00 break and shouldn't
-  // be docked for it.
-  let breakMinutes = 0
-  if (day.expectedBreakStartAt !== null && day.expectedBreakEndAt !== null && spanMinutes > 0) {
-    breakMinutes = overlapMinutes(
-      clampedStart,
-      clampedEnd,
-      new Date(day.expectedBreakStartAt),
-      new Date(day.expectedBreakEndAt)
-    )
+  // How much of what was owed the employee was actually there for: intersect
+  // their presence with the expected work intervals. Intersecting rather than
+  // clamping is what makes the break, a mid-shift hour of leave, and arriving
+  // early all fall out of the same line — none of them are inside an expected
+  // interval, so none of them count.
+  const presentFrom = new Date(day.actualCheckInAt!).getTime()
+  const presentTo = new Date(day.actualCheckOutAt!).getTime()
+  let workedMs = 0
+  for (const interval of day.expectedWorkIntervals) {
+    const start = Math.max(presentFrom, new Date(interval.startAt).getTime())
+    const end = Math.min(presentTo, new Date(interval.endAt).getTime())
+    if (end > start) workedMs += end - start
   }
 
   return {
     status: 'present',
     lateMinutes,
     earlyLeaveMinutes,
-    workedMinutes: Math.max(0, spanMinutes - breakMinutes),
+    workedMinutes: Math.round(workedMs / 60_000),
   }
 }
 
@@ -193,16 +167,20 @@ export async function recomputeAttendanceDaily(
       `INSERT INTO attendance_daily
          (employee_id, work_date, shift_id, day_status, attendance_status,
           expected_check_in_at, expected_check_out_at,
+          effective_check_in_at, effective_check_out_at,
           actual_check_in_at, actual_check_out_at,
           actual_check_in_event_id, actual_check_out_event_id,
-          late_minutes, early_leave_minutes, worked_minutes, is_overnight)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          late_minutes, early_leave_minutes, worked_minutes,
+          expected_work_minutes, leave_minutes, is_overnight)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
        ON CONFLICT (employee_id, work_date) DO UPDATE SET
          shift_id = EXCLUDED.shift_id,
          day_status = EXCLUDED.day_status,
          attendance_status = EXCLUDED.attendance_status,
          expected_check_in_at = EXCLUDED.expected_check_in_at,
          expected_check_out_at = EXCLUDED.expected_check_out_at,
+         effective_check_in_at = EXCLUDED.effective_check_in_at,
+         effective_check_out_at = EXCLUDED.effective_check_out_at,
          actual_check_in_at = EXCLUDED.actual_check_in_at,
          actual_check_out_at = EXCLUDED.actual_check_out_at,
          actual_check_in_event_id = EXCLUDED.actual_check_in_event_id,
@@ -210,6 +188,8 @@ export async function recomputeAttendanceDaily(
          late_minutes = EXCLUDED.late_minutes,
          early_leave_minutes = EXCLUDED.early_leave_minutes,
          worked_minutes = EXCLUDED.worked_minutes,
+         expected_work_minutes = EXCLUDED.expected_work_minutes,
+         leave_minutes = EXCLUDED.leave_minutes,
          is_overnight = EXCLUDED.is_overnight,
          computed_at = now(),
          updated_at = now()`,
@@ -221,6 +201,8 @@ export async function recomputeAttendanceDaily(
         verdict.status,
         day.expectedCheckInAt,
         day.expectedCheckOutAt,
+        day.effectiveCheckInAt,
+        day.effectiveCheckOutAt,
         day.actualCheckInAt,
         day.actualCheckOutAt,
         day.actualCheckInEventId,
@@ -228,10 +210,195 @@ export async function recomputeAttendanceDaily(
         verdict.lateMinutes,
         verdict.earlyLeaveMinutes,
         verdict.workedMinutes,
+        day.shiftId === null ? null : day.expectedWorkMinutes,
+        day.leaveMinutes,
         day.isOvernight,
       ]
     )
   }
 
   return matched.length
+}
+
+/* Reading it back -----------------------------------------------------------
+ * The admin report. Read-only by design: attendance_daily is derived, so there
+ * is no update path here — correcting a day means correcting what it derives
+ * from (a time correction, a shift change, an approved leave) and letting the
+ * job recompute.
+ */
+
+type AttendanceDailyRow = {
+  id: string
+  employee_id: string
+  employee_code: string
+  employee_name: string
+  work_date: string
+  shift_id: string | null
+  shift_code: string | null
+  shift_name: string | null
+  day_status: string
+  attendance_status: string
+  expected_check_in_at: string | null
+  expected_check_out_at: string | null
+  effective_check_in_at: string | null
+  effective_check_out_at: string | null
+  actual_check_in_at: string | null
+  actual_check_out_at: string | null
+  late_minutes: number
+  early_leave_minutes: number
+  worked_minutes: number | null
+  expected_work_minutes: number | null
+  leave_minutes: number
+  is_overnight: boolean
+  computed_at: string
+}
+
+const iso = (value: string | null): string | null => (value === null ? null : new Date(value).toISOString())
+
+function rowToAttendanceDailyItem(row: AttendanceDailyRow): AttendanceDailyItem {
+  return {
+    id: Number(row.id),
+    employeeId: Number(row.employee_id),
+    employeeCode: row.employee_code,
+    employeeName: row.employee_name,
+    workDate: row.work_date,
+    shiftId: row.shift_id === null ? null : Number(row.shift_id),
+    shiftCode: row.shift_code,
+    shiftName: row.shift_name,
+    dayStatus: row.day_status as CalendarDayStatus,
+    attendanceStatus: row.attendance_status as AttendanceDayStatus,
+    expectedCheckInAt: iso(row.expected_check_in_at),
+    expectedCheckOutAt: iso(row.expected_check_out_at),
+    effectiveCheckInAt: iso(row.effective_check_in_at),
+    effectiveCheckOutAt: iso(row.effective_check_out_at),
+    actualCheckInAt: iso(row.actual_check_in_at),
+    actualCheckOutAt: iso(row.actual_check_out_at),
+    lateMinutes: row.late_minutes,
+    earlyLeaveMinutes: row.early_leave_minutes,
+    workedMinutes: row.worked_minutes,
+    expectedWorkMinutes: row.expected_work_minutes,
+    leaveMinutes: row.leave_minutes,
+    isOvernight: row.is_overnight,
+    computedAt: new Date(row.computed_at).toISOString(),
+  }
+}
+
+/** SQL for one filter value. 'late'/'early_leave'/'leave' are minute-count
+ *  tests rather than statuses — see ATTENDANCE_DAILY_FILTERS. */
+const FILTER_SQL: Record<AttendanceDailyFilter, string> = {
+  present: `d.attendance_status = 'present'`,
+  late: `d.late_minutes > 0`,
+  early_leave: `d.early_leave_minutes > 0`,
+  leave: `d.leave_minutes > 0`,
+  absent: `d.attendance_status = 'absent'`,
+  incomplete: `d.attendance_status = 'incomplete'`,
+  day_off: `d.attendance_status = 'day_off'`,
+  unscheduled_work: `d.attendance_status = 'unscheduled_work'`,
+}
+
+export type AttendanceDailyFilterInput = {
+  /** Inclusive, 'YYYY-MM-DD'. */
+  fromDate?: string
+  toDate?: string
+  employeeId?: number
+  departmentId?: number
+  status?: AttendanceDailyFilter
+}
+
+/** How many rows one request will return. The summary is computed over the
+ *  whole filtered range regardless, so truncation never skews the figures. */
+const LIST_LIMIT = 1000
+
+export async function listAttendanceDaily(
+  filter: AttendanceDailyFilterInput,
+  db: Queryable = pool
+): Promise<{ days: AttendanceDailyItem[]; summary: AttendanceDailySummary; truncated: boolean }> {
+  const conditions: string[] = []
+  const params: unknown[] = []
+
+  if (filter.fromDate !== undefined) {
+    params.push(filter.fromDate)
+    conditions.push(`d.work_date >= $${params.length}::date`)
+  }
+  if (filter.toDate !== undefined) {
+    params.push(filter.toDate)
+    conditions.push(`d.work_date <= $${params.length}::date`)
+  }
+  if (filter.employeeId !== undefined) {
+    params.push(filter.employeeId)
+    conditions.push(`d.employee_id = $${params.length}`)
+  }
+  if (filter.departmentId !== undefined) {
+    params.push(filter.departmentId)
+    conditions.push(`ed.department_id = $${params.length}`)
+  }
+  if (filter.status !== undefined) {
+    conditions.push(FILTER_SQL[filter.status])
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+  // employment_details is joined unconditionally rather than only when
+  // filtering by department: it's a 1:1 table on employee_id, so it costs
+  // nothing, and branching the FROM clause on a filter is how the two shapes
+  // drift apart later.
+  const from = `
+    FROM attendance_daily d
+    JOIN employees e ON e.id = d.employee_id
+    JOIN employment_details ed ON ed.employee_id = d.employee_id
+    LEFT JOIN master_shifts ms ON ms.id = d.shift_id
+    ${where}`
+
+  const [listResult, summaryResult] = await Promise.all([
+    db.query<AttendanceDailyRow>(
+      `SELECT d.id, d.employee_id, e.employee_code,
+              (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name,
+              d.work_date, d.shift_id, ms.shift_code, ms.shift_name,
+              d.day_status, d.attendance_status,
+              d.expected_check_in_at, d.expected_check_out_at,
+              d.effective_check_in_at, d.effective_check_out_at,
+              d.actual_check_in_at, d.actual_check_out_at,
+              d.late_minutes, d.early_leave_minutes, d.worked_minutes,
+              d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.computed_at
+       ${from}
+       ORDER BY d.work_date DESC, e.employee_code
+       LIMIT ${LIST_LIMIT + 1}`,
+      params
+    ),
+    db.query<{
+      total: string
+      present: string
+      late: string
+      early_leave: string
+      absent: string
+      incomplete: string
+      last_computed_at: string | null
+    }>(
+      `SELECT count(*) AS total,
+              count(*) FILTER (WHERE d.attendance_status = 'present')     AS present,
+              count(*) FILTER (WHERE d.late_minutes > 0)                  AS late,
+              count(*) FILTER (WHERE d.early_leave_minutes > 0)           AS early_leave,
+              count(*) FILTER (WHERE d.attendance_status = 'absent')      AS absent,
+              count(*) FILTER (WHERE d.attendance_status = 'incomplete')  AS incomplete,
+              max(d.computed_at) AS last_computed_at
+       ${from}`,
+      params
+    ),
+  ])
+
+  const truncated = listResult.rows.length > LIST_LIMIT
+  const s = summaryResult.rows[0]
+
+  return {
+    days: listResult.rows.slice(0, LIST_LIMIT).map(rowToAttendanceDailyItem),
+    summary: {
+      total: Number(s?.total ?? 0),
+      present: Number(s?.present ?? 0),
+      late: Number(s?.late ?? 0),
+      earlyLeave: Number(s?.early_leave ?? 0),
+      absent: Number(s?.absent ?? 0),
+      incomplete: Number(s?.incomplete ?? 0),
+      lastComputedAt: s?.last_computed_at ? new Date(s.last_computed_at).toISOString() : null,
+    },
+    truncated,
+  }
 }

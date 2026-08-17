@@ -1,9 +1,12 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import {
+  ATTENDANCE_DAILY_FILTERS,
   ATTENDANCE_EVENT_TYPES,
   ROLES,
   type AttendanceClockResponse,
+  type AttendanceDailyFilter,
+  type AttendanceDailyListResponse,
   type AttendanceEventType,
   type AttendanceListResponse,
   type AttendanceStatusResponse,
@@ -20,6 +23,7 @@ import {
   rowToAttendanceEvent,
   type AttendanceRow,
 } from '../attendanceQueries.js'
+import { listAttendanceDaily } from '../attendanceDailyQueries.js'
 
 export const attendanceRouter = Router()
 
@@ -240,6 +244,43 @@ attendanceRouter.get('/attendance', canReadAdmin, async (req: Request, res: Resp
       ...(toDate !== null && { toDate }),
     })
     const body: AttendanceListResponse = { events }
+    res.json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
+
+// The computed daily report. Read-only: attendance_daily is derived data
+// rebuilt by the attendance:compute job, so there is deliberately no write
+// route here — a wrong day is fixed by correcting its source (a time
+// correction, a shift change, an approved leave), not by editing the report.
+attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res: Response) => {
+  const employeeId = parseOptionalId(req.query['employeeId'])
+  if (employeeId === undefined) return fail(res, 400, 'employeeId must be a positive integer')
+
+  const departmentId = parseOptionalId(req.query['departmentId'])
+  if (departmentId === undefined) return fail(res, 400, 'departmentId must be a positive integer')
+
+  const fromDate = parseOptionalDate(req.query['fromDate'])
+  if (fromDate === undefined) return fail(res, 400, 'fromDate must be YYYY-MM-DD')
+
+  const toDate = parseOptionalDate(req.query['toDate'])
+  if (toDate === undefined) return fail(res, 400, 'toDate must be YYYY-MM-DD')
+
+  const statusRaw = req.query['status']
+  if (statusRaw !== undefined && (typeof statusRaw !== 'string' || !ATTENDANCE_DAILY_FILTERS.includes(statusRaw as AttendanceDailyFilter))) {
+    return fail(res, 400, `status must be one of: ${ATTENDANCE_DAILY_FILTERS.join(', ')}`)
+  }
+
+  try {
+    const result = await listAttendanceDaily({
+      ...(employeeId !== null && { employeeId }),
+      ...(departmentId !== null && { departmentId }),
+      ...(fromDate !== null && { fromDate }),
+      ...(toDate !== null && { toDate }),
+      ...(statusRaw !== undefined && { status: statusRaw as AttendanceDailyFilter }),
+    })
+    const body: AttendanceDailyListResponse = result
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)

@@ -21,6 +21,7 @@ import type { CalendarDayStatus } from '@hrm/shared'
 import { pool } from './db.js'
 import { addDays } from './shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from './calendarQueries.js'
+import { isWorkday, parseDateOnlyUtc, toDateOnlyString } from './leaveRequestQueries.js'
 
 type Queryable = Pick<pg.Pool, 'query'>
 
@@ -48,24 +49,111 @@ export function computeShiftWindow(
   return { checkInAt, checkOutAt, isOvernight }
 }
 
-/** The break as real instants, anchored to whichever calendar day places it
- *  inside the shift. A break stated as 02:00-03:00 belongs to the *next*
- *  calendar day when the shift itself started at 22:00 the evening before,
- *  so a break landing before the shift's own start is pushed forward a day.
- *  Only one wrap is ever needed: routes/shifts.ts rejects a break whose end
- *  is not after its start, so a break never crosses midnight on its own. */
+/** A wall-clock range stated against a work-date, resolved to real instants
+ *  and anchored to whichever calendar day places it inside the shift. A range
+ *  stated as 02:00-03:00 belongs to the *next* calendar day when the shift
+ *  itself started at 22:00 the evening before, so a range landing before the
+ *  shift's own start is pushed forward a day. Only one wrap is ever needed:
+ *  neither a break nor a partial leave is allowed to cross midnight on its
+ *  own (routes/shifts.ts and the leave form both enforce start < end). */
+function anchorRangeToShift(
+  workDate: string,
+  startTime: string,
+  endTime: string,
+  shiftCheckInAt: Date
+): { startAt: Date; endAt: Date } {
+  const sameDayStart = thailandDateTime(workDate, startTime)
+  const date = sameDayStart < shiftCheckInAt ? addDays(workDate, 1) : workDate
+  return { startAt: thailandDateTime(date, startTime), endAt: thailandDateTime(date, endTime) }
+}
+
+/** The shift's unpaid break as real instants — see anchorRangeToShift for the
+ *  which-calendar-day rule. */
 export function computeBreakWindow(
   workDate: string,
   breakStartTime: string,
   breakEndTime: string,
   shiftCheckInAt: Date
 ): { breakStartAt: Date; breakEndAt: Date } {
-  const sameDayStart = thailandDateTime(workDate, breakStartTime)
-  const breakDate = sameDayStart < shiftCheckInAt ? addDays(workDate, 1) : workDate
-  return {
-    breakStartAt: thailandDateTime(breakDate, breakStartTime),
-    breakEndAt: thailandDateTime(breakDate, breakEndTime),
+  const { startAt, endAt } = anchorRangeToShift(workDate, breakStartTime, breakEndTime, shiftCheckInAt)
+  return { breakStartAt: startAt, breakEndAt: endAt }
+}
+
+/** Half-open interval of epoch milliseconds. */
+type Interval = { start: number; end: number }
+
+/** `base` with every part that overlaps any of `cuts` removed, in order. One
+ *  cut can split one base interval in two — an hour of leave in the middle of
+ *  a shift leaves work expected on both sides of it — so this returns a list
+ *  rather than a narrowed pair. */
+function subtractIntervals(base: Interval[], cuts: Interval[]): Interval[] {
+  let remaining = base.filter((i) => i.end > i.start)
+  for (const cut of cuts) {
+    if (cut.end <= cut.start) continue
+    const next: Interval[] = []
+    for (const piece of remaining) {
+      if (cut.end <= piece.start || cut.start >= piece.end) {
+        next.push(piece) // no overlap
+        continue
+      }
+      if (cut.start > piece.start) next.push({ start: piece.start, end: cut.start })
+      if (cut.end < piece.end) next.push({ start: cut.end, end: piece.end })
+    }
+    remaining = next
   }
+  return remaining
+}
+
+function totalMinutes(intervals: Interval[]): number {
+  return Math.round(intervals.reduce((sum, i) => sum + (i.end - i.start), 0) / 60_000)
+}
+
+/** One approved leave covering some part of a date. `startTime`/`endTime` are
+ *  null for a plain full-day leave, and set to an exact clock range for a
+ *  half-day or hourly one — see leave_requests' migration comment. */
+type LeaveOnDate = { startTime: string | null; endTime: string | null }
+
+/**
+ * Approved leave overlapping [minDate, maxDate], grouped by calendar date.
+ *
+ * This deliberately re-queries leave_requests rather than reading it off
+ * buildCalendarDaysForDates: that function collapses a leave to a single
+ * `status = 'leave'` on the whole day and drops start_time/end_time, which is
+ * all the calendar UI needs but loses exactly the information a half-day
+ * leave turns on. Widening the shared CalendarDay contract for one consumer
+ * would be the bigger change.
+ */
+async function loadLeaveByDate(
+  employeeId: number,
+  minDate: string,
+  maxDate: string,
+  db: Queryable
+): Promise<Map<string, LeaveOnDate[]>> {
+  const { rows } = await db.query<{
+    start_date: string
+    end_date: string
+    start_time: string | null
+    end_time: string | null
+  }>(
+    `SELECT start_date, end_date, start_time, end_time
+     FROM leave_requests
+     WHERE employee_id = $1 AND status = 'approved'
+       AND start_date <= $3 AND end_date >= $2`,
+    [employeeId, minDate, maxDate]
+  )
+
+  const byDate = new Map<string, LeaveOnDate[]>()
+  for (const row of rows) {
+    const from = row.start_date < minDate ? minDate : row.start_date
+    const to = row.end_date > maxDate ? maxDate : row.end_date
+    for (let d = parseDateOnlyUtc(from); toDateOnlyString(d) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+      const key = toDateOnlyString(d)
+      const list = byDate.get(key) ?? []
+      list.push({ startTime: row.start_time, endTime: row.end_time })
+      byDate.set(key, list)
+    }
+  }
+  return byDate
 }
 
 /** One employee's expected attendance for one work-date. status/label/shiftId
@@ -85,6 +173,28 @@ export type ExpectedShiftWindow = {
    *  when the shift simply has no break configured. */
   expectedBreakStartAt: string | null
   expectedBreakEndAt: string | null
+  /**
+   * When work was actually owed, once the unpaid break and any approved leave
+   * are carved out of the shift window. Empty when nothing was owed at all (a
+   * day off, a holiday, full-day leave, or no shift assigned).
+   *
+   * A list rather than a single range because an hour of leave taken in the
+   * middle of a shift leaves work owed on both sides of it.
+   */
+  expectedWorkIntervals: { startAt: string; endAt: string }[]
+  /** Total minutes across expectedWorkIntervals. 0 when nothing was owed. */
+  expectedWorkMinutes: number
+  /** Working minutes excused by approved leave — i.e. minutes that would have
+   *  been owed had the leave not been approved. Break time is never counted
+   *  here, since it was never work in the first place. */
+  leaveMinutes: number
+  /** First/last instant of expectedWorkIntervals: when the employee was
+   *  actually due in and due out. Equal to expectedCheckInAt/OutAt on an
+   *  ordinary day, later/earlier on a partial-leave day, and both null when
+   *  no work was owed. These — not the raw shift window — are what lateness
+   *  and early departure are measured against. */
+  effectiveCheckInAt: string | null
+  effectiveCheckOutAt: string | null
   isOvernight: boolean
   /** Null exactly when shiftId is null. */
   lateGraceMinutes: number | null
@@ -98,6 +208,10 @@ type ShiftPolicy = {
   earlyLeaveGraceMinutes: number
   breakStartTime: string | null
   breakEndTime: string | null
+  /** Bitmask over the 7 ISO weekdays — needed to tell a partial leave taken
+   *  on a real workday from one stacked on a day the employee was already
+   *  off, since CalendarDayStatus collapses both to 'leave'. */
+  workdays: number
 }
 
 async function loadShiftPolicy(
@@ -113,8 +227,10 @@ async function loadShiftPolicy(
     early_leave_grace_minutes: number
     break_start_time: string | null
     break_end_time: string | null
+    workdays: number
   }>(
-    `SELECT id, late_grace_minutes, early_leave_grace_minutes, break_start_time, break_end_time
+    `SELECT id, late_grace_minutes, early_leave_grace_minutes,
+            break_start_time, break_end_time, workdays
      FROM master_shifts WHERE id = ANY($1)`,
     [shiftIds]
   )
@@ -124,6 +240,7 @@ async function loadShiftPolicy(
       earlyLeaveGraceMinutes: row.early_leave_grace_minutes,
       breakStartTime: row.break_start_time,
       breakEndTime: row.break_end_time,
+      workdays: row.workdays,
     })
   }
   return result
@@ -143,7 +260,11 @@ export async function resolveExpectedShiftWindows(
   const calendarDays = await buildCalendarDaysForDates(employeeId, dates, db)
 
   const shiftIds = [...new Set(calendarDays.map((d) => d.shiftId).filter((id): id is number => id !== null))]
-  const policyByShiftId = await loadShiftPolicy(shiftIds, db)
+  const sorted = [...dates].sort()
+  const [policyByShiftId, leaveByDate] = await Promise.all([
+    loadShiftPolicy(shiftIds, db),
+    loadLeaveByDate(employeeId, sorted[0]!, sorted[sorted.length - 1]!, db),
+  ])
 
   return calendarDays.map((day) => {
     if (day.shiftId === null || day.shiftStartTime === null || day.shiftEndTime === null) {
@@ -156,6 +277,11 @@ export async function resolveExpectedShiftWindows(
         expectedCheckOutAt: null,
         expectedBreakStartAt: null,
         expectedBreakEndAt: null,
+        expectedWorkIntervals: [],
+        expectedWorkMinutes: 0,
+        leaveMinutes: 0,
+        effectiveCheckInAt: null,
+        effectiveCheckOutAt: null,
         isOvernight: false,
         lateGraceMinutes: null,
         earlyLeaveGraceMinutes: null,
@@ -173,6 +299,52 @@ export async function resolveExpectedShiftWindows(
         ? computeBreakWindow(day.date, policy.breakStartTime, policy.breakEndTime, checkInAt)
         : null
 
+    // Which days carry a work expectation at all. 'leave' is included because
+    // a *partial* leave still owes the rest of the shift — how much survives
+    // is decided below by subtracting the leave itself. weekly_off, holiday
+    // and swap_dayoff owe nothing regardless of what was punched.
+    const scheduled =
+      day.status === 'workday' ||
+      day.status === 'swap_workday' ||
+      // A leave only owes anything if the underlying day was a workday to
+      // begin with: CalendarDayStatus ranks leave above weekly_off, so this
+      // is the only way to tell "half day off on a Tuesday" from "leave
+      // recorded against a Sunday".
+      (day.status === 'leave' &&
+        policy !== undefined &&
+        isWorkday(parseDateOnlyUtc(day.date), policy.workdays))
+
+    const cuts: Interval[] = []
+    if (breakWindow) {
+      cuts.push({ start: breakWindow.breakStartAt.getTime(), end: breakWindow.breakEndAt.getTime() })
+    }
+    for (const leave of leaveByDate.get(day.date) ?? []) {
+      if (leave.startTime === null || leave.endTime === null) {
+        // Full-day leave: no clock range recorded, so it takes the whole shift.
+        cuts.push({ start: checkInAt.getTime(), end: checkOutAt.getTime() })
+      } else {
+        const { startAt, endAt } = anchorRangeToShift(day.date, leave.startTime, leave.endTime, checkInAt)
+        cuts.push({ start: startAt.getTime(), end: endAt.getTime() })
+      }
+    }
+
+    const shiftWindow: Interval[] = scheduled
+      ? [{ start: checkInAt.getTime(), end: checkOutAt.getTime() }]
+      : []
+    const breakOnly = breakWindow
+      ? [{ start: breakWindow.breakStartAt.getTime(), end: breakWindow.breakEndAt.getTime() }]
+      : []
+
+    const expectedWorkIntervals = subtractIntervals(shiftWindow, cuts)
+    const expectedWorkMinutes = totalMinutes(expectedWorkIntervals)
+    // What the shift would have owed with no leave at all, minus what it
+    // still owes — so break time never counts as leave, having never been
+    // work to begin with.
+    const leaveMinutes = totalMinutes(subtractIntervals(shiftWindow, breakOnly)) - expectedWorkMinutes
+
+    const first = expectedWorkIntervals[0]
+    const last = expectedWorkIntervals[expectedWorkIntervals.length - 1]
+
     return {
       workDate: day.date,
       status: day.status,
@@ -182,6 +354,14 @@ export async function resolveExpectedShiftWindows(
       expectedCheckOutAt: checkOutAt.toISOString(),
       expectedBreakStartAt: breakWindow ? breakWindow.breakStartAt.toISOString() : null,
       expectedBreakEndAt: breakWindow ? breakWindow.breakEndAt.toISOString() : null,
+      expectedWorkIntervals: expectedWorkIntervals.map((i) => ({
+        startAt: new Date(i.start).toISOString(),
+        endAt: new Date(i.end).toISOString(),
+      })),
+      expectedWorkMinutes,
+      leaveMinutes,
+      effectiveCheckInAt: first ? new Date(first.start).toISOString() : null,
+      effectiveCheckOutAt: last ? new Date(last.end).toISOString() : null,
       isOvernight,
       lateGraceMinutes: policy?.lateGraceMinutes ?? 0,
       earlyLeaveGraceMinutes: policy?.earlyLeaveGraceMinutes ?? 0,
