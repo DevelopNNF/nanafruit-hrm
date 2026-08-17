@@ -48,6 +48,26 @@ export function computeShiftWindow(
   return { checkInAt, checkOutAt, isOvernight }
 }
 
+/** The break as real instants, anchored to whichever calendar day places it
+ *  inside the shift. A break stated as 02:00-03:00 belongs to the *next*
+ *  calendar day when the shift itself started at 22:00 the evening before,
+ *  so a break landing before the shift's own start is pushed forward a day.
+ *  Only one wrap is ever needed: routes/shifts.ts rejects a break whose end
+ *  is not after its start, so a break never crosses midnight on its own. */
+export function computeBreakWindow(
+  workDate: string,
+  breakStartTime: string,
+  breakEndTime: string,
+  shiftCheckInAt: Date
+): { breakStartAt: Date; breakEndAt: Date } {
+  const sameDayStart = thailandDateTime(workDate, breakStartTime)
+  const breakDate = sameDayStart < shiftCheckInAt ? addDays(workDate, 1) : workDate
+  return {
+    breakStartAt: thailandDateTime(breakDate, breakStartTime),
+    breakEndAt: thailandDateTime(breakDate, breakEndTime),
+  }
+}
+
 /** One employee's expected attendance for one work-date. status/label/shiftId
  *  carry through buildCalendarDaysForDates unchanged — this module only adds
  *  the computed window and grace minutes on top, and deliberately leaves the
@@ -61,28 +81,50 @@ export type ExpectedShiftWindow = {
   /** ISO 8601, UTC. Null exactly when shiftId is null. */
   expectedCheckInAt: string | null
   expectedCheckOutAt: string | null
+  /** ISO 8601, UTC. Both null together — null when shiftId is null, and also
+   *  when the shift simply has no break configured. */
+  expectedBreakStartAt: string | null
+  expectedBreakEndAt: string | null
   isOvernight: boolean
   /** Null exactly when shiftId is null. */
   lateGraceMinutes: number | null
   earlyLeaveGraceMinutes: number | null
 }
 
-async function loadGraceMinutes(
+/** The per-shift bits of master_shifts that CalendarDay doesn't carry but
+ *  matching and the daily verdict both need. Keyed by shift id. */
+type ShiftPolicy = {
+  lateGraceMinutes: number
+  earlyLeaveGraceMinutes: number
+  breakStartTime: string | null
+  breakEndTime: string | null
+}
+
+async function loadShiftPolicy(
   shiftIds: number[],
   db: Queryable
-): Promise<Map<number, { late: number; early: number }>> {
-  const result = new Map<number, { late: number; early: number }>()
+): Promise<Map<number, ShiftPolicy>> {
+  const result = new Map<number, ShiftPolicy>()
   if (shiftIds.length === 0) return result
 
   const { rows } = await db.query<{
     id: string
     late_grace_minutes: number
     early_leave_grace_minutes: number
-  }>(`SELECT id, late_grace_minutes, early_leave_grace_minutes FROM master_shifts WHERE id = ANY($1)`, [
-    shiftIds,
-  ])
+    break_start_time: string | null
+    break_end_time: string | null
+  }>(
+    `SELECT id, late_grace_minutes, early_leave_grace_minutes, break_start_time, break_end_time
+     FROM master_shifts WHERE id = ANY($1)`,
+    [shiftIds]
+  )
   for (const row of rows) {
-    result.set(Number(row.id), { late: row.late_grace_minutes, early: row.early_leave_grace_minutes })
+    result.set(Number(row.id), {
+      lateGraceMinutes: row.late_grace_minutes,
+      earlyLeaveGraceMinutes: row.early_leave_grace_minutes,
+      breakStartTime: row.break_start_time,
+      breakEndTime: row.break_end_time,
+    })
   }
   return result
 }
@@ -101,7 +143,7 @@ export async function resolveExpectedShiftWindows(
   const calendarDays = await buildCalendarDaysForDates(employeeId, dates, db)
 
   const shiftIds = [...new Set(calendarDays.map((d) => d.shiftId).filter((id): id is number => id !== null))]
-  const graceByShiftId = await loadGraceMinutes(shiftIds, db)
+  const policyByShiftId = await loadShiftPolicy(shiftIds, db)
 
   return calendarDays.map((day) => {
     if (day.shiftId === null || day.shiftStartTime === null || day.shiftEndTime === null) {
@@ -112,6 +154,8 @@ export async function resolveExpectedShiftWindows(
         shiftName: null,
         expectedCheckInAt: null,
         expectedCheckOutAt: null,
+        expectedBreakStartAt: null,
+        expectedBreakEndAt: null,
         isOvernight: false,
         lateGraceMinutes: null,
         earlyLeaveGraceMinutes: null,
@@ -123,7 +167,11 @@ export async function resolveExpectedShiftWindows(
       day.shiftStartTime,
       day.shiftEndTime
     )
-    const grace = graceByShiftId.get(day.shiftId) ?? { late: 0, early: 0 }
+    const policy = policyByShiftId.get(day.shiftId)
+    const breakWindow =
+      policy?.breakStartTime && policy.breakEndTime
+        ? computeBreakWindow(day.date, policy.breakStartTime, policy.breakEndTime, checkInAt)
+        : null
 
     return {
       workDate: day.date,
@@ -132,9 +180,11 @@ export async function resolveExpectedShiftWindows(
       shiftName: day.shiftName,
       expectedCheckInAt: checkInAt.toISOString(),
       expectedCheckOutAt: checkOutAt.toISOString(),
+      expectedBreakStartAt: breakWindow ? breakWindow.breakStartAt.toISOString() : null,
+      expectedBreakEndAt: breakWindow ? breakWindow.breakEndAt.toISOString() : null,
       isOvernight,
-      lateGraceMinutes: grace.late,
-      earlyLeaveGraceMinutes: grace.early,
+      lateGraceMinutes: policy?.lateGraceMinutes ?? 0,
+      earlyLeaveGraceMinutes: policy?.earlyLeaveGraceMinutes ?? 0,
     }
   })
 }
