@@ -19,6 +19,7 @@ import { leaveBalancesRouter } from './routes/leaveBalances.js'
 import { leaveRequestsRouter } from './routes/leaveRequests.js'
 import { shiftChangeRequestsRouter } from './routes/shiftChangeRequests.js'
 import { dayOffSwapRequestsRouter } from './routes/dayOffSwapRequests.js'
+import { overtimeRequestsRouter } from './routes/overtimeRequests.js'
 import { calendarRouter } from './routes/calendar.js'
 import { meRouter } from './routes/me.js'
 import { authRouter } from './routes/auth.js'
@@ -89,6 +90,7 @@ app.use('/api', authenticate, leaveBalancesRouter)
 app.use('/api', authenticate, leaveRequestsRouter)
 app.use('/api', authenticate, shiftChangeRequestsRouter)
 app.use('/api', authenticate, dayOffSwapRequestsRouter)
+app.use('/api', authenticate, overtimeRequestsRouter)
 app.use('/api', authenticate, calendarRouter)
 
 const port = Number(process.env.PORT) || 3000

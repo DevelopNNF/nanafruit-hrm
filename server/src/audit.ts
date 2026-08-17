@@ -63,6 +63,11 @@ export type AuditAction =
   | 'day_off_swap_request.cancel'
   | 'day_off_swap_request.approve'
   | 'day_off_swap_request.reject'
+  | 'overtime_request.create'
+  | 'overtime_request.update'
+  | 'overtime_request.cancel'
+  | 'overtime_request.approve'
+  | 'overtime_request.reject'
 
 type Entry = {
   actor: AuthUser

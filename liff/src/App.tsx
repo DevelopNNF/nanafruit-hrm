@@ -6,6 +6,7 @@ import { LeaveScreen } from './screens/LeaveScreen'
 import { TimeCorrectionScreen } from './screens/TimeCorrectionScreen'
 import { ShiftChangeRequestScreen } from './screens/ShiftChangeRequestScreen'
 import { DayOffSwapRequestScreen } from './screens/DayOffSwapRequestScreen'
+import { OvertimeRequestScreen } from './screens/OvertimeRequestScreen'
 import { ProfileScreen } from './screens/ProfileScreen'
 import { CalendarScreen } from './screens/CalendarScreen'
 import './App.css'
@@ -47,6 +48,7 @@ function EmployeeHome({ employee }: { employee: Employee }) {
   if (screen === 'correction') return <TimeCorrectionScreen onBack={back} />
   if (screen === 'shiftChange') return <ShiftChangeRequestScreen onBack={back} />
   if (screen === 'dayOffSwap') return <DayOffSwapRequestScreen onBack={back} />
+  if (screen === 'overtime') return <OvertimeRequestScreen onBack={back} />
   if (screen === 'profile') return <ProfileScreen employee={employee} onBack={back} />
   if (screen === 'calendar') return <CalendarScreen onBack={back} />
   return <HomeScreen onNavigate={navigate} />

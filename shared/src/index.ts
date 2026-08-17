@@ -1355,6 +1355,225 @@ export type CalendarDay = {
 /** GET /api/calendar/me?year=YYYY&month=MM — one calendar month, in date order. */
 export type MonthCalendarResponse = { days: CalendarDay[] }
 
+/* Overtime Requests ------------------------------------------------------
+ *
+ * The employee-initiated "ขอทำงานล่วงเวลา" request: a time range on one date
+ * that the employee wants paid as OT. Same four-state
+ * pending/approved/rejected/cancelled decision-workflow shape as
+ * DayOffSwapRequest, editable by the employee (PUT) any number of times
+ * before it's decided, and — like it — approval writes nothing into any
+ * other ledger: an approved row here *is* the record, and the (not-yet-built)
+ * OT calculation reads it directly.
+ *
+ * Two things are deliberately unlike its siblings:
+ *
+ * - An employee may hold SEVERAL live requests for one date, unlike
+ *   ShiftChangeRequest's one-per-date rule. Real OT comes in more than one
+ *   block a day (before the shift and after it), so what conflicts is an
+ *   overlapping *time range*, not a repeated date.
+ * - The requested range must fall entirely OUTSIDE normal working hours.
+ *   Hours inside the shift are already ordinary paid time, so a range that
+ *   straddles the shift is rejected rather than silently trimmed — see
+ *   findOvertimeShiftConflict.
+ */
+
+export const OVERTIME_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
+export type OvertimeRequestStatus = (typeof OVERTIME_REQUEST_STATUSES)[number]
+
+/** How far back an OT request may be dated. OT is unlike a shift change,
+ *  which can never be backdated at all: some of it is planned ahead and some
+ *  of it was worked last night and only written up afterwards. The window is
+ *  bounded rather than open so a forgotten request can still be filed, but
+ *  not one from a payroll period that has already closed. */
+export const OVERTIME_BACKDATE_LIMIT_DAYS = 7
+
+/** Bounds on one request's length. The floor keeps "I stayed five minutes
+ *  late" out of the approval queue; the ceiling is a typo guard — 12 hours of
+ *  OT in one block is already extreme, and anything longer is far more likely
+ *  to be a mis-entered AM/PM than a real shift. */
+export const OVERTIME_MIN_MINUTES = 15
+export const OVERTIME_MAX_MINUTES = 720
+
+/** A row in overtime_requests. The dayStatus, shift and overtimeGroup fields
+ *  are snapshots taken at submission time, not live joins: employment_details
+ *  keeps no history of which OT group an employee belonged to, so without a
+ *  snapshot a later group change would silently reprice OT that was already
+ *  approved. */
+export type OvertimeRequest = {
+  id: number
+  employeeId: number
+  /** Calendar date, `YYYY-MM-DD`. Anchors the request to the day the OT
+   *  *starts*, the same convention attendance_daily.work_date uses for an
+   *  overnight shift. */
+  otDate: string
+  /** Wall-clock 'HH:MM:SS', same as master_shifts' own columns. */
+  startTime: string
+  /** Wall-clock 'HH:MM:SS'. Less than or equal to startTime means the range
+   *  ends the following calendar day — same convention as
+   *  master_shifts.shift_end_time. */
+  endTime: string
+  /** Server-computed length of [startTime, endTime). Never taken from the
+   *  client, which computes its own copy only to show the employee a running
+   *  total while they fill the form. */
+  requestedMinutes: number
+  /** Derived from startTime/endTime, not stored — for display only. */
+  crossesMidnight: boolean
+  /** How the calendar classified otDate at submission time. */
+  dayStatus: CalendarDayStatus
+  /** The holiday/leave name behind dayStatus, when it has one. */
+  dayLabel: string | null
+  /** The shift in effect on otDate at submission time. Null exactly when the
+   *  employee had no shift assigned that day. */
+  shiftId: number | null
+  shiftName: string | null
+  /** Wall-clock 'HH:MM:SS'. Null exactly when shiftId is null. */
+  shiftStartTime: string | null
+  shiftEndTime: string | null
+  /** The employee's OT group at submission time — which rate schedule prices
+   *  this request. Never null: a request cannot be submitted without one. */
+  overtimeGroupId: number
+  overtimeGroupName: string
+  reason: string
+  status: OvertimeRequestStatus
+  /** The admin's display name at decision time. Null while pending/cancelled. */
+  decidedByName: string | null
+  /** ISO 8601. Null while pending/cancelled. */
+  decidedAt: string | null
+  /** Required when status is 'rejected', null otherwise. */
+  decisionReason: string | null
+  /** ISO 8601. */
+  createdAt: string
+  /** ISO 8601. Bumped on every edit while pending. */
+  updatedAt: string
+}
+
+/** A request as admin/ sees it: the employee joined in for display, same
+ *  shape as DayOffSwapRequestListItem. */
+export type OvertimeRequestListItem = OvertimeRequest & {
+  employeeCode: string
+  employeeName: string
+}
+
+/** Body of POST /api/overtime-requests and PUT /api/overtime-requests/:id —
+ *  same shape for both: an edit while pending replaces the whole request
+ *  rather than patching one field. employeeId is not an input — the server
+ *  derives it from the caller's employee session. Neither are the requested
+ *  minutes or any of the snapshots: the server computes and resolves all of
+ *  them, so a client cannot claim hours it did not ask for. Times are
+ *  'HH:MM' or 'HH:MM:SS'. */
+export type OvertimeRequestInput = {
+  otDate: string
+  startTime: string
+  endTime: string
+  reason: string
+}
+
+/** POST /api/overtime-requests, PUT /api/overtime-requests/:id */
+export type OvertimeRequestResponse = { request: OvertimeRequest }
+
+/** GET /api/overtime-requests/me — an employee's own requests, no employee
+ *  join needed since it's implicitly them. */
+export type OvertimeRequestMineResponse = { requests: OvertimeRequest[] }
+
+/** GET /api/overtime-requests */
+export type OvertimeRequestListResponse = { requests: OvertimeRequestListItem[] }
+
+/** GET /api/overtime-requests/:id, POST .../approve, POST .../reject */
+export type OvertimeRequestDetailResponse = { request: OvertimeRequestListItem }
+
+/** Body of POST /api/overtime-requests/:id/reject — a reason is required
+ *  every time, never optional. */
+export type OvertimeRequestRejectRequest = { reason: string }
+
+/* Overtime time arithmetic ------------------------------------------------
+ * Lives in shared/ rather than server/ because liff/ has to show the
+ * employee the same numbers the server is about to compute. Two
+ * implementations of "does 23:00-01:00 cross midnight" would drift on
+ * exactly the cases that matter least often and cost the most.
+ */
+
+/** Minutes since midnight for a wall-clock 'HH:MM' or 'HH:MM:SS', or null if
+ *  it is neither. Seconds are floored away: nothing in this app schedules to
+ *  the second, and master_shifts' own times are always whole minutes. */
+export function parseWallClockMinutes(value: string): number | null {
+  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value)
+  if (!match) return null
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (hours > 23 || minutes > 59) return null
+  return hours * 60 + minutes
+}
+
+/** Length of [startTime, endTime) in minutes, where an end at or before the
+ *  start means the range runs into the following day (22:00-02:00 = 240).
+ *  Returns null if either time is unparseable. */
+export function computeOvertimeMinutes(startTime: string, endTime: string): number | null {
+  const start = parseWallClockMinutes(startTime)
+  const end = parseWallClockMinutes(endTime)
+  if (start === null || end === null) return null
+  return end <= start ? end + 1440 - start : end - start
+}
+
+/** True when the range ends on the calendar day after it started. */
+export function overtimeCrossesMidnight(startTime: string, endTime: string): boolean {
+  const start = parseWallClockMinutes(startTime)
+  const end = parseWallClockMinutes(endTime)
+  return start !== null && end !== null && end <= start
+}
+
+/** Whole days from `from` to `to`, both 'YYYY-MM-DD'. */
+function dayOffsetBetween(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`)
+  const b = Date.parse(`${to}T00:00:00Z`)
+  return Math.round((b - a) / 86_400_000)
+}
+
+/**
+ * The first calendar day whose normal working hours overlap the requested OT
+ * range, or null if the range is clear of all of them.
+ *
+ * `days` should hold otDate and BOTH its neighbours, not otDate alone. A
+ * 22:00-06:00 shift starting the 14th occupies the morning of the 15th, so a
+ * request dated the 15th for 05:00-07:00 overlaps a shift belonging to a
+ * different work_date; symmetrically, a request that crosses midnight can run
+ * into the next day's shift. Checking one day would miss both.
+ *
+ * Days the employee does not normally work are skipped rather than checked:
+ * on a holiday or a weekly off there are no ordinary paid hours for OT to
+ * collide with, so the whole day is open. Same for a day with no shift
+ * assigned at all.
+ */
+export function findOvertimeShiftConflict(
+  otDate: string,
+  startTime: string,
+  endTime: string,
+  days: CalendarDay[]
+): CalendarDay | null {
+  const start = parseWallClockMinutes(startTime)
+  const minutes = computeOvertimeMinutes(startTime, endTime)
+  if (start === null || minutes === null) return null
+  const end = start + minutes
+
+  for (const day of days) {
+    if (day.status !== 'workday' && day.status !== 'swap_workday') continue
+    if (day.shiftStartTime === null || day.shiftEndTime === null) continue
+
+    const offset = dayOffsetBetween(otDate, day.date)
+    if (offset < -1 || offset > 1) continue
+
+    const shiftStart = parseWallClockMinutes(day.shiftStartTime)
+    const shiftLength = computeOvertimeMinutes(day.shiftStartTime, day.shiftEndTime)
+    if (shiftStart === null || shiftLength === null) continue
+
+    const windowStart = offset * 1440 + shiftStart
+    const windowEnd = windowStart + shiftLength
+
+    if (start < windowEnd && windowStart < end) return day
+  }
+
+  return null
+}
+
 /* Health ------------------------------------------------------------------ */
 
 /** GET /api/health */

@@ -59,6 +59,7 @@ const NAV: NavItem[] = [
       { to: '/time-corrections', label: 'คำขอแก้ไขเวลา'},
       { to: '/shift-change-requests', label: 'คำขอเปลี่ยนกะ'},
       { to: '/day-off-swap-requests', label: 'คำขอสลับวันหยุด'},
+      { to: '/overtime-requests', label: 'คำขอทำงานล่วงเวลา (OT)'},
     ],
   },
   {

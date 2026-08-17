@@ -31,6 +31,8 @@ import { LeaveRequestListPage } from './pages/leave_requests/LeaveRequestListPag
 import { LeaveRequestDetailPage } from './pages/leave_requests/LeaveRequestDetailPage'
 import { ShiftChangeRequestListPage } from './pages/shift_change_requests/ShiftChangeRequestListPage'
 import { ShiftChangeRequestDetailPage } from './pages/shift_change_requests/ShiftChangeRequestDetailPage'
+import { OvertimeRequestListPage } from './pages/overtime_requests/OvertimeRequestListPage'
+import { OvertimeRequestDetailPage } from './pages/overtime_requests/OvertimeRequestDetailPage'
 import { DayOffSwapRequestListPage } from './pages/day_off_swap_requests/DayOffSwapRequestListPage'
 import { DayOffSwapRequestDetailPage } from './pages/day_off_swap_requests/DayOffSwapRequestDetailPage'
 import { HealthPage } from './pages/HealthPage'
@@ -99,6 +101,8 @@ const router = createBrowserRouter([
       { path: 'leave-requests/:id', element: <LeaveRequestDetailPage /> },
       { path: 'shift-change-requests', element: <ShiftChangeRequestListPage /> },
       { path: 'shift-change-requests/:id', element: <ShiftChangeRequestDetailPage /> },
+      { path: 'overtime-requests', element: <OvertimeRequestListPage /> },
+      { path: 'overtime-requests/:id', element: <OvertimeRequestDetailPage /> },
       { path: 'day-off-swap-requests', element: <DayOffSwapRequestListPage /> },
       { path: 'day-off-swap-requests/:id', element: <DayOffSwapRequestDetailPage /> },
       { path: 'leave-balances/bulk-grant', element: <LeaveBalanceBulkGrantPage /> },
