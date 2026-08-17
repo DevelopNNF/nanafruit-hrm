@@ -33,3 +33,20 @@ export const linkLimiter = rateLimit({
   legacyHeaders: false,
   message: { status: 'error', message: 'too many attempts — try again shortly' },
 })
+
+/**
+ * The cron endpoint, which is also answered before a token — it authenticates
+ * on a shared secret instead (see routes/cron.ts).
+ *
+ * A real scheduler fires a handful of times a day, so this is loose enough to
+ * never be felt and still turn a brute-force attempt on the key into something
+ * that would take longer than the universe. Runs are serialised by an advisory
+ * lock anyway, so the limit is about guessing, not about load.
+ */
+export const cronLimiter = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: 60,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { status: 'error', message: 'too many requests — try again shortly' },
+})

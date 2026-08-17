@@ -22,6 +22,7 @@ import { dayOffSwapRequestsRouter } from './routes/dayOffSwapRequests.js'
 import { calendarRouter } from './routes/calendar.js'
 import { meRouter } from './routes/me.js'
 import { authRouter } from './routes/auth.js'
+import { cronRouter } from './routes/cron.js'
 import { authenticate } from './auth/middleware.js'
 
 const app = express()
@@ -69,6 +70,10 @@ app.use(express.json())
 app.use('/api', healthRouter)
 app.use('/api', authRouter)
 app.use('/api', meRouter)
+// /api/cron is open to `authenticate` for a third reason: the caller is an
+// external scheduler with no Entra account and no LINE session, so it proves
+// itself with a shared secret the route checks itself. See routes/cron.ts.
+app.use('/api', cronRouter)
 app.use('/api', authenticate, employeesRouter)
 app.use('/api', authenticate, jobsRouter)
 app.use('/api', authenticate, departmentsRouter)
