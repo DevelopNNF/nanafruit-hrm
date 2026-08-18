@@ -25,6 +25,7 @@ import { OvertimeGroupFormPage } from './pages/masters/overtime_group/OvertimeGr
 import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
 import { AttendanceDailyListPage } from './pages/reports/AttendanceReport'
+import { OvertimeReport } from './pages/reports/OvertimeReport'
 import { TimeCorrectionListPage } from './pages/time_correction/TimeCorrectionListPage'
 import { TimeCorrectionDetailPage } from './pages/time_correction/TimeCorrectionDetailPage'
 import { LeaveRequestListPage } from './pages/leave_requests/LeaveRequestListPage'
@@ -127,6 +128,7 @@ const router = createBrowserRouter([
       { path: 'master/overtime-groups/new', element: <KeyedOvertimeGroupForm /> },
       { path: 'master/overtime-groups/:id', element: <KeyedOvertimeGroupForm /> },
       { path: 'report/attendance', element: <AttendanceDailyListPage /> },
+      { path: 'report/overtime', element: <OvertimeReport /> },
       { path: 'health', element: <HealthPage /> },
       { path: '*', element: <Navigate to="/dashboard" replace /> },
     ],

@@ -1394,6 +1394,23 @@ export const OVERTIME_BACKDATE_LIMIT_DAYS = 7
 export const OVERTIME_MIN_MINUTES = 15
 export const OVERTIME_MAX_MINUTES = 720
 
+/**
+ * On a day off or a holiday, how many minutes of work are paid at the "ในเวลา"
+ * rate before the rest becomes "นอกเวลา" — a normal 8-hour working day.
+ *
+ * A flat figure rather than the employee's own shift length: this is the
+ * statutory normal working day, and an employee whose shift happens to be
+ * 7 hours does not thereby earn the higher rate an hour sooner on a Sunday.
+ * If that ever needs to follow the shift instead, this is the only place it
+ * is decided.
+ *
+ * Counted across the whole day, never per request — see
+ * computeOvertimeForDay. Two four-hour requests on one Sunday are eight
+ * ordinary hours, not two separate four-hour ones that each stay under the
+ * threshold.
+ */
+export const DAY_OFF_NORMAL_MINUTES = 480
+
 /** A row in overtime_requests. The dayStatus, shift and overtimeGroup fields
  *  are snapshots taken at submission time, not live joins: employment_details
  *  keeps no history of which OT group an employee belonged to, so without a
@@ -1572,6 +1589,135 @@ export function findOvertimeShiftConflict(
   }
 
   return null
+}
+
+/* Overtime Report ---------------------------------------------------------
+ *
+ * What approved overtime actually came to, per day, per employee and per
+ * week, over a date range. Read entirely off attendance_daily's four OT
+ * columns, which the batch job derives from approved overtime_requests
+ * intersected with the punches — see 040_add_overtime_to_attendance_daily.sql.
+ *
+ * Hours are stored; baht is not. Every amount here is computed at read time
+ * from the wage in force right now, because employee_finance keeps no history
+ * and a stored figure would silently stop matching the wage it was derived
+ * from. A null amount means the wage could not be derived at all (no finance
+ * record, or no shift on the day to get a normal working day out of) and is
+ * rendered as "—", never as zero.
+ */
+
+/** Section 24 of the Labour Protection Act: overtime plus holiday work may
+ *  not exceed 36 hours in one week. Reported, not enforced — the system shows
+ *  where the line is and who is near it; whether to approve past it is a
+ *  human decision with its own paperwork. */
+export const OVERTIME_WEEKLY_CAP_MINUTES = 36 * 60
+
+/** One employee's overtime on one date. */
+export type OvertimeReportDay = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  workDate: string
+  dayStatus: CalendarDayStatus
+  /** Minutes approved on this date, across every request covering it. */
+  approvedMinutes: number
+  /** Of those, the minutes the employee was actually present for, before
+   *  rounding. Less than approvedMinutes means they left early or never
+   *  clocked out — the rows HR needs to chase. */
+  actualMinutes: number
+  /** After the group's rounding rule, split at the statutory 8-hour mark.
+   *  normalMinutes is always 0 on a working day. */
+  normalMinutes: number
+  extraMinutes: number
+  /** The multipliers these two buckets are paid at, from the overtime group
+   *  snapshotted on the request. */
+  normalRate: number
+  extraRate: number
+  /** Null when the employee's hourly wage could not be derived. */
+  amount: number | null
+}
+
+/** One employee's totals over the whole range, bucketed by the five rate
+ *  categories master_overtime_groups defines. */
+export type OvertimeReportEmployee = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  departmentName: string | null
+  overtimeGroupName: string | null
+  /** นอกเวลา วันทำงานปกติ */
+  otWorkdayMinutes: number
+  /** ในเวลา นอกวันทำงาน */
+  normalDayoffMinutes: number
+  /** นอกเวลา นอกวันทำงานปกติ */
+  otDayoffMinutes: number
+  /** ในเวลา วันหยุดพิเศษ */
+  normalHolidayMinutes: number
+  /** นอกเวลา วันหยุดพิเศษ */
+  otHolidayMinutes: number
+  totalMinutes: number
+  /** Approved but not actually worked, across the range — surfaced so a total
+   *  that looks low has a visible reason. */
+  shortfallMinutes: number
+  /** Null when it could not be derived, and also when it differed across the
+   *  range (a shift change alters the normal working day, and therefore the
+   *  hourly rate) — in that case the amount is still correct, having been
+   *  summed per day. */
+  hourlyWage: number | null
+  amount: number | null
+}
+
+/** One employee's total in one Monday-to-Sunday week, against the statutory
+ *  cap. Monday-based to match master_shifts.workdays, which is ISO order. */
+export type OvertimeReportWeek = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  /** 'YYYY-MM-DD' of the Monday and the Sunday. May fall outside the
+   *  requested range — a week is a week regardless of where the filter cuts. */
+  weekStart: string
+  weekEnd: string
+  totalMinutes: number
+  overCap: boolean
+}
+
+export type OvertimeReportSummary = {
+  employees: number
+  totalMinutes: number
+  /** Sum of the per-day amounts that could be priced. Null when none could. */
+  totalAmount: number | null
+  /** Employees whose overtime could not be priced — the finance tab is blank. */
+  employeesMissingWage: number
+  /** Days where less overtime was worked than approved. */
+  daysUnderApproved: number
+  weeksOverCap: number
+  /** When attendance_daily was last recomputed over this range, so the reader
+   *  knows how fresh the figures are. Null when the range holds no rows. */
+  lastComputedAt: string | null
+}
+
+/** GET /api/overtime-requests/:id/weekly-cap — how much of the statutory
+ *  weekly allowance this employee has already committed in the week the
+ *  request falls in, so the approver sees the consequence before deciding.
+ *  Counts approved requests, not hours worked: the decision is about hours
+ *  that have not happened yet. */
+export type OvertimeWeeklyCapResponse = {
+  /** Monday and Sunday of the week containing the request's otDate. */
+  weekStart: string
+  weekEnd: string
+  /** Already approved in that week, this request excluded. */
+  approvedMinutes: number
+  /** What this request would add. */
+  requestMinutes: number
+  capMinutes: number
+}
+
+/** GET /api/overtime-report?from=&to=&employeeId=&departmentId= */
+export type OvertimeReportResponse = {
+  byEmployee: OvertimeReportEmployee[]
+  byDay: OvertimeReportDay[]
+  byWeek: OvertimeReportWeek[]
+  summary: OvertimeReportSummary
 }
 
 /* Health ------------------------------------------------------------------ */

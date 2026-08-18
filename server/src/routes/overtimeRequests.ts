@@ -5,6 +5,7 @@ import {
   OVERTIME_MAX_MINUTES,
   OVERTIME_MIN_MINUTES,
   OVERTIME_REQUEST_STATUSES,
+  OVERTIME_WEEKLY_CAP_MINUTES,
   ROLES,
   computeOvertimeMinutes,
   findOvertimeShiftConflict,
@@ -18,6 +19,7 @@ import {
   type OvertimeRequestRejectRequest,
   type OvertimeRequestResponse,
   type OvertimeRequestStatus,
+  type OvertimeWeeklyCapResponse,
 } from '@hrm/shared'
 import type pg from 'pg'
 import { pool, withTransaction } from '../db.js'
@@ -27,6 +29,8 @@ import { fail, handleUnexpected } from '../http.js'
 import { findEmployeeById } from '../employeeQueries.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
+import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
+import { approvedOvertimeMinutesInWeek } from '../overtimeReportQueries.js'
 import {
   SELECT_OVERTIME_REQUEST,
   findOvertimeRequestById,
@@ -606,6 +610,37 @@ overtimeRequestsRouter.get(
   }
 )
 
+// The statutory weekly allowance as it stands for this request's employee and
+// week. Its own endpoint rather than a field on the detail response: it is
+// only meaningful while a decision is pending, and it answers a question
+// about the week rather than about the request.
+overtimeRequestsRouter.get(
+  '/overtime-requests/:id/weekly-cap',
+  canReadAdmin,
+  async (req: Request, res: Response) => {
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const request = await findOvertimeRequestById(id)
+      if (!request) return fail(res, 404, `no overtime request with id ${id}`)
+
+      const week = await approvedOvertimeMinutesInWeek(request.employeeId, request.otDate, id)
+
+      const body: OvertimeWeeklyCapResponse = {
+        weekStart: week.weekStart,
+        weekEnd: week.weekEnd,
+        approvedMinutes: week.minutes,
+        requestMinutes: request.requestedMinutes,
+        capMinutes: OVERTIME_WEEKLY_CAP_MINUTES,
+      }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
 overtimeRequestsRouter.post(
   '/overtime-requests/:id/approve',
   canDecide,
@@ -674,6 +709,22 @@ overtimeRequestsRouter.post(
             endTime: row.end_time,
           },
         })
+
+        // Recompute this date immediately instead of waiting for the batch
+        // job. The job's default window is the last 7 days ending yesterday
+        // and OT may be filed up to 7 days back, so a request dated at that
+        // limit and approved a few days later falls outside every future run
+        // and would never be counted at all.
+        //
+        // Through ot_date + 1 because an overnight block reaches into the
+        // next day's row, and in the same transaction so the figures can
+        // never reflect an approval that then rolled back.
+        await recomputeAttendanceDaily(
+          Number(row.employee_id),
+          row.ot_date,
+          addDays(row.ot_date, 1),
+          client
+        )
 
         const request = await findOvertimeRequestById(id, client)
         if (!request) throw new Error('re-select of overtime_requests returned no row')

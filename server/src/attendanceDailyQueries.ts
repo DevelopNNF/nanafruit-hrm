@@ -20,10 +20,12 @@ import type {
   AttendanceDailySummary,
   AttendanceDayStatus,
   CalendarDayStatus,
+  OvertimeRoundingMinutes,
 } from '@hrm/shared'
 import { pool } from './db.js'
 import { parseDateOnlyUtc, toDateOnlyString } from './leaveRequestQueries.js'
 import { matchAttendanceForDates, type MatchedAttendanceDay } from './attendanceMatchingQueries.js'
+import { computeOvertimeForDay } from './overtimeCalculation.js'
 
 type Queryable = Pick<pg.Pool, 'query'>
 
@@ -130,6 +132,30 @@ export function computeAttendanceDay(day: MatchedAttendanceDay): AttendanceDayVe
   }
 }
 
+/**
+ * The rounding granularity from the employee's overtime group, or 0 when they
+ * have not been assigned one.
+ *
+ * Falling back to 0 (no rounding) rather than refusing is deliberate: an
+ * employee with no group cannot have an approved OT request in the first
+ * place (POST /overtime-requests requires one), so there is nothing to round,
+ * and the batch job must not fail over a group that is missing from a day
+ * with no overtime on it.
+ */
+async function getOvertimeRoundingMinutes(
+  employeeId: number,
+  db: Queryable
+): Promise<OvertimeRoundingMinutes> {
+  const { rows } = await db.query<{ rounding_minutes: number }>(
+    `SELECT mog.rounding_minutes
+     FROM employment_details ed
+     JOIN master_overtime_groups mog ON mog.id = ed.overtime_group_id
+     WHERE ed.employee_id = $1`,
+    [employeeId]
+  )
+  return (rows[0]?.rounding_minutes ?? 0) as OvertimeRoundingMinutes
+}
+
 /** Every 'YYYY-MM-DD' from fromDate through toDate, inclusive. */
 function expandDateRange(fromDate: string, toDate: string): string[] {
   const dates: string[] = []
@@ -161,8 +187,20 @@ export async function recomputeAttendanceDaily(
 
   const matched = await matchAttendanceForDates(employeeId, dates, db)
 
+  // One lookup for the whole range rather than per day: an employee belongs
+  // to exactly one overtime group, and only its rounding rule is needed here
+  // (the rates are applied on read — see overtimeAmount).
+  const roundingMinutes = await getOvertimeRoundingMinutes(employeeId, db)
+
   for (const day of matched) {
     const verdict = computeAttendanceDay(day)
+    const overtime = computeOvertimeForDay({
+      dayStatus: day.status,
+      overtimeIntervals: day.overtimeIntervals,
+      actualCheckInAt: day.actualCheckInAt,
+      actualCheckOutAt: day.actualCheckOutAt,
+      roundingMinutes,
+    })
     await db.query(
       `INSERT INTO attendance_daily
          (employee_id, work_date, shift_id, day_status, attendance_status,
@@ -171,8 +209,10 @@ export async function recomputeAttendanceDaily(
           actual_check_in_at, actual_check_out_at,
           actual_check_in_event_id, actual_check_out_event_id,
           late_minutes, early_leave_minutes, worked_minutes,
-          expected_work_minutes, leave_minutes, is_overnight)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+          expected_work_minutes, leave_minutes, is_overnight,
+          approved_ot_minutes, actual_ot_minutes, ot_normal_minutes, ot_extra_minutes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+               $20, $21, $22, $23)
        ON CONFLICT (employee_id, work_date) DO UPDATE SET
          shift_id = EXCLUDED.shift_id,
          day_status = EXCLUDED.day_status,
@@ -191,6 +231,10 @@ export async function recomputeAttendanceDaily(
          expected_work_minutes = EXCLUDED.expected_work_minutes,
          leave_minutes = EXCLUDED.leave_minutes,
          is_overnight = EXCLUDED.is_overnight,
+         approved_ot_minutes = EXCLUDED.approved_ot_minutes,
+         actual_ot_minutes = EXCLUDED.actual_ot_minutes,
+         ot_normal_minutes = EXCLUDED.ot_normal_minutes,
+         ot_extra_minutes = EXCLUDED.ot_extra_minutes,
          computed_at = now(),
          updated_at = now()`,
       [
@@ -213,6 +257,10 @@ export async function recomputeAttendanceDaily(
         day.shiftId === null ? null : day.expectedWorkMinutes,
         day.leaveMinutes,
         day.isOvernight,
+        overtime.approvedMinutes,
+        overtime.actualMinutes,
+        overtime.normalMinutes,
+        overtime.extraMinutes,
       ]
     )
   }

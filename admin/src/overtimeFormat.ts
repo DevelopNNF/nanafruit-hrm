@@ -40,3 +40,17 @@ export function formatOvertimeHours(minutes: number): string {
   if (rest === 0) return `${hours} ชม.`
   return `${hours} ชม. ${rest} น.`
 }
+
+/** Decimal hours, for report columns that get summed and compared by eye —
+ *  "7.50" lines up in a column where "7 ชม. 30 น." does not, and it is the
+ *  form payroll expects to be handed. */
+export function formatDecimalHours(minutes: number): string {
+  return (minutes / 60).toFixed(2)
+}
+
+/** Thai baht, or an em dash when the amount could not be derived at all. Never
+ *  renders an unknown wage as 0 — see OvertimeReportDay.amount. */
+export function formatBaht(amount: number | null): string {
+  if (amount === null) return '—'
+  return amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}

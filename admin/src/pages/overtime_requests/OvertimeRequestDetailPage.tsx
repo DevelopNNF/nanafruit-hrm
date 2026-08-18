@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import type { OvertimeRequestListItem } from '@hrm/shared'
+import type { OvertimeRequestListItem, OvertimeWeeklyCapResponse } from '@hrm/shared'
 import {
   approveOvertimeRequest,
   getOvertimeRequest,
@@ -8,8 +8,10 @@ import {
 } from '../../api/overtimeRequests'
 import { useCanWrite } from '../../auth/meContext'
 import { notify } from '../../notifications/notify'
+import { fetchOvertimeWeeklyCap } from '../../api/overtimeReport'
 import {
   DAY_STATUS_LABEL,
+  formatDecimalHours,
   formatOvertimeDate,
   formatOvertimeHours,
   hhmm,
@@ -36,6 +38,8 @@ type State =
   | { phase: 'loading' }
   | { phase: 'ok'; request: OvertimeRequestListItem }
   | { phase: 'error'; message: string }
+
+type WeeklyCap = OvertimeWeeklyCapResponse & { wouldExceed: boolean }
 
 const STATUS_LABEL = {
   pending: 'รอดำเนินการ',
@@ -71,6 +75,7 @@ export function OvertimeRequestDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const [weeklyCap, setWeeklyCap] = useState<WeeklyCap | null>(null)
 
   useEffect(() => {
     const requestId = Number(id)
@@ -85,6 +90,17 @@ export function OvertimeRequestDetailPage() {
           message: err instanceof Error ? err.message : 'request failed',
         })
       })
+
+    // Advisory only, so a failure here stays silent — it must never be what
+    // stops an approver from making a decision.
+    fetchOvertimeWeeklyCap(requestId, controller.signal)
+      .then((cap) =>
+        setWeeklyCap({
+          ...cap,
+          wouldExceed: cap.approvedMinutes + cap.requestMinutes > cap.capMinutes,
+        })
+      )
+      .catch(() => {})
 
     return () => controller.abort()
   }, [id])
@@ -223,6 +239,28 @@ export function OvertimeRequestDetailPage() {
               </>
             )}
           </dl>
+
+          {state.request.status === 'pending' && weeklyCap !== null && (
+            <div
+              className={`mt-4 rounded-md border px-3 py-2.5 text-[0.8rem] ${
+                weeklyCap.wouldExceed
+                  ? 'border-amber-300 bg-amber-50 text-amber-900'
+                  : 'border-slate-200 bg-slate-50 text-slate-600'
+              }`}
+            >
+              สัปดาห์นี้ ({formatOvertimeDate(weeklyCap.weekStart)}–
+              {formatOvertimeDate(weeklyCap.weekEnd)}) อนุมัติไปแล้ว{' '}
+              <span className="font-semibold tabular-nums">
+                {formatDecimalHours(weeklyCap.approvedMinutes)}
+              </span>{' '}
+              ชม. · หากอนุมัติคำขอนี้จะเป็น{' '}
+              <span className="font-semibold tabular-nums">
+                {formatDecimalHours(weeklyCap.approvedMinutes + weeklyCap.requestMinutes)}
+              </span>{' '}
+              ชม. จากเพดาน {formatDecimalHours(weeklyCap.capMinutes)} ชม.
+              {weeklyCap.wouldExceed && ' — เกินเพดานตามกฎหมาย โปรดพิจารณา'}
+            </div>
+          )}
 
           {state.request.status === 'pending' && canWrite && (
             <div className="mt-5 border-t border-slate-200 pt-4">

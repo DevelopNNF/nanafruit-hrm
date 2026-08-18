@@ -156,6 +156,54 @@ async function loadLeaveByDate(
   return byDate
 }
 
+/** One approved overtime block, resolved to real instants. */
+export type OvertimeInterval = { requestId: number; startAt: string; endAt: string }
+
+/**
+ * Approved overtime_requests for the given work-dates, grouped by date and
+ * resolved to instants.
+ *
+ * Anchored to its own ot_date, exactly like the shift is anchored to
+ * work_date: a 22:00-02:00 block belongs to the evening it started, and
+ * computeShiftWindow already encodes that "end <= start means the next
+ * calendar day" rule, so it is reused rather than restated.
+ *
+ * Only 'approved' rows are loaded. A pending request must not widen the
+ * matching window or it would change the attendance verdict of a day before
+ * anyone decided the OT was allowed at all.
+ */
+async function loadOvertimeByDate(
+  employeeId: number,
+  dates: string[],
+  db: Queryable
+): Promise<Map<string, OvertimeInterval[]>> {
+  const { rows } = await db.query<{
+    id: string
+    ot_date: string
+    start_time: string
+    end_time: string
+  }>(
+    `SELECT id, ot_date, start_time, end_time
+     FROM overtime_requests
+     WHERE employee_id = $1 AND status = 'approved' AND ot_date = ANY($2::date[])
+     ORDER BY ot_date, start_time`,
+    [employeeId, dates]
+  )
+
+  const byDate = new Map<string, OvertimeInterval[]>()
+  for (const row of rows) {
+    const { checkInAt, checkOutAt } = computeShiftWindow(row.ot_date, row.start_time, row.end_time)
+    const list = byDate.get(row.ot_date) ?? []
+    list.push({
+      requestId: Number(row.id),
+      startAt: checkInAt.toISOString(),
+      endAt: checkOutAt.toISOString(),
+    })
+    byDate.set(row.ot_date, list)
+  }
+  return byDate
+}
+
 /** One employee's expected attendance for one work-date. status/label/shiftId
  *  carry through buildCalendarDaysForDates unchanged — this module only adds
  *  the computed window and grace minutes on top, and deliberately leaves the
@@ -184,6 +232,18 @@ export type ExpectedShiftWindow = {
   expectedWorkIntervals: { startAt: string; endAt: string }[]
   /** Total minutes across expectedWorkIntervals. 0 when nothing was owed. */
   expectedWorkMinutes: number
+  /**
+   * Approved overtime blocks anchored to this work-date. Deliberately NOT
+   * folded into expectedWorkIntervals: those are the hours the shift owed,
+   * which lateness, early departure and workedMinutes are all measured
+   * against, and OT is paid on a different basis entirely (see
+   * overtimeCalculation.ts). Kept separate so neither figure contaminates
+   * the other.
+   *
+   * They do widen the punch-matching window, though — see
+   * matchAttendanceForDates.
+   */
+  overtimeIntervals: OvertimeInterval[]
   /** Working minutes excused by approved leave — i.e. minutes that would have
    *  been owed had the leave not been approved. Break time is never counted
    *  here, since it was never work in the first place. */
@@ -261,12 +321,18 @@ export async function resolveExpectedShiftWindows(
 
   const shiftIds = [...new Set(calendarDays.map((d) => d.shiftId).filter((id): id is number => id !== null))]
   const sorted = [...dates].sort()
-  const [policyByShiftId, leaveByDate] = await Promise.all([
-    loadShiftPolicy(shiftIds, db),
-    loadLeaveByDate(employeeId, sorted[0]!, sorted[sorted.length - 1]!, db),
-  ])
+  // Sequential, not Promise.all: `db` is a pg client inside a transaction
+  // whenever the batch job calls this, and one client cannot run two queries
+  // at once — pg serialises them and warns, and pg@9 will make it an error.
+  // Three small lookups against indexed columns; the parallelism was not
+  // buying anything worth that.
+  const policyByShiftId = await loadShiftPolicy(shiftIds, db)
+  const leaveByDate = await loadLeaveByDate(employeeId, sorted[0]!, sorted[sorted.length - 1]!, db)
+  const overtimeByDate = await loadOvertimeByDate(employeeId, dates, db)
 
   return calendarDays.map((day) => {
+    const overtimeIntervals = overtimeByDate.get(day.date) ?? []
+
     if (day.shiftId === null || day.shiftStartTime === null || day.shiftEndTime === null) {
       return {
         workDate: day.date,
@@ -279,6 +345,7 @@ export async function resolveExpectedShiftWindows(
         expectedBreakEndAt: null,
         expectedWorkIntervals: [],
         expectedWorkMinutes: 0,
+        overtimeIntervals,
         leaveMinutes: 0,
         effectiveCheckInAt: null,
         effectiveCheckOutAt: null,
@@ -359,6 +426,7 @@ export async function resolveExpectedShiftWindows(
         endAt: new Date(i.end).toISOString(),
       })),
       expectedWorkMinutes,
+      overtimeIntervals,
       leaveMinutes,
       effectiveCheckInAt: first ? new Date(first.start).toISOString() : null,
       effectiveCheckOutAt: last ? new Date(last.end).toISOString() : null,
@@ -417,6 +485,35 @@ async function loadEventsInRange(
   }))
 }
 
+/**
+ * The span a work-date's punches may fall in, before the buffer: the shift
+ * window and every approved OT block on that date, taken together.
+ *
+ * OT has to be in here or its punches are simply lost. The buffer is 2 hours,
+ * so on an 08:30-17:30 shift a check-out at 20:00 for approved 18:00-20:00 OT
+ * falls outside the shift's own buffered window and goes unmatched — which
+ * does not merely zero the OT, it reports the whole day as 'incomplete'.
+ *
+ * Returns null for a date with neither, which is a date that can hold no
+ * punches at all: no shift assigned and no overtime approved.
+ */
+function matchSpanOf(window: ExpectedShiftWindow): { start: Date; end: Date } | null {
+  const starts: number[] = []
+  const ends: number[] = []
+
+  if (window.expectedCheckInAt !== null && window.expectedCheckOutAt !== null) {
+    starts.push(Date.parse(window.expectedCheckInAt))
+    ends.push(Date.parse(window.expectedCheckOutAt))
+  }
+  for (const ot of window.overtimeIntervals) {
+    starts.push(Date.parse(ot.startAt))
+    ends.push(Date.parse(ot.endAt))
+  }
+  if (starts.length === 0) return null
+
+  return { start: new Date(Math.min(...starts)), end: new Date(Math.max(...ends)) }
+}
+
 /** Pairs raw attendance_events punches onto resolveExpectedShiftWindows'
  *  output for one employee across a set of work-dates. Windows sharing a
  *  buffered range with a neighbor (most commonly: an overnight shift's
@@ -430,24 +527,31 @@ export async function matchAttendanceForDates(
 ): Promise<MatchedAttendanceDay[]> {
   const windows = await resolveExpectedShiftWindows(employeeId, dates, db)
 
-  const withShift = windows
-    .filter((w) => w.shiftId !== null && w.expectedCheckInAt !== null && w.expectedCheckOutAt !== null)
-    .sort((a, b) => a.expectedCheckInAt!.localeCompare(b.expectedCheckInAt!))
+  // Ordered by when each date's punches could start, which is not always the
+  // shift's own start: a date with no shift but approved OT is matchable too
+  // (working a rest day the employee has no assignment for), and OT before
+  // the shift moves the date's span earlier.
+  const matchable = windows
+    .map((window) => ({ window, span: matchSpanOf(window) }))
+    .filter((entry): entry is { window: ExpectedShiftWindow; span: { start: Date; end: Date } } =>
+      entry.span !== null
+    )
+    .sort((a, b) => a.span.start.getTime() - b.span.start.getTime())
 
   const matchedByWorkDate = new Map<string, MatchedAttendanceDay>()
 
-  if (withShift.length > 0) {
-    const rangeStart = withBufferMinutes(new Date(withShift[0]!.expectedCheckInAt!), -MATCH_BUFFER_MINUTES)
+  if (matchable.length > 0) {
+    const rangeStart = withBufferMinutes(matchable[0]!.span.start, -MATCH_BUFFER_MINUTES)
     const rangeEnd = withBufferMinutes(
-      new Date(withShift[withShift.length - 1]!.expectedCheckOutAt!),
+      new Date(Math.max(...matchable.map((m) => m.span.end.getTime()))),
       MATCH_BUFFER_MINUTES
     )
     const events = await loadEventsInRange(employeeId, rangeStart, rangeEnd, db)
 
     const claimed = new Set<number>()
-    for (const window of withShift) {
-      const windowStart = withBufferMinutes(new Date(window.expectedCheckInAt!), -MATCH_BUFFER_MINUTES)
-      const windowEnd = withBufferMinutes(new Date(window.expectedCheckOutAt!), MATCH_BUFFER_MINUTES)
+    for (const { window, span } of matchable) {
+      const windowStart = withBufferMinutes(span.start, -MATCH_BUFFER_MINUTES)
+      const windowEnd = withBufferMinutes(span.end, MATCH_BUFFER_MINUTES)
 
       const inWindow = events.filter(
         (e) => !claimed.has(e.id) && e.eventTime >= windowStart && e.eventTime <= windowEnd

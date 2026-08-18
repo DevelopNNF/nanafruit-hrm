@@ -77,6 +77,7 @@ const NAV: NavItem[] = [
     icon: Files,
     children: [
       { to: 'report/attendance', label: 'รายงานการลงเวลา'},
+      { to: 'report/overtime', label: 'รายงาน OT'},
     ],
   },
   { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },
