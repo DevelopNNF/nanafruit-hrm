@@ -514,6 +514,41 @@ function matchSpanOf(window: ExpectedShiftWindow): { start: Date; end: Date } | 
   return { start: new Date(Math.min(...starts)), end: new Date(Math.max(...ends)) }
 }
 
+/**
+ * The instant range one work-date's punches may fall in: matchSpanOf widened
+ * by the buffer, i.e. exactly the range matchAttendanceForDates will search
+ * when it looks for that date's punches.
+ *
+ * Exported for validation that has to judge a single punch against the day it
+ * belongs to (routes/timeCorrections.ts) rather than against the employee's
+ * whole event history — the two must agree on where a work-date begins and
+ * ends, or a punch can be rejected as inconsistent with a neighbouring day
+ * that would never have competed for it anyway.
+ *
+ * Falls back to the Thailand calendar day when the date expects nothing at
+ * all (no shift assigned and no approved OT). Such a date can hold no
+ * *matched* punch, but a correction may still be filed against it, and the
+ * calendar day is the only sane scope left to judge it in.
+ */
+export async function resolveMatchWindow(
+  employeeId: number,
+  workDate: string,
+  db: Queryable = pool
+): Promise<{ startAt: Date; endAt: Date }> {
+  const [window] = await resolveExpectedShiftWindows(employeeId, [workDate], db)
+  const span = window ? matchSpanOf(window) : null
+  if (span === null) {
+    return {
+      startAt: thailandDateTime(workDate, '00:00:00'),
+      endAt: thailandDateTime(addDays(workDate, 1), '00:00:00'),
+    }
+  }
+  return {
+    startAt: withBufferMinutes(span.start, -MATCH_BUFFER_MINUTES),
+    endAt: withBufferMinutes(span.end, MATCH_BUFFER_MINUTES),
+  }
+}
+
 /** Pairs raw attendance_events punches onto resolveExpectedShiftWindows'
  *  output for one employee across a set of work-dates. Windows sharing a
  *  buffered range with a neighbor (most commonly: an overnight shift's

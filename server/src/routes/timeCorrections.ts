@@ -19,7 +19,9 @@ import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
 import { findEmployeeById } from '../employeeQueries.js'
-import { getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
+import { addDays, getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
+import { resolveMatchWindow } from '../attendanceMatchingQueries.js'
+import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
 import {
   findTimeCorrectionById,
   listTimeCorrections,
@@ -195,11 +197,22 @@ timeCorrectionsRouter.get('/time-corrections/:id', canReadAdmin, async (req: Req
 
 /** The neighboring attendance_events row on one side of a point in time, for
  *  the alternation check below — same "most recent" shape as
- *  findLastAttendanceEvent, but bounded and directional instead of just DESC. */
+ *  findLastAttendanceEvent, but bounded and directional instead of just DESC.
+ *
+ *  Confined to `window`, the punch-matching range of the work-date the
+ *  corrected time falls in (resolveMatchWindow). Searching the employee's
+ *  whole history instead would judge the punch against days that can never
+ *  contest it: attendance matching is per work-date, taking the first
+ *  check_in and last check_out inside one window, so an unpaired punch left
+ *  on some other date has no bearing on whether this one is coherent — and
+ *  letting it block the correction makes a day missing *both* punches
+ *  unrepairable, since whichever half is inserted first sits next to the
+ *  neighbouring day's punch of the same type. */
 async function neighborEvent(
   client: { query: typeof pool.query },
   employeeId: number,
   eventTime: Date,
+  window: { startAt: Date; endAt: Date },
   direction: 'before' | 'after'
 ): Promise<AttendanceEventType | null> {
   const operator = direction === 'before' ? '<' : '>'
@@ -207,11 +220,32 @@ async function neighborEvent(
   const { rows } = await client.query<{ event_type: string }>(
     `SELECT event_type FROM attendance_events
      WHERE employee_id = $1 AND event_time ${operator} $2
+       AND event_time >= $3 AND event_time <= $4
      ORDER BY event_time ${order} LIMIT 1`,
-    [employeeId, eventTime.toISOString()]
+    [employeeId, eventTime.toISOString(), window.startAt.toISOString(), window.endAt.toISOString()]
   )
   const row = rows[0]
   return row ? (row.event_type as AttendanceEventType) : null
+}
+
+/** How far either side of a punch that falls *outside* its work-date's match
+ *  window the alternation check still looks. Such a punch is un-matchable by
+ *  definition — attendance matching will ignore it — so the day's window says
+ *  nothing about it, and only its immediate neighbourhood can. Deliberately
+ *  the same 2 hours matching itself tolerates, so the two never disagree
+ *  about what counts as "next to". */
+const OUT_OF_WINDOW_TOLERANCE_MS = 120 * 60_000
+
+/** The day's match window, widened to cover `eventTime` when the corrected
+ *  time lands outside it — otherwise a late check-out with no approved OT
+ *  behind it would be compared against a window it isn't in, and a second
+ *  copy of the same punch would sail through as having no neighbours at all. */
+function scopeFor(window: { startAt: Date; endAt: Date }, eventTime: Date): { startAt: Date; endAt: Date } {
+  if (eventTime >= window.startAt && eventTime <= window.endAt) return window
+  return {
+    startAt: new Date(Math.min(window.startAt.getTime(), eventTime.getTime() - OUT_OF_WINDOW_TOLERANCE_MS)),
+    endAt: new Date(Math.max(window.endAt.getTime(), eventTime.getTime() + OUT_OF_WINDOW_TOLERANCE_MS)),
+  }
 }
 
 timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (req: Request, res: Response) => {
@@ -237,24 +271,38 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (re
       const eventType = row.event_type as AttendanceEventType
       const eventTime = new Date(row.requested_event_time)
 
-      const [prev, next] = await Promise.all([
-        neighborEvent(client, employeeId, eventTime, 'before'),
-        neighborEvent(client, employeeId, eventTime, 'after'),
-      ])
+      // The work-date the corrected time belongs to, and the punch window
+      // that date owns — every check below is scoped to it, and so is the
+      // recompute at the end.
+      const workDate = toThailandDateString(eventTime)
+      const window = scopeFor(await resolveMatchWindow(employeeId, workDate, client), eventTime)
+
+      // Sequential, not Promise.all: `client` is a single pg client inside a
+      // transaction and cannot run two queries at once — pg serialises them
+      // and warns, and pg@9 will make it an error. Same note as
+      // resolveExpectedShiftWindows'.
+      const prev = await neighborEvent(client, employeeId, eventTime, window, 'before')
+      const next = await neighborEvent(client, employeeId, eventTime, window, 'after')
 
       if (prev === null && eventType === 'check_out') {
-        return { kind: 'conflict' as const, message: 'ไม่มีการลงเวลาเข้างานก่อนเวลานี้ ไม่สามารถลงเวลาออกงานได้' }
+        return {
+          kind: 'conflict' as const,
+          message:
+            'ยังไม่มีการลงเวลาเข้างานของวันทำงานนี้ก่อนเวลาที่ขอแก้ไข กรุณาอนุมัติคำขอลงเวลาเข้างานก่อน',
+        }
       }
       if (prev !== null && prev === eventType) {
         return {
           kind: 'conflict' as const,
-          message: 'เวลานี้จะทำให้มีการลงเวลาประเภทเดียวกันติดกันกับรายการก่อนหน้า กรุณาตรวจสอบเวลาที่ขอแก้ไข',
+          message:
+            'เวลานี้จะทำให้มีการลงเวลาประเภทเดียวกันติดกันกับรายการก่อนหน้าของวันทำงานเดียวกัน กรุณาตรวจสอบเวลาที่ขอแก้ไข',
         }
       }
       if (next !== null && next === eventType) {
         return {
           kind: 'conflict' as const,
-          message: 'เวลานี้จะทำให้มีการลงเวลาประเภทเดียวกันติดกันกับรายการถัดไป กรุณาตรวจสอบเวลาที่ขอแก้ไข',
+          message:
+            'เวลานี้จะทำให้มีการลงเวลาประเภทเดียวกันติดกันกับรายการถัดไปของวันทำงานเดียวกัน กรุณาตรวจสอบเวลาที่ขอแก้ไข',
         }
       }
 
@@ -265,7 +313,7 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (re
       // current one — approval can happen well after the request, and by
       // then the employee may already be on a different shift. See
       // shiftAssignmentQueries.ts's header comment.
-      const shiftId = await getShiftIdForDate(employeeId, toThailandDateString(eventTime), client)
+      const shiftId = await getShiftIdForDate(employeeId, workDate, client)
 
       const { rows: insertedRows } = await client.query<{ id: string }>(
         `INSERT INTO attendance_events (employee_id, event_type, event_time, source, shift_id)
@@ -299,6 +347,18 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (re
         entityId: id,
         detail: { resultingEventId, eventType, requestedEventTime: row.requested_event_time },
       })
+
+      // Recompute immediately instead of waiting for the batch job — same
+      // reasoning as overtimeRequests.ts's approve. The job's default window
+      // is the last 7 days ending yesterday, and a time correction is
+      // routinely filed (and decided) further back than that, so the punch
+      // just inserted would otherwise never reach attendance_daily at all.
+      //
+      // A day either side of workDate because an overnight shift's window
+      // reaches into both neighbours: a punch corrected here can change the
+      // verdict of the adjacent row too. In the same transaction so the
+      // figures can never reflect an approval that then rolled back.
+      await recomputeAttendanceDaily(employeeId, addDays(workDate, -1), addDays(workDate, 1), client)
 
       return { kind: 'ok' as const, request: rowToTimeCorrectionListItem(updated) }
     })
