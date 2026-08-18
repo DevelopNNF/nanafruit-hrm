@@ -321,28 +321,39 @@ export type LinkCodeResponse = {
  * both read and write (see server/src/routes/employees.ts).
  */
 
-export const WAGE_TYPES = ['รายเดือน', 'รายวัน'] as const
+/* The four enums below are English slugs, not the Thai wording admin/ shows.
+ * They were Thai until 044_englishify_employee_finance_enums.sql moved them,
+ * for the reason master_finance_items was built that way from the start:
+ * server code branches on these values, and a branch reads better in the same
+ * language as the code around it — but mainly so rewording the Thai on screen
+ * stays a frontend change instead of a migration that rewrites every row and
+ * its CHECK constraint with it.
+ *
+ * The Thai labels live in admin/src/components/employeeFinanceLabels.ts.
+ * Nothing here should ever be rendered to a user directly. */
+
+export const WAGE_TYPES = ['monthly', 'daily'] as const
 export type WageType = (typeof WAGE_TYPES)[number]
 
-export const PAYMENT_METHODS = ['เงินสด', 'โอน', 'เช็ค'] as const
+export const PAYMENT_METHODS = ['cash', 'transfer', 'cheque'] as const
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]
 
 export const SOCIAL_SECURITY_TYPES = [
-  'ไม่คิดประกันสังคม',
-  'คิดตามฐานเงินเดือนจริงที่ได้รับ (หักจากค่าจ้าง)',
-  'คิดตามฐานเงินเดือนจริงที่ได้รับ (บริษัทจ่ายให้)',
-  'คิดตามมาตรา 39',
-  'คิดคงที่ทุกเดือน',
-  'คิดตามสูตรคำนวณ',
+  'none',
+  'actual_wage_employee_paid',
+  'actual_wage_company_paid',
+  'section_39',
+  'fixed_monthly',
+  'formula',
 ] as const
 export type SocialSecurityType = (typeof SOCIAL_SECURITY_TYPES)[number]
 
 export const TAX_TYPES = [
-  'ไม่คิดภาษี',
-  'คิดภาษี ภงด.1 ใหม่ทุกเดือน (หักจากค่าจ้าง)',
-  'คิดภาษี ภงด.1 ใหม่ทุกเดือน (บริษัทจ่ายให้)',
-  'คิดภาษี ภงด.1 คงที่ทุกเดือน',
-  'คิดภาษี ภงด.1 เป็น % ของรายได้',
+  'none',
+  'monthly_recalc_employee_paid',
+  'monthly_recalc_company_paid',
+  'fixed_monthly',
+  'percent_of_income',
 ] as const
 export type TaxType = (typeof TAX_TYPES)[number]
 
@@ -360,13 +371,14 @@ export type EmployeeFinance = {
   bankBranchCode: string | null
   bankAccountNumber: string
   socialSecurityType: SocialSecurityType
-  /** Required exactly when socialSecurityType is 'คิดคงที่ทุกเดือน', null
+  /** Required exactly when socialSecurityType is 'fixed_monthly', null
    *  otherwise — enforced by a DB CHECK, not just convention, same as
    *  taxFixedAmount below. */
   socialSecurityFixedAmount: number | null
   taxType: TaxType
-  /** Required exactly when taxType is 'คิดภาษี ภงด.1 คงที่ทุกเดือน', null
-   *  otherwise. */
+  /** Required exactly when taxType is 'fixed_monthly', null otherwise.
+   *  Shares the slug with socialSecurityType's fixed value but is a
+   *  different enum — the two CHECKs are separate. */
   taxFixedAmount: number | null
   /** Calendar date, `YYYY-MM-DD`, always the 1st of the month — the month
    *  withholding tax starts being calculated from. A real date rather than a

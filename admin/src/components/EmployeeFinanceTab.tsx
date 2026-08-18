@@ -14,6 +14,12 @@ import {
 import { getEmployeeFinance, updateEmployeeFinance } from '../api/employees'
 import { notify } from '../notifications/notify'
 import {
+  PAYMENT_METHOD_LABELS,
+  SOCIAL_SECURITY_TYPE_LABELS,
+  TAX_TYPE_LABELS,
+  WAGE_TYPE_LABELS,
+} from './employeeFinanceLabels'
+import {
   alert,
   alertDetail,
   alertTitle,
@@ -33,8 +39,8 @@ const sectionTitle = 'mb-5 border-b border-slate-200 pb-3 text-xs font-bold trac
  *  server yet. */
 const DEFAULT_BANK_NAME = 'ไทยพาณิชย์ (SCB)'
 
-const SOCIAL_SECURITY_FIXED: SocialSecurityType = 'คิดคงที่ทุกเดือน'
-const TAX_FIXED: TaxType = 'คิดภาษี ภงด.1 คงที่ทุกเดือน'
+const SOCIAL_SECURITY_FIXED: SocialSecurityType = 'fixed_monthly'
+const TAX_FIXED: TaxType = 'fixed_monthly'
 
 /** Draft state for the 4 enum selects starts unset (`null`, rendered as the
  *  "— โปรดระบุ —" placeholder) rather than defaulting to WAGE_TYPES[0] etc.
@@ -249,7 +255,7 @@ export function EmployeeFinanceTab({
                   </option>
                   {WAGE_TYPES.map((type) => (
                     <option key={type} value={type}>
-                      {type}
+                      {WAGE_TYPE_LABELS[type]}
                     </option>
                   ))}
                 </select>
@@ -286,7 +292,7 @@ export function EmployeeFinanceTab({
                   </option>
                   {PAYMENT_METHODS.map((method) => (
                     <option key={method} value={method}>
-                      {method}
+                      {PAYMENT_METHOD_LABELS[method]}
                     </option>
                   ))}
                 </select>
@@ -338,7 +344,7 @@ export function EmployeeFinanceTab({
                   </option>
                   {SOCIAL_SECURITY_TYPES.map((type) => (
                     <option key={type} value={type}>
-                      {type}
+                      {SOCIAL_SECURITY_TYPE_LABELS[type]}
                     </option>
                   ))}
                 </select>
@@ -382,7 +388,7 @@ export function EmployeeFinanceTab({
                   </option>
                   {TAX_TYPES.map((type) => (
                     <option key={type} value={type}>
-                      {type}
+                      {TAX_TYPE_LABELS[type]}
                     </option>
                   ))}
                 </select>

@@ -22,6 +22,8 @@ import {
   type EmployeePhotoResponse,
   type EmployeeResponse,
   type LinkCodeResponse,
+  type SocialSecurityType,
+  type TaxType,
   type ShiftChangeInput,
   type ShiftChangeResponse,
   type ShiftHistoryResponse,
@@ -284,6 +286,19 @@ function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<Employ
   }
 }
 
+/** The one value of each enum that requires its companion fixed-amount field,
+ *  mirroring the *_consistency CHECKs on employee_finance.
+ *
+ *  Annotated rather than inlined at the comparison below: the value being
+ *  compared there comes back from requiredString() as a plain `string`, so
+ *  `x === 'fixed_monthly'` type-checks against any spelling at all and a
+ *  stale literal would fail silently — the branch would just never be taken
+ *  and the API would disagree with the database's CHECK. Pinning the literal
+ *  to its union here is what makes a future rename a compile error.
+ *  EmployeeFinanceTab.tsx keeps the same pair for the same reason. */
+const SOCIAL_SECURITY_FIXED: SocialSecurityType = 'fixed_monthly'
+const TAX_FIXED: TaxType = 'fixed_monthly'
+
 /** Shared by GET's absence of validation and PATCH /employees/:id/finance —
  *  really just the latter, but kept alongside parseEmployeeBasicFields/
  *  parseEmploymentFields for the same reason those are split out. */
@@ -335,17 +350,17 @@ function parseEmployeeFinanceFields(raw: Record<string, unknown>): ParseResult<E
   // Mirrors the DB's social_security_fixed_amount_consistency CHECK — caught
   // here first so the error names the field rather than surfacing as a raw
   // constraint violation.
-  const socialSecurityNeedsFixedAmount = socialSecurityType === 'คิดคงที่ทุกเดือน'
+  const socialSecurityNeedsFixedAmount = socialSecurityType === SOCIAL_SECURITY_FIXED
   if (socialSecurityNeedsFixedAmount && socialSecurityFixedAmount === null) {
     return {
       ok: false,
-      message: 'socialSecurityFixedAmount is required when socialSecurityType is "คิดคงที่ทุกเดือน"',
+      message: `socialSecurityFixedAmount is required when socialSecurityType is "${SOCIAL_SECURITY_FIXED}"`,
     }
   }
   if (!socialSecurityNeedsFixedAmount && socialSecurityFixedAmount !== null) {
     return {
       ok: false,
-      message: 'socialSecurityFixedAmount must be null unless socialSecurityType is "คิดคงที่ทุกเดือน"',
+      message: `socialSecurityFixedAmount must be null unless socialSecurityType is "${SOCIAL_SECURITY_FIXED}"`,
     }
   }
 
@@ -358,17 +373,17 @@ function parseEmployeeFinanceFields(raw: Record<string, unknown>): ParseResult<E
   if (taxFixedAmount === undefined) {
     return { ok: false, message: 'taxFixedAmount must be a positive number or null' }
   }
-  const taxNeedsFixedAmount = taxType === 'คิดภาษี ภงด.1 คงที่ทุกเดือน'
+  const taxNeedsFixedAmount = taxType === TAX_FIXED
   if (taxNeedsFixedAmount && taxFixedAmount === null) {
     return {
       ok: false,
-      message: 'taxFixedAmount is required when taxType is "คิดภาษี ภงด.1 คงที่ทุกเดือน"',
+      message: `taxFixedAmount is required when taxType is "${TAX_FIXED}"`,
     }
   }
   if (!taxNeedsFixedAmount && taxFixedAmount !== null) {
     return {
       ok: false,
-      message: 'taxFixedAmount must be null unless taxType is "คิดภาษี ภงด.1 คงที่ทุกเดือน"',
+      message: `taxFixedAmount must be null unless taxType is "${TAX_FIXED}"`,
     }
   }
 

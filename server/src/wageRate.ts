@@ -42,6 +42,6 @@ export function hourlyWage(input: {
   if (shiftWorkMinutes === null || shiftWorkMinutes <= 0) return null
   if (wageAmount <= 0) return null
 
-  const dailyWage = wageType === 'รายเดือน' ? wageAmount / 30 : wageAmount
+  const dailyWage = wageType === 'monthly' ? wageAmount / 30 : wageAmount
   return dailyWage / (shiftWorkMinutes / 60)
 }
