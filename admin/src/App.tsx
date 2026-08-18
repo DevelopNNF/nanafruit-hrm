@@ -22,6 +22,8 @@ import { HolidayGroupListPage } from './pages/masters/holiday_group/HolidayGroup
 import { HolidayGroupFormPage } from './pages/masters/holiday_group/HolidayGroupFormPage'
 import { OvertimeGroupListPage } from './pages/masters/overtime_group/OvertimeGroupListPage'
 import { OvertimeGroupFormPage } from './pages/masters/overtime_group/OvertimeGroupFormPage'
+import { FinanceItemListPage } from './pages/masters/finance_item/FinanceItemListPage'
+import { FinanceItemFormPage } from './pages/masters/finance_item/FinanceItemFormPage'
 import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
 import { AttendanceDailyListPage } from './pages/reports/AttendanceReport'
@@ -83,6 +85,11 @@ function KeyedOvertimeGroupForm() {
   return <OvertimeGroupFormPage key={id ?? 'new'} />
 }
 
+function KeyedFinanceItemForm() {
+  const { id } = useParams()
+  return <FinanceItemFormPage key={id ?? 'new'} />
+}
+
 // /employees/new is matched before /employees/:id so "new" is never read as an id.
 const router = createBrowserRouter([
   {
@@ -127,6 +134,9 @@ const router = createBrowserRouter([
       { path: 'master/overtime-groups', element: <OvertimeGroupListPage /> },
       { path: 'master/overtime-groups/new', element: <KeyedOvertimeGroupForm /> },
       { path: 'master/overtime-groups/:id', element: <KeyedOvertimeGroupForm /> },
+      { path: 'master/finance-items', element: <FinanceItemListPage /> },
+      { path: 'master/finance-items/new', element: <KeyedFinanceItemForm /> },
+      { path: 'master/finance-items/:id', element: <KeyedFinanceItemForm /> },
       { path: 'report/attendance', element: <AttendanceDailyListPage /> },
       { path: 'report/overtime', element: <OvertimeReport /> },
       { path: 'health', element: <HealthPage /> },

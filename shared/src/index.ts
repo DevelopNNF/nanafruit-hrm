@@ -826,6 +826,46 @@ export type OvertimeGroupListResponse = { overtimeGroups: OvertimeGroup[] }
 /** GET /api/overtime-groups/:id, POST, PUT */
 export type OvertimeGroupResponse = { overtimeGroup: OvertimeGroup }
 
+/* Finance Item Master --------------------------------------------------------
+ *
+ * The vocabulary of money that can appear on a payslip — ค่ากะ, ค่าตำแหน่ง,
+ * ค่า กยศ. and so on. Deliberately carries no amount: what an item is worth
+ * varies per employee, so that lives on the per-employee table a later phase
+ * adds, not on the item itself.
+ */
+
+/** What a finance item does to a payslip: 'income' adds, 'deduction' and
+ *  'tax' subtract. English slugs rather than the Thai labels admin/ shows,
+ *  because payroll code branches on them — see the migration's comment.
+ *
+ *  'tax' is split out from 'deduction' because ภงด.1 wants the tax lines
+ *  reported on their own. It covers manually-recorded tax only; the automatic
+ *  withholding still comes from EmployeeFinance.taxType. */
+export const FINANCE_ITEM_TYPES = ['income', 'deduction', 'tax'] as const
+export type FinanceItemType = (typeof FINANCE_ITEM_TYPES)[number]
+
+/** A row in master_finance_items. */
+export type FinanceItem = {
+  id: number
+  itemCode: string
+  itemName: string
+  itemType: FinanceItemType
+  /** Free-text note for HR. Nothing reads it but a person. */
+  description: string | null
+  /** Display order on the payslip and the per-employee settings screen. */
+  sortOrder: number
+  isActive: boolean
+}
+
+/** Body of POST /api/finance-items and PUT /api/finance-items/:id */
+export type FinanceItemInput = Omit<FinanceItem, 'id'>
+
+/** GET /api/finance-items */
+export type FinanceItemListResponse = { financeItems: FinanceItem[] }
+
+/** GET /api/finance-items/:id, POST, PUT */
+export type FinanceItemResponse = { financeItem: FinanceItem }
+
 /* Attendance ---------------------------------------------------------------- */
 
 /**

@@ -46,6 +46,8 @@ export type AuditAction =
   | 'holiday.delete'
   | 'overtime_group.create'
   | 'overtime_group.update'
+  | 'finance_item.create'
+  | 'finance_item.update'
   | 'leave_balance.grant'
   | 'leave_balance.adjust'
   | 'leave_balance.bulk_grant'

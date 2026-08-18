@@ -48,6 +48,7 @@ const NAV: NavItem[] = [
       { to: '/master/leave-types', label: 'ประเภทการลา (Leave Type)' },
       { to: '/master/holidays', label: 'วันหยุด (Holiday)' },
       { to: '/master/overtime-groups', label: 'กลุ่มการทำงานล่วงเวลา (Overtime Group)' },
+      { to: '/master/finance-items', label: 'รายการทางการเงิน (Finance Item)' },
     ],
   },
   {
