@@ -5,6 +5,7 @@ import {
   Activity,
   ChevronDown,
   Clock,
+  Files,
   Database,
   LayoutDashboard,
   LogOut,
@@ -54,7 +55,6 @@ const NAV: NavItem[] = [
     label: 'จัดการเวลา',
     icon: Clock,
     children: [
-      { to: '/attendance/daily', label: 'รายงานการลงเวลา'},
       { to: '/attendance', label: 'รายละเอียดการลงเวลา'},
       { to: '/time-corrections', label: 'คำขอแก้ไขเวลา'},
       { to: '/shift-change-requests', label: 'คำขอเปลี่ยนกะ'},
@@ -69,6 +69,14 @@ const NAV: NavItem[] = [
     children: [
       { to: '/leave-requests', label: 'คำขอลา'},
       { to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา'},
+    ],
+  },
+  {
+    type: 'group',
+    label: 'รายงาน',
+    icon: Files,
+    children: [
+      { to: 'report/attendance', label: 'รายงานการลงเวลา'},
     ],
   },
   { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },
