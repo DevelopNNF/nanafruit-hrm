@@ -16,6 +16,7 @@ import { holidayGroupsRouter } from './routes/holidayGroups.js'
 import { holidaysRouter } from './routes/holidays.js'
 import { overtimeGroupsRouter } from './routes/overtimeGroups.js'
 import { financeItemsRouter } from './routes/financeItems.js'
+import { employeeFinanceItemsRouter } from './routes/employeeFinanceItems.js'
 import { leaveBalancesRouter } from './routes/leaveBalances.js'
 import { leaveRequestsRouter } from './routes/leaveRequests.js'
 import { shiftChangeRequestsRouter } from './routes/shiftChangeRequests.js'
@@ -89,6 +90,7 @@ app.use('/api', authenticate, holidayGroupsRouter)
 app.use('/api', authenticate, holidaysRouter)
 app.use('/api', authenticate, overtimeGroupsRouter)
 app.use('/api', authenticate, financeItemsRouter)
+app.use('/api', authenticate, employeeFinanceItemsRouter)
 app.use('/api', authenticate, leaveBalancesRouter)
 app.use('/api', authenticate, leaveRequestsRouter)
 app.use('/api', authenticate, shiftChangeRequestsRouter)

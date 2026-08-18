@@ -5,7 +5,10 @@ import { FINANCE_ITEM_TYPES, type FinanceItem, type FinanceItemType } from '@hrm
 import { listFinanceItems, updateFinanceItem } from '../../../api/financeItems'
 import { useCanWrite } from '../../../auth/meContext'
 import { notify } from '../../../notifications/notify'
-import { FINANCE_ITEM_TYPE_LABELS } from './financeItemLabels'
+import {
+  FINANCE_ITEM_TYPE_LABELS,
+  FINANCE_ITEM_TYPE_TONE,
+} from '../../../components/financeItemLabels'
 import {
   alert,
   alertDetail,
@@ -23,14 +26,6 @@ type State =
   | { phase: 'loading' }
   | { phase: 'ok'; financeItems: FinanceItem[] }
   | { phase: 'error'; message: string }
-
-/** Green adds to the payslip, amber takes off it, navy is a tax line — not
- *  red, which on this palette means "something went wrong". */
-const TYPE_BADGE_TONE: Record<FinanceItemType, 'active' | 'pending' | 'role'> = {
-  income: 'active',
-  deduction: 'pending',
-  tax: 'role',
-}
 
 type TypeFilter = FinanceItemType | 'all'
 
@@ -207,7 +202,7 @@ export function FinanceItemListPage() {
                         {item.itemName}
                       </td>
                       <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
-                        <span className={badge(TYPE_BADGE_TONE[item.itemType])}>
+                        <span className={badge(FINANCE_ITEM_TYPE_TONE[item.itemType])}>
                           {FINANCE_ITEM_TYPE_LABELS[item.itemType]}
                         </span>
                       </td>

@@ -5,7 +5,7 @@ import { FINANCE_ITEM_TYPES, type FinanceItemInput } from '@hrm/shared'
 import { createFinanceItem, getFinanceItem, updateFinanceItem } from '../../../api/financeItems'
 import { useCanWrite } from '../../../auth/meContext'
 import { notify } from '../../../notifications/notify'
-import { FINANCE_ITEM_TYPE_LABELS } from './financeItemLabels'
+import { FINANCE_ITEM_TYPE_LABELS } from '../../../components/financeItemLabels'
 import {
   alert,
   alertDetail,

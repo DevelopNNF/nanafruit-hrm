@@ -878,6 +878,55 @@ export type FinanceItemListResponse = { financeItems: FinanceItem[] }
 /** GET /api/finance-items/:id, POST, PUT */
 export type FinanceItemResponse = { financeItem: FinanceItem }
 
+/* Employee Finance Items -----------------------------------------------------
+ *
+ * What a given finance item is worth for one employee, and over which dates.
+ * The master says ค่าตำแหน่ง exists; this says this person gets 2,000 of it
+ * from January until further notice.
+ *
+ * The date range is what decides which payroll period an item lands in, so
+ * two rows for the same item may not overlap — enforced by an EXCLUDE
+ * constraint, see the migration.
+ */
+
+/** A row in employee_finance_items, with the item it points at resolved.
+ *
+ *  itemCode/itemName/itemType come from master_finance_items by join and are
+ *  read-only: the type in particular is shown as something the system fills
+ *  in from the chosen item, never typed by HR. Only financeItemId is sent
+ *  back on a write — see EmployeeFinanceItemInput. */
+export type EmployeeFinanceItem = {
+  id: number
+  /** FK to master_finance_items.id. */
+  financeItemId: number
+  itemCode: string
+  itemName: string
+  itemType: FinanceItemType
+  /** Always positive. The sign is itemType's job: 'income' adds, 'deduction'
+   *  and 'tax' subtract. */
+  amount: number
+  /** Inclusive start, `YYYY-MM-DD`. */
+  effectiveFrom: string
+  /** Inclusive end, `YYYY-MM-DD`. null means "until further notice", the same
+   *  convention as a shift assignment's effectiveTo. */
+  effectiveTo: string | null
+  note: string | null
+}
+
+/** Body of POST /api/employees/:id/finance-items and
+ *  PUT /api/employees/:id/finance-items/:lineId. Which employee a line
+ *  belongs to is fixed by the route, not the body. */
+export type EmployeeFinanceItemInput = Pick<
+  EmployeeFinanceItem,
+  'financeItemId' | 'amount' | 'effectiveFrom' | 'effectiveTo' | 'note'
+>
+
+/** GET /api/employees/:id/finance-items */
+export type EmployeeFinanceItemListResponse = { employeeFinanceItems: EmployeeFinanceItem[] }
+
+/** POST and PUT /api/employees/:id/finance-items */
+export type EmployeeFinanceItemResponse = { employeeFinanceItem: EmployeeFinanceItem }
+
 /* Attendance ---------------------------------------------------------------- */
 
 /**

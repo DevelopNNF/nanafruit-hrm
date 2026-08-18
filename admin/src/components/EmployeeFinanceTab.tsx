@@ -12,6 +12,7 @@ import {
   type WageType,
 } from '@hrm/shared'
 import { getEmployeeFinance, updateEmployeeFinance } from '../api/employees'
+import { EmployeeFinanceItemsCard } from './EmployeeFinanceItemsCard'
 import { notify } from '../notifications/notify'
 import {
   PAYMENT_METHOD_LABELS,
@@ -424,6 +425,16 @@ export function EmployeeFinanceTab({
             </div>
           </section>
         </fieldset>
+
+        {/* Inside this form, so the save button below stays at the bottom of
+            the page rather than having a card sit under it. The card saves a
+            row at a time on its own and must not disturb this form to do it —
+            it has no <form> of its own, all of its buttons are type="button",
+            and it swallows Enter in its row inputs. See its own comment: those
+            three are what make this placement safe. */}
+        <div className="mt-4">
+          <EmployeeFinanceItemsCard employeeId={employeeId} canWrite={canWrite} />
+        </div>
 
         {canWrite && (
           <div className="flex items-center gap-2.5 pt-1">
