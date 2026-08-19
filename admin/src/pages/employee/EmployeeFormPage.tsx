@@ -84,6 +84,10 @@ const emptyDraft: EmployeeInput = {
     // Same reasoning as holidayGroupId — not every employee has an OT rate
     // schedule assigned yet.
     overtimeGroupId: null,
+    // Null here is not "not decided yet" — it is "this system does not pay
+    // them". Every new employee starts that way, and joining a payroll group
+    // is a deliberate act on the employment tab. See migration 049.
+    payrollGroupId: null,
   },
 }
 

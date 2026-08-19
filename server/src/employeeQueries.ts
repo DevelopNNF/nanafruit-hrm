@@ -44,6 +44,8 @@ export type EmployeeRow = {
   holiday_group_name: string | null
   overtime_group_id: string | null
   overtime_group_name: string | null
+  payroll_group_id: string | null
+  payroll_group_name: string | null
 }
 
 // shift_id/shift_name/shift_start_time/shift_end_time come from
@@ -61,7 +63,8 @@ export const SELECT_EMPLOYEE = `
          d.department_id, md.dept_name AS department_name,
          current_shift.shift_id, ms.shift_name, ms.shift_start_time, ms.shift_end_time,
          d.holiday_group_id, mhg.group_name AS holiday_group_name,
-         d.overtime_group_id, mog.group_name AS overtime_group_name
+         d.overtime_group_id, mog.group_name AS overtime_group_name,
+         d.payroll_group_id, mpg.group_name AS payroll_group_name
   FROM employees e
   LEFT JOIN employment_details d ON d.employee_id = e.id
   LEFT JOIN master_jobs mj ON mj.id = d.job_id
@@ -70,6 +73,7 @@ export const SELECT_EMPLOYEE = `
   LEFT JOIN master_shifts ms ON ms.id = current_shift.shift_id
   LEFT JOIN master_holiday_groups mhg ON mhg.id = d.holiday_group_id
   LEFT JOIN master_overtime_groups mog ON mog.id = d.overtime_group_id
+  LEFT JOIN master_payroll_groups mpg ON mpg.id = d.payroll_group_id
 `
 
 export function rowToEmployee(row: EmployeeRow): Employee {
@@ -123,6 +127,8 @@ export function rowToEmployee(row: EmployeeRow): Employee {
       holidayGroupName: row.holiday_group_name,
       overtimeGroupId: row.overtime_group_id === null ? null : Number(row.overtime_group_id),
       overtimeGroupName: row.overtime_group_name,
+      payrollGroupId: row.payroll_group_id === null ? null : Number(row.payroll_group_id),
+      payrollGroupName: row.payroll_group_name,
     },
   }
 }

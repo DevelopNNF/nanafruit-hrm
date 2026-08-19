@@ -12,8 +12,13 @@
  * Ordered least- to most-privileged. Nothing depends on that order yet — the
  * checks name the roles they allow rather than comparing ranks — but it is the
  * order a reader expects.
+ *
+ * 'HRM.Payroll' is the exception to that ladder: it is not "more than HR", it
+ * is sideways. HR can hire someone and change their shift without ever seeing
+ * what anybody is paid, and the payroll screens check for this role rather
+ * than for HR precisely so that stays true.
  */
-export const ROLES = ['HRM.Viewer', 'HRM.HR', 'HRM.Admin'] as const
+export const ROLES = ['HRM.Viewer', 'HRM.HR', 'HRM.Payroll', 'HRM.Admin'] as const
 export type Role = (typeof ROLES)[number]
 
 /**
@@ -166,6 +171,15 @@ export type EmploymentDetails = {
    *  Derived from overtimeGroupId, not writable directly — absent from
    *  EmploymentDetailsInput. Null exactly when overtimeGroupId is null. */
   overtimeGroupName: string | null
+  /** FK to master_payroll_groups.id. Null means "not paid by this system
+   *  yet" — not "nobody has filled this in". During the parallel run with the
+   *  previous HRM that is the default for everybody, and a payroll period
+   *  only ever covers employees who are in its group. */
+  payrollGroupId: number | null
+  /** master_payroll_groups.group_name as of now, joined in for display.
+   *  Derived from payrollGroupId, not writable directly — absent from
+   *  EmploymentDetailsInput. Null exactly when payrollGroupId is null. */
+  payrollGroupName: string | null
   /** master_shifts.shift_start_time/shift_end_time as of now, joined in
    *  purely so liff's leave-request form can prefill a default time range
    *  without needing its own route into master_shifts (which is admin-only).
@@ -178,8 +192,8 @@ export type EmploymentDetails = {
 }
 
 /** Body of the employment half of POST/PUT — jobTitle, departmentName,
- *  shiftName, holidayGroupName, overtimeGroupName, shiftStartTime and
- *  shiftEndTime are read-only, so they're the fields on EmploymentDetails
+ *  shiftName, holidayGroupName, overtimeGroupName, payrollGroupName,
+ *  shiftStartTime and shiftEndTime are read-only, so they're the fields on EmploymentDetails
  *  that aren't also inputs. */
 export type EmploymentDetailsInput = Omit<
   EmploymentDetails,
@@ -188,6 +202,7 @@ export type EmploymentDetailsInput = Omit<
   | 'shiftName'
   | 'holidayGroupName'
   | 'overtimeGroupName'
+  | 'payrollGroupName'
   | 'shiftStartTime'
   | 'shiftEndTime'
 >
@@ -916,6 +931,135 @@ export type OvertimeGroupListResponse = { overtimeGroups: OvertimeGroup[] }
 
 /** GET /api/overtime-groups/:id, POST, PUT */
 export type OvertimeGroupResponse = { overtimeGroup: OvertimeGroup }
+
+/* Payroll Group Master -------------------------------------------------------
+ *
+ * Which employees a payroll run covers, and on what cycle. See
+ * 048_create_master_payroll_groups.sql for why this is a group and not a
+ * boolean flag on the employee.
+ */
+
+/** How a group's pay date is derived once its period window is known.
+ *  'last_day_of_month' — the last day of the period_code month, which is what
+ *  Nanafruit does. 'fixed_day' — PayrollGroup.payDayOfMonth of that month. */
+export const PAY_DAY_RULES = ['last_day_of_month', 'fixed_day'] as const
+export type PayDayRule = (typeof PAY_DAY_RULES)[number]
+
+/** A row in master_payroll_groups. */
+export type PayrollGroup = {
+  id: number
+  groupCode: string
+  groupName: string
+  /** Day of the month the period ends on: 25 means a period runs from the
+   *  26th of the previous month to the 25th of this one. Capped at 28 by the
+   *  table's CHECK — see that migration for why. */
+  cutoffDay: number
+  payDayRule: PayDayRule
+  /** Only meaningful when payDayRule is 'fixed_day', and null exactly when it
+   *  is not — the table enforces the pairing. */
+  payDayOfMonth: number | null
+  isActive: boolean
+}
+
+/** Body of POST /api/payroll-groups and PUT /api/payroll-groups/:id */
+export type PayrollGroupInput = Omit<PayrollGroup, 'id'>
+
+/** GET /api/payroll-groups */
+export type PayrollGroupListResponse = { payrollGroups: PayrollGroup[] }
+
+/** GET /api/payroll-groups/:id, POST, PUT */
+export type PayrollGroupResponse = { payrollGroup: PayrollGroup }
+
+/* Payroll Period -------------------------------------------------------------
+ *
+ * One pay run for one group. Phase 1 only builds the container: nothing
+ * calculates against it yet.
+ */
+
+/** The pay-run lifecycle. Only 'draft' and 'voided' are reachable today — the
+ *  rest arrive with the phases that give them meaning, and are listed now
+ *  because the allowed transitions are one table (canTransition in
+ *  server/src/payrollPeriod.ts) rather than a rule per route. */
+export const PAYROLL_PERIOD_STATUSES = [
+  'draft',
+  'calculating',
+  'review',
+  'approved',
+  'paid',
+  'closed',
+  'voided',
+] as const
+export type PayrollPeriodStatus = (typeof PAYROLL_PERIOD_STATUSES)[number]
+
+/** A row in payroll_periods. */
+export type PayrollPeriod = {
+  id: number
+  payrollGroupId: number
+  /** master_payroll_groups.group_name, joined in for display. */
+  payrollGroupName: string
+  /** The month the salary is FOR, 'YYYY-MM'. Not the window — period '2026-08'
+   *  on a 25th cut-off runs 2026-07-26 to 2026-08-25. */
+  periodCode: string
+  /** Both inclusive, 'YYYY-MM-DD'. Derived from the group's cutoffDay when the
+   *  period is created, then stored: changing a group's cut-off must not move
+   *  a period that has already been paid. */
+  periodStart: string
+  periodEnd: string
+  payDate: string
+  status: PayrollPeriodStatus
+  note: string | null
+  closedAt: string | null
+  voidedAt: string | null
+  voidReason: string | null
+  createdAt: string
+}
+
+/** Body of POST /api/payroll-periods. The window is optional: send just the
+ *  group and the period code and the server derives it. Send dates as well and
+ *  they are used as given — which is what the form does after HR edits the
+ *  derived values. */
+export type PayrollPeriodInput = {
+  payrollGroupId: number
+  periodCode: string
+  periodStart?: string
+  periodEnd?: string
+  payDate?: string
+  note?: string | null
+}
+
+/** Body of PATCH /api/payroll-periods/:id. Only accepted while the period is
+ *  still 'draft'; the group and the period code are not editable at all, since
+ *  changing either is creating a different period. */
+export type PayrollPeriodPatch = {
+  periodStart: string
+  periodEnd: string
+  payDate: string
+  note: string | null
+}
+
+/** Body of POST /api/payroll-periods/:id/void. The reason is required: a
+ *  period that vanished with no explanation is the thing this status exists
+ *  to avoid. */
+export type PayrollPeriodVoidInput = { voidReason: string }
+
+/** GET /api/payroll-periods */
+export type PayrollPeriodListResponse = { payrollPeriods: PayrollPeriod[] }
+
+/** GET /api/payroll-periods/:id, POST, PATCH, void */
+export type PayrollPeriodResponse = { payrollPeriod: PayrollPeriod }
+
+/** GET /api/payroll-periods/preview — the window a period would get, without
+ *  creating anything. Exists so the form does not reimplement the derivation
+ *  the server already owns. */
+export type PayrollPeriodPreviewResponse = {
+  periodStart: string
+  periodEnd: string
+  payDate: string
+  /** Inclusive day count of the window. Shown on the form because a
+   *  26th-to-25th cycle is 28, 30 or 31 days depending on the month, and that
+   *  surprises people. */
+  dayCount: number
+}
 
 /* Finance Item Master --------------------------------------------------------
  *

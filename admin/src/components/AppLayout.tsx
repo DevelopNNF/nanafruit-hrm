@@ -8,6 +8,7 @@ import {
   Files,
   Database,
   LayoutDashboard,
+  Wallet,
   LogOut,
   Menu,
   Users,
@@ -23,6 +24,7 @@ import { button } from '../styles'
 const ROLE_LABELS: Record<Role, string> = {
   'HRM.Admin': 'Admin',
   'HRM.HR': 'HR',
+  'HRM.Payroll': 'ฝ่ายเงินเดือน',
   'HRM.Viewer': 'ผู้ดูข้อมูล',
 }
 
@@ -49,6 +51,7 @@ const NAV: NavItem[] = [
       { to: '/master/holidays', label: 'วันหยุด (Holiday)' },
       { to: '/master/overtime-groups', label: 'กลุ่มการทำงานล่วงเวลา (Overtime Group)' },
       { to: '/master/finance-items', label: 'รายการทางการเงิน (Finance Item)' },
+      { to: '/master/payroll-groups', label: 'กลุ่มเงินเดือน (Payroll Group)' },
     ],
   },
   {
@@ -70,6 +73,14 @@ const NAV: NavItem[] = [
     children: [
       { to: '/leave-requests', label: 'คำขอลา'},
       { to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา'},
+    ],
+  },
+  {
+    type: 'group',
+    label: 'เงินเดือน',
+    icon: Wallet,
+    children: [
+      { to: '/payroll/periods', label: 'งวดเงินเดือน' },
     ],
   },
   {

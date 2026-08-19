@@ -27,6 +27,21 @@ export function useCanWrite(): boolean {
 }
 
 /**
+ * Whether to offer the controls that manage payroll groups and periods —
+ * HRM.Payroll or HRM.Admin, deliberately NOT the HR that useCanWrite lets
+ * through. Changing a group's cut-off day changes which days of work land in
+ * which pay run, and HR can do their whole job without that. Mirrors
+ * `canWritePayroll` in server/src/routes/payrollGroups.ts.
+ */
+export function useCanWritePayroll(): boolean {
+  const me = useMe()
+  return (
+    me.kind === 'admin' &&
+    me.roles.some((role) => role === 'HRM.Payroll' || role === 'HRM.Admin')
+  )
+}
+
+/**
  * Whether to offer the controls that change master_locations — Admin only,
  * unlike useCanWrite's HR+Admin: a wrong radius here is a security control
  * (who may clock in from where), not a scheduling detail. Mirrors the

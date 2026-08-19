@@ -10,12 +10,14 @@ import {
   type Job,
   type HolidayGroup,
   type OvertimeGroup,
+  type PayrollGroup,
 } from '@hrm/shared'
 import { updateEmployeeEmployment } from '../api/employees'
 import { listJobs } from '../api/jobs'
 import { listDepartments } from '../api/departments'
 import { listHolidayGroups } from '../api/holidayGroups'
 import { listOvertimeGroups } from '../api/overtimeGroups'
+import { listPayrollGroups } from '../api/payrollGroups'
 import { DatePicker } from './DatePicker'
 import { TreeSelect, type TreeSelectOption } from './TreeSelect'
 import { TERMINATION_REASON_LABELS } from './employmentLabels'
@@ -54,6 +56,11 @@ type OvertimeGroupOptionsState =
   | { phase: 'ok'; overtimeGroups: OvertimeGroup[] }
   | { phase: 'error'; message: string }
 
+type PayrollGroupOptionsState =
+  | { phase: 'loading' }
+  | { phase: 'ok'; payrollGroups: PayrollGroup[] }
+  | { phase: 'error'; message: string }
+
 /** Custom controls (DatePicker/TreeSelect) anchor their `required` check on
  *  a zero-size hidden input, so the browser's native validation bubble can
  *  end up invisible or mispositioned. Checking here and surfacing it as a
@@ -82,6 +89,7 @@ function draftFrom(employee: Employee): EmploymentInput {
     departmentId: employee.employment.departmentId,
     holidayGroupId: employee.employment.holidayGroupId,
     overtimeGroupId: employee.employment.overtimeGroupId,
+    payrollGroupId: employee.employment.payrollGroupId,
   }
 }
 
@@ -124,6 +132,9 @@ export function EmployeeEmploymentTab({
     phase: 'loading',
   })
   const [overtimeGroupOptions, setOvertimeGroupOptions] = useState<OvertimeGroupOptionsState>({
+    phase: 'loading',
+  })
+  const [payrollGroupOptions, setPayrollGroupOptions] = useState<PayrollGroupOptionsState>({
     phase: 'loading',
   })
 
@@ -172,6 +183,25 @@ export function EmployeeEmploymentTab({
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setHolidayGroupOptions({
+          phase: 'error',
+          message: err instanceof Error ? err.message : 'request failed',
+        })
+      })
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    listPayrollGroups(controller.signal)
+      .then((payrollGroups) =>
+        setPayrollGroupOptions({
+          phase: 'ok',
+          payrollGroups: payrollGroups.filter((group) => group.isActive),
+        })
+      )
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setPayrollGroupOptions({
           phase: 'error',
           message: err instanceof Error ? err.message : 'request failed',
         })
@@ -260,6 +290,11 @@ export function EmployeeEmploymentTab({
     overtimeGroupOptions.phase === 'ok' ? overtimeGroupOptions.overtimeGroups.map((g) => g.id) : []
   const currentOvertimeGroupMissing =
     draft.overtimeGroupId !== null && !activeOvertimeGroupIds.includes(draft.overtimeGroupId)
+
+  const activePayrollGroupIds =
+    payrollGroupOptions.phase === 'ok' ? payrollGroupOptions.payrollGroups.map((g) => g.id) : []
+  const currentPayrollGroupMissing =
+    draft.payrollGroupId !== null && !activePayrollGroupIds.includes(draft.payrollGroupId)
 
   return (
     <>
@@ -518,6 +553,43 @@ export function EmployeeEmploymentTab({
                 {overtimeGroupOptions.phase === 'error' && (
                   <span className="text-[0.7rem] text-red-700">
                     โหลดรายการกลุ่มการทำงานล่วงเวลาไม่สำเร็จ: {overtimeGroupOptions.message}
+                  </span>
+                )}
+              </label>
+              <label className={fieldLabel}>
+                <span>กลุ่มเงินเดือน (Payroll Group)</span>
+                <select
+                  className={fieldControl}
+                  disabled={payrollGroupOptions.phase === 'loading'}
+                  value={draft.payrollGroupId ?? ''}
+                  onChange={(e) =>
+                    set('payrollGroupId', e.target.value ? Number(e.target.value) : null)
+                  }
+                >
+                  {/* Not "— ไม่ระบุ —" like the others: an employee with no payroll
+                      group is not an unfilled field, they are somebody this
+                      system does not pay. Saying so is the point during the
+                      parallel run with the previous HRM. */}
+                  <option value="">
+                    {payrollGroupOptions.phase === 'loading'
+                      ? 'กำลังโหลดกลุ่มเงินเดือน…'
+                      : '— ยังไม่คิดเงินเดือนในระบบนี้ —'}
+                  </option>
+                  {currentPayrollGroupMissing && (
+                    <option value={draft.payrollGroupId ?? ''}>
+                      {employee.employment.payrollGroupName ?? `#${draft.payrollGroupId}`} (ไม่พร้อมใช้งาน)
+                    </option>
+                  )}
+                  {payrollGroupOptions.phase === 'ok' &&
+                    payrollGroupOptions.payrollGroups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.groupName}
+                      </option>
+                    ))}
+                </select>
+                {payrollGroupOptions.phase === 'error' && (
+                  <span className="text-[0.7rem] text-red-700">
+                    โหลดรายการกลุ่มเงินเดือนไม่สำเร็จ: {payrollGroupOptions.message}
                   </span>
                 )}
               </label>

@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search } from 'lucide-react'
-import type { Employee } from '@hrm/shared'
+import type { Employee, PayrollGroup } from '@hrm/shared'
 import { listEmployees } from '../../api/employees'
+import { listPayrollGroups } from '../../api/payrollGroups'
 import { useCanWrite } from '../../auth/meContext'
-import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
+import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, fieldControl, muted, pageHead, subtitle } from '../../styles'
+
+/** The payroll-group filter's own value space: a group id, everybody, or the
+ *  people no group covers — which during the parallel run with the previous
+ *  HRM is the set HR is working through, and the reason this filter exists. */
+type GroupFilter = 'all' | 'none' | number
 
 type State =
   | { phase: 'loading' }
@@ -30,6 +36,8 @@ function haystack(employee: Employee): string {
 export function EmployeeListPage() {
   const [state, setState] = useState<State>({ phase: 'loading' })
   const [query, setQuery] = useState('')
+  const [payrollGroups, setPayrollGroups] = useState<PayrollGroup[]>([])
+  const [groupFilter, setGroupFilter] = useState<GroupFilter>('all')
   const navigate = useNavigate()
   const canWrite = useCanWrite()
 
@@ -49,14 +57,30 @@ export function EmployeeListPage() {
     return () => controller.abort()
   }, [])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    listPayrollGroups(controller.signal)
+      .then(setPayrollGroups)
+      .catch(() => {
+        // Only used to label a filter — not worth failing the whole page over.
+      })
+    return () => controller.abort()
+  }, [])
+
   // Filtered in the browser against the list already fetched — the same reason
   // the dashboard counts here rather than asking the server.
   const visible = useMemo(() => {
     if (state.phase !== 'ok') return []
     const needle = query.trim().toLowerCase()
-    if (!needle) return state.employees
-    return state.employees.filter((employee) => haystack(employee).includes(needle))
-  }, [state, query])
+    return state.employees.filter((employee) => {
+      if (needle && !haystack(employee).includes(needle)) return false
+      if (groupFilter === 'all') return true
+      if (groupFilter === 'none') return employee.employment.payrollGroupId === null
+      return employee.employment.payrollGroupId === groupFilter
+    })
+  }, [state, query, groupFilter])
+
+  const filtering = query.trim() !== '' || groupFilter !== 'all'
 
   return (
     <>
@@ -106,8 +130,27 @@ export function EmployeeListPage() {
                 className="w-full rounded-md border border-slate-200 bg-white py-2 pr-3 pl-9 text-[0.825rem] text-slate-900 placeholder:text-slate-500"
               />
             </div>
+            <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
+              <span className="whitespace-nowrap">กลุ่มเงินเดือน</span>
+              <select
+                className={`${fieldControl} max-w-52`}
+                value={typeof groupFilter === 'number' ? String(groupFilter) : groupFilter}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setGroupFilter(value === 'all' || value === 'none' ? value : Number(value))
+                }}
+              >
+                <option value="all">— ทั้งหมด —</option>
+                <option value="none">ยังไม่อยู่กลุ่มใด</option>
+                {payrollGroups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.groupName}
+                  </option>
+                ))}
+              </select>
+            </label>
             <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-              {query.trim()
+              {filtering
                 ? `พบ ${visible.length} จาก ${state.employees.length} คน`
                 : `ทั้งหมด ${state.employees.length} คน`}
             </p>
@@ -117,8 +160,8 @@ export function EmployeeListPage() {
             // Not a bordered card: this already sits inside the bordered
             // container above — a second border would box the message twice.
             <div className={cardEmpty}>
-              <p className="mb-1.5 font-semibold text-slate-900">ไม่พบพนักงานที่ตรงกับคำค้น</p>
-              <p className={muted}>ลองใช้คำอื่น หรือล้างช่องค้นหา</p>
+              <p className="mb-1.5 font-semibold text-slate-900">ไม่พบพนักงานที่ตรงกับเงื่อนไข</p>
+              <p className={muted}>ลองใช้คำอื่น ล้างช่องค้นหา หรือเปลี่ยนตัวกรองกลุ่มเงินเดือน</p>
             </div>
           ) : (
             <div className="overflow-x-auto">

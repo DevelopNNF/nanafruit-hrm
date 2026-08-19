@@ -22,6 +22,10 @@ import { HolidayGroupListPage } from './pages/masters/holiday_group/HolidayGroup
 import { HolidayGroupFormPage } from './pages/masters/holiday_group/HolidayGroupFormPage'
 import { OvertimeGroupListPage } from './pages/masters/overtime_group/OvertimeGroupListPage'
 import { OvertimeGroupFormPage } from './pages/masters/overtime_group/OvertimeGroupFormPage'
+import { PayrollGroupListPage } from './pages/masters/payroll_group/PayrollGroupListPage'
+import { PayrollGroupFormPage } from './pages/masters/payroll_group/PayrollGroupFormPage'
+import { PayrollPeriodListPage } from './pages/payroll/PayrollPeriodListPage'
+import { PayrollPeriodFormPage } from './pages/payroll/PayrollPeriodFormPage'
 import { FinanceItemListPage } from './pages/masters/finance_item/FinanceItemListPage'
 import { FinanceItemFormPage } from './pages/masters/finance_item/FinanceItemFormPage'
 import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
@@ -85,6 +89,16 @@ function KeyedOvertimeGroupForm() {
   return <OvertimeGroupFormPage key={id ?? 'new'} />
 }
 
+function KeyedPayrollGroupForm() {
+  const { id } = useParams()
+  return <PayrollGroupFormPage key={id ?? 'new'} />
+}
+
+function KeyedPayrollPeriodForm() {
+  const { id } = useParams()
+  return <PayrollPeriodFormPage key={id ?? 'new'} />
+}
+
 function KeyedFinanceItemForm() {
   const { id } = useParams()
   return <FinanceItemFormPage key={id ?? 'new'} />
@@ -137,6 +151,12 @@ const router = createBrowserRouter([
       { path: 'master/finance-items', element: <FinanceItemListPage /> },
       { path: 'master/finance-items/new', element: <KeyedFinanceItemForm /> },
       { path: 'master/finance-items/:id', element: <KeyedFinanceItemForm /> },
+      { path: 'master/payroll-groups', element: <PayrollGroupListPage /> },
+      { path: 'master/payroll-groups/new', element: <KeyedPayrollGroupForm /> },
+      { path: 'master/payroll-groups/:id', element: <KeyedPayrollGroupForm /> },
+      { path: 'payroll/periods', element: <PayrollPeriodListPage /> },
+      { path: 'payroll/periods/new', element: <KeyedPayrollPeriodForm /> },
+      { path: 'payroll/periods/:id', element: <KeyedPayrollPeriodForm /> },
       { path: 'report/attendance', element: <AttendanceDailyListPage /> },
       { path: 'report/overtime', element: <OvertimeReport /> },
       { path: 'health', element: <HealthPage /> },

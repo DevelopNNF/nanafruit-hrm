@@ -73,6 +73,11 @@ export type AuditAction =
   | 'overtime_request.cancel'
   | 'overtime_request.approve'
   | 'overtime_request.reject'
+  | 'payroll_group.create'
+  | 'payroll_group.update'
+  | 'payroll_period.create'
+  | 'payroll_period.update'
+  | 'payroll_period.void'
 
 type Entry = {
   actor: AuthUser
