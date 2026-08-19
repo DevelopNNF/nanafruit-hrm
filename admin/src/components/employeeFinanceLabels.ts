@@ -14,6 +14,8 @@ import type { PaymentMethod, SocialSecurityType, TaxType, WageType } from '@hrm/
  * that — the selects render whatever string they are handed.
  */
 
+/** Belongs to the wage-history card rather than the settings form since 046,
+ *  but stays here with the rest of the finance tab's wording. */
 export const WAGE_TYPE_LABELS: Record<WageType, string> = {
   monthly: 'รายเดือน',
   daily: 'รายวัน',

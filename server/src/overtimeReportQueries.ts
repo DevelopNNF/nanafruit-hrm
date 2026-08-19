@@ -25,6 +25,7 @@ import {
 } from '@hrm/shared'
 import { pool } from './db.js'
 import { overtimeAmount, overtimeRatesFor } from './overtimeCalculation.js'
+import { wageJoinSqlForDate } from './wageAssignmentQueries.js'
 import { hourlyWage } from './wageRate.js'
 
 type Queryable = Pick<pg.Pool, 'query'>
@@ -74,6 +75,11 @@ type ReportRow = {
  * migration), so that moving someone between groups in June does not reprice
  * work they did in May. COALESCE back to the current group only covers a row
  * whose request has since been deleted by hand, which no route can do.
+ *
+ * The wage is resolved the same way, and for the same reason: per row against
+ * that row's own work_date, not once per employee against today. Before 046
+ * this was a flat join on employee_finance, so a raise silently repriced every
+ * past evening of overtime the next time anyone opened the report.
  */
 const SELECT_REPORT_ROWS = `
   SELECT d.employee_id, e.employee_code,
@@ -86,7 +92,7 @@ const SELECT_REPORT_ROWS = `
          mog.id AS group_id, mog.group_code, mog.group_name,
          mog.rate_ot_workday, mog.rate_normal_dayoff, mog.rate_ot_dayoff,
          mog.rate_normal_holiday, mog.rate_ot_holiday, mog.rounding_minutes,
-         ef.wage_type, ef.wage_amount,
+         wage_on_date.wage_type, wage_on_date.wage_amount,
          d.computed_at
   FROM attendance_daily d
   JOIN employees e ON e.id = d.employee_id
@@ -101,7 +107,7 @@ const SELECT_REPORT_ROWS = `
   ) snap ON true
   LEFT JOIN master_overtime_groups mog
     ON mog.id = COALESCE(snap.overtime_group_id, ed.overtime_group_id)
-  LEFT JOIN employee_finance ef ON ef.employee_id = d.employee_id
+  ${wageJoinSqlForDate('d.employee_id', 'd.work_date')}
 `
 
 function minutesBetween(startTime: string, endTime: string): number {

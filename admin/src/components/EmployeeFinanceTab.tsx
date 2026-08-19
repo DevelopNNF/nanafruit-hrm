@@ -3,22 +3,20 @@ import {
   PAYMENT_METHODS,
   SOCIAL_SECURITY_TYPES,
   TAX_TYPES,
-  WAGE_TYPES,
   type EmployeeFinance,
   type EmployeeFinanceInput,
   type PaymentMethod,
   type SocialSecurityType,
   type TaxType,
-  type WageType,
 } from '@hrm/shared'
 import { getEmployeeFinance, updateEmployeeFinance } from '../api/employees'
 import { EmployeeFinanceItemsCard } from './EmployeeFinanceItemsCard'
+import { WageHistoryCard } from './WageHistoryCard'
 import { notify } from '../notifications/notify'
 import {
   PAYMENT_METHOD_LABELS,
   SOCIAL_SECURITY_TYPE_LABELS,
   TAX_TYPE_LABELS,
-  WAGE_TYPE_LABELS,
 } from './employeeFinanceLabels'
 import {
   alert,
@@ -43,16 +41,15 @@ const DEFAULT_BANK_NAME = 'ไทยพาณิชย์ (SCB)'
 const SOCIAL_SECURITY_FIXED: SocialSecurityType = 'fixed_monthly'
 const TAX_FIXED: TaxType = 'fixed_monthly'
 
-/** Draft state for the 4 enum selects starts unset (`null`, rendered as the
- *  "— โปรดระบุ —" placeholder) rather than defaulting to WAGE_TYPES[0] etc.
- *  — an untouched dropdown should not silently submit whatever happens to be
- *  first in the list. Narrowed to EmployeeFinanceInput once
- *  missingFinanceFields confirms all 4 are picked, in handleSubmit. */
+/** Draft state for the 3 enum selects starts unset (`null`, rendered as the
+ *  "— โปรดระบุ —" placeholder) rather than defaulting to PAYMENT_METHODS[0]
+ *  etc. — an untouched dropdown should not silently submit whatever happens to
+ *  be first in the list. Narrowed to EmployeeFinanceInput once
+ *  missingFinanceFields confirms all 3 are picked, in handleSubmit. */
 type FinanceDraft = Omit<
   EmployeeFinanceInput,
-  'wageType' | 'paymentMethod' | 'socialSecurityType' | 'taxType'
+  'paymentMethod' | 'socialSecurityType' | 'taxType'
 > & {
-  wageType: WageType | null
   paymentMethod: PaymentMethod | null
   socialSecurityType: SocialSecurityType | null
   taxType: TaxType | null
@@ -60,8 +57,6 @@ type FinanceDraft = Omit<
 
 function emptyDraft(): FinanceDraft {
   return {
-    wageType: null,
-    wageAmount: 0,
     paymentMethod: null,
     bankBranchCode: null,
     bankAccountNumber: '',
@@ -75,8 +70,6 @@ function emptyDraft(): FinanceDraft {
 
 function draftFrom(finance: EmployeeFinance): FinanceDraft {
   return {
-    wageType: finance.wageType,
-    wageAmount: finance.wageAmount,
     paymentMethod: finance.paymentMethod,
     bankBranchCode: finance.bankBranchCode,
     bankAccountNumber: finance.bankAccountNumber,
@@ -93,8 +86,6 @@ function draftFrom(finance: EmployeeFinance): FinanceDraft {
  *  bubble, so this is the one path that always runs and is always visible. */
 function missingFinanceFields(draft: FinanceDraft): string[] {
   const missing: string[] = []
-  if (!draft.wageType) missing.push('ประเภทค่าจ้าง')
-  if (draft.wageAmount <= 0) missing.push('ค่าจ้าง')
   if (!draft.paymentMethod) missing.push('ช่องทางการจ่ายค่าจ้าง')
   if (!draft.bankAccountNumber.trim()) missing.push('เลขที่บัญชี')
   if (!draft.socialSecurityType) missing.push('ประกันสังคม')
@@ -191,11 +182,10 @@ export function EmployeeFinanceTab({
     setSaving(true)
     setError(null)
     try {
-      // The missing-field check above guarantees all 4 selects are picked,
+      // The missing-field check above guarantees all 3 selects are picked,
       // so this narrows FinanceDraft down to the input the API wants.
       const input: EmployeeFinanceInput = {
         ...draft,
-        wageType: draft.wageType as WageType,
         paymentMethod: draft.paymentMethod as PaymentMethod,
         socialSecurityType: draft.socialSecurityType as SocialSecurityType,
         taxType: draft.taxType as TaxType,
@@ -240,42 +230,10 @@ export function EmployeeFinanceTab({
         <fieldset disabled={!canWrite} className="min-w-0 border-0 p-0">
           <section className={`${card} mb-4`}>
             <h2 className={sectionTitle}>ข้อมูลพื้นฐาน (Basic information)</h2>
+            {/* No wage fields here since 046: a wage is a dated interval and
+                is set in WageHistoryCard below, the way a shift is set in
+                ShiftHistoryCard rather than on the employment form. */}
             <div className={fieldGrid}>
-              <label className={fieldLabel}>
-                <span>
-                  ประเภทค่าจ้าง <span className={requiredMark}>*</span>
-                </span>
-                <select
-                  required
-                  className={fieldControl}
-                  value={draft.wageType ?? ''}
-                  onChange={(e) => set('wageType', (e.target.value || null) as WageType | null)}
-                >
-                  <option value="" disabled>
-                    — โปรดระบุ —
-                  </option>
-                  {WAGE_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {WAGE_TYPE_LABELS[type]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className={fieldLabel}>
-                <span>
-                  ค่าจ้าง <span className={requiredMark}>*</span>
-                </span>
-                <input
-                  required
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  inputMode="decimal"
-                  className={fieldControl}
-                  value={draft.wageAmount || ''}
-                  onChange={(e) => set('wageAmount', e.target.value === '' ? 0 : Number(e.target.value))}
-                />
-              </label>
               <label className={fieldLabel}>
                 <span>
                   ช่องทางการจ่ายค่าจ้าง <span className={requiredMark}>*</span>
@@ -433,6 +391,7 @@ export function EmployeeFinanceTab({
             and it swallows Enter in its row inputs. See its own comment: those
             three are what make this placement safe. */}
         <div className="mt-4">
+          <WageHistoryCard employeeId={employeeId} canWrite={canWrite} />
           <EmployeeFinanceItemsCard employeeId={employeeId} canWrite={canWrite} />
         </div>
 

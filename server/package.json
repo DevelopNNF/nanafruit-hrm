@@ -8,6 +8,7 @@
     "migrate": "tsx src/migrate.ts",
     "attendance:compute": "tsx src/computeAttendanceDaily.ts",
     "build": "tsc",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },

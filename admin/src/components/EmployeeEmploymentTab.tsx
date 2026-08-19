@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
+  TERMINATION_REASONS,
   WORK_LOCATIONS,
   type Department,
   type Employee,
@@ -17,6 +18,7 @@ import { listHolidayGroups } from '../api/holidayGroups'
 import { listOvertimeGroups } from '../api/overtimeGroups'
 import { DatePicker } from './DatePicker'
 import { TreeSelect, type TreeSelectOption } from './TreeSelect'
+import { TERMINATION_REASON_LABELS } from './employmentLabels'
 import { notify } from '../notifications/notify'
 import {
   alert,
@@ -72,6 +74,8 @@ function draftFrom(employee: Employee): EmploymentInput {
     status: employee.employment.status,
     hireDate: employee.employment.hireDate,
     startWorkingDate: employee.employment.startWorkingDate,
+    endWorkingDate: employee.employment.endWorkingDate,
+    terminationReason: employee.employment.terminationReason,
     employmentType: employee.employment.employmentType,
     workLocation: employee.employment.workLocation,
     jobId: employee.employment.jobId,
@@ -314,6 +318,39 @@ export function EmployeeEmploymentTab({
                   onChange={(value) => set('startWorkingDate', value)}
                   className='w-full'
                 />
+              </label>
+              {/* Optional, and deliberately not tied to status: a resignation
+                  handed in on the 1st sets a last day at the end of the month
+                  while the employee stays Active for all of it. Payroll
+                  prorates against this date, not the status flag. */}
+              <label className={fieldLabel}>
+                <span>วันที่พ้นสภาพ</span>
+                <DatePicker
+                  value={draft.endWorkingDate ?? ''}
+                  onChange={(value) => set('endWorkingDate', value || null)}
+                  className='w-full'
+                />
+              </label>
+              <label className={fieldLabel}>
+                <span>เหตุผลการพ้นสภาพ</span>
+                <select
+                  className={fieldControl}
+                  disabled={draft.endWorkingDate === null}
+                  value={draft.terminationReason ?? ''}
+                  onChange={(e) =>
+                    set(
+                      'terminationReason',
+                      (e.target.value || null) as EmploymentInput['terminationReason']
+                    )
+                  }
+                >
+                  <option value="">— ไม่ระบุ —</option>
+                  {TERMINATION_REASONS.map((reason) => (
+                    <option key={reason} value={reason}>
+                      {TERMINATION_REASON_LABELS[reason]}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className={fieldLabel}>
                 <span>

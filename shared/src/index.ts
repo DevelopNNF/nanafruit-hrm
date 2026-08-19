@@ -64,6 +64,22 @@ export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number]
 export const WORK_LOCATIONS = ['เชียงใหม่', 'ลำพูน'] as const
 export type WorkLocation = (typeof WORK_LOCATIONS)[number]
 
+/** Why an employment ended. English slugs, not the Thai wording admin/ shows
+ *  — สปส.6-09 reports leavers by category, so code will branch on these, and
+ *  the Thai labels live in admin/src/components/employmentLabels.ts. The
+ *  values mirror the CHECK in 047_add_end_working_date_to_employment_details.sql;
+ *  they are a first pass at the categories the company actually uses, which is
+ *  why the column is text + CHECK and not an ENUM. */
+export const TERMINATION_REASONS = [
+  'resigned',
+  'terminated',
+  'retired',
+  'contract_ended',
+  'deceased',
+  'other',
+] as const
+export type TerminationReason = (typeof TERMINATION_REASONS)[number]
+
 /**
  * `employment` is nested rather than flattened so the shape matches both the
  * two tables behind it and the two cards in front of it.
@@ -99,6 +115,17 @@ export type EmploymentDetails = {
    *  Nullable for the same reason idCardNumber is: existing employees have
    *  never recorded it. */
   startWorkingDate: string | null
+  /** Calendar date, `YYYY-MM-DD`. The employee's last working day. Null for
+   *  anyone still employed — and deliberately independent of `status`: a
+   *  resignation handed in on the 1st sets this to the end of the month while
+   *  the employee stays Active for all of it. Payroll prorates a monthly wage
+   *  against this, so it is the date and not the status flag that decides
+   *  what a leaver's final period is worth. */
+  endWorkingDate: string | null
+  /** Null until HR categorises the departure — allowed even once
+   *  endWorkingDate is set, since the last day is usually known first. A
+   *  reason without a date is not allowed (DB CHECK). */
+  terminationReason: TerminationReason | null
   employmentType: EmploymentType
   /** Nullable for the same reason startWorkingDate is. */
   workLocation: WorkLocation | null
@@ -332,6 +359,9 @@ export type LinkCodeResponse = {
  * The Thai labels live in admin/src/components/employeeFinanceLabels.ts.
  * Nothing here should ever be rendered to a user directly. */
 
+/** Belongs to WageAssignment, not EmployeeFinance — the wage moved out of
+ *  that table in 046_create_employee_wage_assignments.sql. Left in this group
+ *  because it is still one of the finance tab's enums. */
 export const WAGE_TYPES = ['monthly', 'daily'] as const
 export type WageType = (typeof WAGE_TYPES)[number]
 
@@ -361,8 +391,6 @@ export type TaxType = (typeof TAX_TYPES)[number]
  *  `null` on EmployeeFinanceResponse, not as this type with empty fields —
  *  there is no honest default to invent for wageAmount/bankAccountNumber. */
 export type EmployeeFinance = {
-  wageType: WageType
-  wageAmount: number
   paymentMethod: PaymentMethod
   /** Fixed to 'ไทยพาณิชย์ (SCB)' for now — the company uses one bank today,
    *  so this is a stored default rather than a picker. Read-only: absent
@@ -394,6 +422,57 @@ export type EmployeeFinanceInput = Omit<EmployeeFinance, 'bankName'>
 /** GET /api/employees/:id/finance, PATCH — null means no finance data has
  *  been saved for this employee yet. */
 export type EmployeeFinanceResponse = { finance: EmployeeFinance | null }
+
+/* Wage assignments ----------------------------------------------------------
+ *
+ * What an employee was paid, and over which dates. The same interval shape as
+ * ShiftAssignment, and for the same reason — see
+ * 046_create_employee_wage_assignments.sql. This is the only source of truth
+ * for a wage; employee_finance's old wage columns are dead.
+ */
+
+/** A row in employee_wage_assignments. */
+export type WageAssignment = {
+  id: number
+  wageType: WageType
+  wageAmount: number
+  /** Inclusive start, 'YYYY-MM-DD'. */
+  effectiveFrom: string
+  /** Inclusive end, 'YYYY-MM-DD', or null for the currently open-ended row.
+   *  There is at most one of those per employee — enforced by the EXCLUDE
+   *  constraint, since two unbounded ranges always overlap. */
+  effectiveTo: string | null
+  note: string | null
+  createdByKind: string
+  createdById: string
+  /** ISO 8601. */
+  createdAt: string
+}
+
+/**
+ * Body of POST /api/employees/:id/wage-changes.
+ *
+ * Unlike ShiftChangeInput, `effectiveFrom` MAY be in the past. A raise agreed
+ * in April and effective from 1 March is ordinary, and the whole point of
+ * this table is that the March payroll then prices March correctly. A shift
+ * change can refuse backdating because attendance already snapshots the shift
+ * at clock-in; a wage has no such snapshot until a payslip is issued.
+ *
+ * There is no `effectiveTo`: a wage runs until the next one supersedes it.
+ * The open row is closed automatically at effectiveFrom - 1.
+ */
+export type WageChangeInput = {
+  wageType: WageType
+  wageAmount: number
+  effectiveFrom: string
+  note?: string | null
+}
+
+/** GET /api/employees/:id/wage-assignments — most recent interval first. */
+export type WageHistoryResponse = { assignments: WageAssignment[] }
+
+/** POST /api/employees/:id/wage-changes */
+export type WageChangeResponse = { assignment: WageAssignment }
 
 /* Job Master --------------------------------------------------------------- */
 

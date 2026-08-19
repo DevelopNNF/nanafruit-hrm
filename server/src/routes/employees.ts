@@ -7,6 +7,7 @@ import {
   ROLES,
   SOCIAL_SECURITY_TYPES,
   TAX_TYPES,
+  TERMINATION_REASONS,
   TITLES,
   WAGE_TYPES,
   PAYMENT_METHODS,
@@ -27,6 +28,11 @@ import {
   type ShiftChangeInput,
   type ShiftChangeResponse,
   type ShiftHistoryResponse,
+  type TerminationReason,
+  type WageChangeInput,
+  type WageChangeResponse,
+  type WageHistoryResponse,
+  type WageType,
 } from '@hrm/shared'
 import { LINK_CODE_TTL_MS, generateLinkCode, hashLinkCode } from '../auth/linkCode.js'
 import { pool, withTransaction } from '../db.js'
@@ -49,6 +55,7 @@ import {
   listShiftAssignments,
   toThailandDateString,
 } from '../shiftAssignmentQueries.js'
+import { createWageChange, listWageAssignments } from '../wageAssignmentQueries.js'
 import {
   deletePhotoObject,
   headPhoto,
@@ -270,12 +277,53 @@ function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<Employ
     }
   }
 
+  // Optional, unlike every other date here: most employees have not left.
+  const endWorkingDateRaw = emp['endWorkingDate']
+  let endWorkingDate: string | null = null
+  if (endWorkingDateRaw !== null && endWorkingDateRaw !== undefined) {
+    if (typeof endWorkingDateRaw !== 'string' || !isCalendarDate(endWorkingDateRaw)) {
+      return { ok: false, message: 'employment.endWorkingDate must be a date as YYYY-MM-DD, or null' }
+    }
+    endWorkingDate = endWorkingDateRaw
+  }
+  // Mirrors employment_details_end_after_hire, caught here so the message
+  // names the two fields instead of surfacing as a constraint violation.
+  if (endWorkingDate !== null && endWorkingDate < hireDate) {
+    return { ok: false, message: 'employment.endWorkingDate ต้องไม่ก่อนวันที่จ้าง' }
+  }
+
+  const terminationReasonRaw = emp['terminationReason']
+  let terminationReason: TerminationReason | null = null
+  if (terminationReasonRaw !== null && terminationReasonRaw !== undefined) {
+    if (
+      typeof terminationReasonRaw !== 'string' ||
+      !(TERMINATION_REASONS as readonly string[]).includes(terminationReasonRaw)
+    ) {
+      return {
+        ok: false,
+        message: `employment.terminationReason must be one of: ${TERMINATION_REASONS.join(', ')}`,
+      }
+    }
+    terminationReason = terminationReasonRaw as TerminationReason
+  }
+  // Mirrors employment_details_termination_reason_needs_date. The reverse is
+  // allowed on purpose: HR knows the last day before they know how สปส. will
+  // categorise it.
+  if (terminationReason !== null && endWorkingDate === null) {
+    return {
+      ok: false,
+      message: 'employment.terminationReason ต้องระบุ endWorkingDate ด้วย',
+    }
+  }
+
   return {
     ok: true,
     value: {
       status: status as EmploymentInput['status'],
       hireDate,
       startWorkingDate,
+      endWorkingDate,
+      terminationReason,
       employmentType: employmentType as EmploymentInput['employmentType'],
       workLocation: workLocation as EmploymentInput['workLocation'],
       jobId,
@@ -302,17 +350,11 @@ const TAX_FIXED: TaxType = 'fixed_monthly'
 /** Shared by GET's absence of validation and PATCH /employees/:id/finance —
  *  really just the latter, but kept alongside parseEmployeeBasicFields/
  *  parseEmploymentFields for the same reason those are split out. */
+// wageType/wageAmount are not read here. A wage is a dated interval as of
+// 046_create_employee_wage_assignments.sql, so it arrives through POST
+// /employees/:id/wage-changes with an effective date attached, never as a
+// bare number on this settings payload.
 function parseEmployeeFinanceFields(raw: Record<string, unknown>): ParseResult<EmployeeFinanceInput> {
-  const wageType = requiredString(raw, 'wageType')
-  if (wageType === null || !(WAGE_TYPES as readonly string[]).includes(wageType)) {
-    return { ok: false, message: `wageType must be one of: ${WAGE_TYPES.join(', ')}` }
-  }
-
-  const wageAmount = requiredPositiveNumber(raw, 'wageAmount')
-  if (wageAmount === null) {
-    return { ok: false, message: 'wageAmount is required and must be a positive number' }
-  }
-
   const paymentMethod = requiredString(raw, 'paymentMethod')
   if (paymentMethod === null || !(PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
     return { ok: false, message: `paymentMethod must be one of: ${PAYMENT_METHODS.join(', ')}` }
@@ -406,8 +448,6 @@ function parseEmployeeFinanceFields(raw: Record<string, unknown>): ParseResult<E
   return {
     ok: true,
     value: {
-      wageType: wageType as EmployeeFinanceInput['wageType'],
-      wageAmount,
       paymentMethod: paymentMethod as EmployeeFinanceInput['paymentMethod'],
       bankBranchCode,
       bankAccountNumber,
@@ -615,14 +655,17 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
 
       await client.query(
         `INSERT INTO employment_details
-           (employee_id, status, hire_date, start_working_date, employment_type, work_location,
+           (employee_id, status, hire_date, start_working_date, end_working_date,
+            termination_reason, employment_type, work_location,
             job_id, department_id, shift_id, holiday_group_id, overtime_group_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           created.id,
           input.employment.status,
           input.employment.hireDate,
           input.employment.startWorkingDate,
+          input.employment.endWorkingDate,
+          input.employment.terminationReason,
           input.employment.employmentType,
           input.employment.workLocation,
           input.employment.jobId,
@@ -793,8 +836,9 @@ employeesRouter.patch(
         const { rowCount } = await client.query(
           `UPDATE employment_details SET
              status = $2, hire_date = $3, start_working_date = $4,
-             employment_type = $5, work_location = $6,
-             job_id = $7, department_id = $8, holiday_group_id = $9, overtime_group_id = $10,
+             end_working_date = $5, termination_reason = $6,
+             employment_type = $7, work_location = $8,
+             job_id = $9, department_id = $10, holiday_group_id = $11, overtime_group_id = $12,
              updated_at = now()
            WHERE employee_id = $1`,
           [
@@ -802,6 +846,8 @@ employeesRouter.patch(
             input.status,
             input.hireDate,
             input.startWorkingDate,
+            input.endWorkingDate,
+            input.terminationReason,
             input.employmentType,
             input.workLocation,
             input.jobId,
@@ -898,13 +944,11 @@ employeesRouter.patch(
 
         const { rows } = await client.query<EmployeeFinanceRow>(
           `INSERT INTO employee_finance
-             (employee_id, wage_type, wage_amount, payment_method, bank_branch_code,
+             (employee_id, payment_method, bank_branch_code,
               bank_account_number, social_security_type, social_security_fixed_amount,
               tax_type, tax_fixed_amount, tax_start_month)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            ON CONFLICT (employee_id) DO UPDATE SET
-             wage_type = EXCLUDED.wage_type,
-             wage_amount = EXCLUDED.wage_amount,
              payment_method = EXCLUDED.payment_method,
              bank_branch_code = EXCLUDED.bank_branch_code,
              bank_account_number = EXCLUDED.bank_account_number,
@@ -914,13 +958,11 @@ employeesRouter.patch(
              tax_fixed_amount = EXCLUDED.tax_fixed_amount,
              tax_start_month = EXCLUDED.tax_start_month,
              updated_at = now()
-           RETURNING wage_type, wage_amount, payment_method, bank_name, bank_branch_code,
+           RETURNING payment_method, bank_name, bank_branch_code,
                      bank_account_number, social_security_type, social_security_fixed_amount,
                      tax_type, tax_fixed_amount, tax_start_month`,
           [
             id,
-            input.wageType,
-            input.wageAmount,
             input.paymentMethod,
             input.bankBranchCode,
             input.bankAccountNumber,
@@ -938,7 +980,7 @@ employeesRouter.patch(
           actor,
           action: 'employee.finance_update',
           entityId: id,
-          detail: { wageType: input.wageType, paymentMethod: input.paymentMethod },
+          detail: { paymentMethod: input.paymentMethod },
         })
 
         return rowToEmployeeFinance(row)
@@ -1040,6 +1082,144 @@ employeesRouter.post(
       const fkField = fkViolationField(err)
       if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.shiftId}`)
       if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in shift change')
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+/** Body of POST /employees/:id/wage-changes. Shaped like
+ *  parseShiftChangeInput, minus effectiveTo — a wage runs until the next one
+ *  supersedes it, so there is no end date to supply. */
+function parseWageChangeInput(body: unknown): ParseResult<WageChangeInput> {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, message: 'body must be a JSON object' }
+  }
+  const raw = body as Record<string, unknown>
+
+  const wageType = requiredString(raw, 'wageType')
+  if (wageType === null || !(WAGE_TYPES as readonly string[]).includes(wageType)) {
+    return { ok: false, message: `wageType must be one of: ${WAGE_TYPES.join(', ')}` }
+  }
+
+  const wageAmount = requiredPositiveNumber(raw, 'wageAmount')
+  if (wageAmount === null) {
+    return { ok: false, message: 'wageAmount is required and must be a positive number' }
+  }
+
+  const effectiveFrom = requiredString(raw, 'effectiveFrom')
+  if (effectiveFrom === null || !isCalendarDate(effectiveFrom)) {
+    return { ok: false, message: 'effectiveFrom must be a date as YYYY-MM-DD' }
+  }
+
+  const noteRaw = raw['note']
+  const note = typeof noteRaw === 'string' && noteRaw.trim() !== '' ? noteRaw.trim() : null
+
+  return { ok: true, value: { wageType: wageType as WageType, wageAmount, effectiveFrom, note } }
+}
+
+// canReadWriteFinance, not the canWrite that /shift-changes uses: a wage is
+// salary data and follows the same rule as the rest of the Finance tab, so a
+// Viewer cannot read it either.
+employeesRouter.get(
+  '/employees/:id/wage-assignments',
+  canReadWriteFinance,
+  async (req: Request, res: Response) => {
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const employee = await findEmployeeById(id)
+      if (!employee) return fail(res, 404, `no employee with id ${id}`)
+
+      const assignments = await listWageAssignments(id)
+      const body: WageHistoryResponse = { assignments }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Deliberately no equivalent of /shift-changes' "no backdating" guard. A raise
+// agreed in April and effective from 1 March is ordinary, and pricing March
+// correctly afterwards is the entire reason employee_wage_assignments exists.
+// The bound that does apply is the employee's own start date: there is no such
+// thing as a wage for a day before they worked here.
+employeesRouter.post(
+  '/employees/:id/wage-changes',
+  canReadWriteFinance,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    const parsed = parseWageChangeInput(req.body)
+    if (!parsed.ok) return fail(res, 400, parsed.message)
+    const input = parsed.value
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const employee = await findEmployeeById(id, client)
+        if (!employee) return { kind: 'not-found' as const }
+
+        // The backfill in 046 dates the first row from start_working_date
+        // where it exists, so the same date is the floor here — otherwise a
+        // change dated earlier would sit before the row it is meant to
+        // supersede and read as an overlap for no obvious reason.
+        const employmentStart =
+          employee.employment.startWorkingDate ?? employee.employment.hireDate
+        if (input.effectiveFrom < employmentStart) {
+          return { kind: 'before-start' as const }
+        }
+
+        const outcome = await createWageChange(client, {
+          employeeId: id,
+          wageType: input.wageType,
+          wageAmount: input.wageAmount,
+          effectiveFrom: input.effectiveFrom,
+          note: input.note ?? null,
+          createdByKind: actor.kind,
+          createdById: actor.oid,
+        })
+        if (outcome.kind !== 'ok') return outcome
+
+        await recordAudit(client, {
+          actor,
+          action: 'employee.wage_change',
+          entityId: id,
+          detail: {
+            employeeCode: employee.employeeCode,
+            wageType: outcome.assignment.wageType,
+            wageAmount: outcome.assignment.wageAmount,
+            effectiveFrom: outcome.assignment.effectiveFrom,
+            note: outcome.assignment.note,
+          },
+        })
+        return outcome
+      })
+
+      if (result.kind === 'not-found') return fail(res, 404, `no employee with id ${id}`)
+      if (result.kind === 'before-start') {
+        return fail(res, 400, 'วันที่มีผลต้องไม่ก่อนวันที่เริ่มงานของพนักงาน')
+      }
+      if (result.kind === 'overlap') {
+        return fail(
+          res,
+          409,
+          'วันที่มีผลทับกับช่วงค่าจ้างที่บันทึกไว้แล้ว — ค่าจ้างที่ปิดช่วงไปแล้วแก้ย้อนหลังไม่ได้ กรุณาตรวจสอบประวัติค่าจ้าง'
+        )
+      }
+
+      const body: WageChangeResponse = { assignment: result.assignment }
+      res.status(201).json(body)
+    } catch (err) {
+      // 23P01, raised by employee_wage_assignments_no_overlap when two admins
+      // record a raise at the same instant and both pass the pre-check above.
+      if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23P01') {
+        return fail(res, 409, 'มีการบันทึกค่าจ้างของพนักงานคนนี้พร้อมกัน กรุณาลองใหม่อีกครั้ง')
+      }
       handleUnexpected(res, err)
     }
   }

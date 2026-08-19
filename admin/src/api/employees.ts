@@ -14,6 +14,10 @@ import type {
   EmploymentInput,
   LinkCodeResponse,
   ShiftAssignment,
+  WageAssignment,
+  WageChangeInput,
+  WageChangeResponse,
+  WageHistoryResponse,
   ShiftChangeInput,
   ShiftChangeResponse,
   ShiftHistoryResponse,
@@ -126,6 +130,25 @@ export async function createShiftChange(
     body: JSON.stringify(input),
   })
   const body = await unwrap<ShiftChangeResponse>(res)
+  return body.assignment
+}
+
+export async function getWageHistory(id: number, signal?: AbortSignal): Promise<WageAssignment[]> {
+  const res = await apiFetch(`/api/employees/${id}/wage-assignments`, { signal })
+  const body = await unwrap<WageHistoryResponse>(res)
+  return body.assignments
+}
+
+export async function createWageChange(
+  id: number,
+  input: WageChangeInput
+): Promise<WageAssignment> {
+  const res = await apiFetch(`/api/employees/${id}/wage-changes`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  const body = await unwrap<WageChangeResponse>(res)
   return body.assignment
 }
 

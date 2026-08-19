@@ -64,6 +64,10 @@ const emptyDraft: EmployeeInput = {
     status: EMPLOYEE_STATUSES[0],
     hireDate: today(),
     startWorkingDate: null,
+    // Nobody is created already gone. Both are set from the employment tab
+    // once someone actually leaves.
+    endWorkingDate: null,
+    terminationReason: null,
     // 0 is not a real master_jobs id — it's the sentinel for "nothing picked
     // yet", matched by the disabled placeholder option in the Job Title select.
     jobId: 0,
