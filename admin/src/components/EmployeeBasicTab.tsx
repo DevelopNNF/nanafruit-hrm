@@ -1,5 +1,11 @@
 import { useState } from 'react'
-import { GENDERS, TITLES, type Employee, type EmployeeBasicInput } from '@hrm/shared'
+import {
+  FINGERPRINT_CODE_MAX_LENGTH,
+  GENDERS,
+  TITLES,
+  type Employee,
+  type EmployeeBasicInput,
+} from '@hrm/shared'
 import { updateEmployeeBasic } from '../api/employees'
 import { EmployeePhotoCard } from './EmployeePhotoCard'
 import { LinkCodeCard } from './LinkCodeCard'
@@ -38,6 +44,7 @@ function draftFrom(employee: Employee): EmployeeBasicInput {
   return {
     employeeCode: employee.employeeCode,
     idCardNumber: employee.idCardNumber,
+    fingerprintCode: employee.fingerprintCode,
     title: employee.title,
     firstNameTh: employee.firstNameTh,
     lastNameTh: employee.lastNameTh,
@@ -189,6 +196,15 @@ export function EmployeeBasicTab({
                   className={fieldControl}
                   value={draft.idCardNumber ?? ''}
                   onChange={(e) => set('idCardNumber', e.target.value.replace(/\D/g, '') || null)}
+                />
+              </label>
+              <label className={fieldLabel}>
+                <span>รหัสลายนิ้วมือ</span>
+                <input
+                  maxLength={FINGERPRINT_CODE_MAX_LENGTH}
+                  className={fieldControl}
+                  value={draft.fingerprintCode ?? ''}
+                  onChange={(e) => set('fingerprintCode', e.target.value.trim() || null)}
                 />
               </label>
               <label className={fieldLabel}>

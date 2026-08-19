@@ -89,6 +89,11 @@ export type TerminationReason = (typeof TERMINATION_REASONS)[number]
  * `employment` is nested rather than flattened so the shape matches both the
  * two tables behind it and the two cards in front of it.
  */
+/** Mirrors the length CHECK on employees.fingerprint_code. Shared so the admin
+ *  input caps typing at the same point the API rejects, rather than letting
+ *  someone fill a field that can only ever fail to save. */
+export const FINGERPRINT_CODE_MAX_LENGTH = 20
+
 export type Employee = {
   id: number
   employeeCode: string
@@ -96,6 +101,12 @@ export type Employee = {
    *  employees have never recorded this, and there is no honest default to
    *  invent for them — same reasoning as GENDERS. */
   idCardNumber: string | null
+  /** The ID a fingerprint terminal knows this employee by — the join key for
+   *  importing a scanner's attendance export. Deliberately separate from
+   *  employeeCode: the terminals were enrolled independently and number
+   *  people differently. Null for anyone not enrolled on a terminal, which is
+   *  most staff, since the usual channel is clocking in through LINE. */
+  fingerprintCode: string | null
   title: Title
   firstNameTh: string
   lastNameTh: string

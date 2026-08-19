@@ -3,6 +3,7 @@ import type { Request, Response } from 'express'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
+  FINGERPRINT_CODE_MAX_LENGTH,
   GENDERS,
   ROLES,
   SOCIAL_SECURITY_TYPES,
@@ -158,6 +159,23 @@ function parseEmployeeBasicFields(raw: Record<string, unknown>): ParseResult<Emp
     return { ok: false, message: 'idCardNumber must be a valid 13-digit Thai national ID number' }
   }
 
+  // Optional, and only ever set for staff enrolled on a fingerprint terminal.
+  // '' is normalised to null rather than stored: the column is unique, so a
+  // second blank code would collide with the first, and "not enrolled" is
+  // exactly what null already means. Length-capped to match the CHECK on the
+  // column — a violation there would surface as an opaque 500 instead.
+  const fingerprintCodeRaw = raw['fingerprintCode']
+  const fingerprintCode =
+    typeof fingerprintCodeRaw === 'string' && fingerprintCodeRaw.trim() !== ''
+      ? fingerprintCodeRaw.trim()
+      : null
+  if (fingerprintCode !== null && fingerprintCode.length > FINGERPRINT_CODE_MAX_LENGTH) {
+    return {
+      ok: false,
+      message: `fingerprintCode must be at most ${FINGERPRINT_CODE_MAX_LENGTH} characters`,
+    }
+  }
+
   const title = requiredString(raw, 'title')
   if (title === null || !(TITLES as readonly string[]).includes(title)) {
     return { ok: false, message: `title must be one of: ${TITLES.join(', ')}` }
@@ -198,6 +216,7 @@ function parseEmployeeBasicFields(raw: Record<string, unknown>): ParseResult<Emp
     value: {
       employeeCode: fields.employeeCode as string,
       idCardNumber,
+      fingerprintCode,
       title: title as EmployeeBasicInput['title'],
       firstNameTh: fields.firstNameTh as string,
       lastNameTh: fields.lastNameTh as string,
@@ -535,13 +554,16 @@ function isUniqueViolation(err: unknown): boolean {
   )
 }
 
-/** employees has two unique columns now — the constraint name says which one
+/** employees has three unique columns now — the constraint name says which one
  *  actually failed rather than assuming it's always employee_code. */
-function uniqueViolationField(err: unknown): 'employeeCode' | 'idCardNumber' | null {
+function uniqueViolationField(
+  err: unknown
+): 'employeeCode' | 'idCardNumber' | 'fingerprintCode' | null {
   const constraint =
     typeof err === 'object' && err !== null ? (err as { constraint?: unknown }).constraint : null
   if (constraint === 'employees_employee_code_key') return 'employeeCode'
   if (constraint === 'employees_id_card_number_key') return 'idCardNumber'
+  if (constraint === 'employees_fingerprint_code_key') return 'fingerprintCode'
   return null
 }
 
@@ -647,13 +669,15 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
     const employee = await withTransaction(async (client) => {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO employees
-           (employee_code, id_card_number, title, first_name_th, last_name_th,
+           (employee_code, id_card_number, fingerprint_code, title,
+            first_name_th, last_name_th,
             first_name_en, last_name_en, nickname, gender)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id`,
         [
           input.employeeCode,
           input.idCardNumber,
+          input.fingerprintCode,
           input.title,
           input.firstNameTh,
           input.lastNameTh,
@@ -733,6 +757,9 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
       if (field === 'idCardNumber') {
         return fail(res, 409, `เลขบัตรประชาชน ${input.idCardNumber} ถูกใช้งานแล้ว`)
       }
+      if (field === 'fingerprintCode') {
+        return fail(res, 409, `รหัสลายนิ้วมือ ${input.fingerprintCode} ถูกใช้งานแล้ว`)
+      }
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
     }
     const fkField = fkViolationField(err)
@@ -777,15 +804,17 @@ employeesRouter.patch('/employees/:id/basic', canWrite, async (req: Request, res
     const result = await withTransaction(async (client) => {
       const { rowCount } = await client.query(
         `UPDATE employees SET
-           employee_code = $2, id_card_number = $3, title = $4,
-           first_name_th = $5, last_name_th = $6,
-           first_name_en = $7, last_name_en = $8,
-           nickname = $9, gender = $10, updated_at = now()
+           employee_code = $2, id_card_number = $3, fingerprint_code = $4,
+           title = $5,
+           first_name_th = $6, last_name_th = $7,
+           first_name_en = $8, last_name_en = $9,
+           nickname = $10, gender = $11, updated_at = now()
          WHERE id = $1`,
         [
           id,
           input.employeeCode,
           input.idCardNumber,
+          input.fingerprintCode,
           input.title,
           input.firstNameTh,
           input.lastNameTh,
@@ -820,6 +849,9 @@ employeesRouter.patch('/employees/:id/basic', canWrite, async (req: Request, res
       const field = uniqueViolationField(err)
       if (field === 'idCardNumber') {
         return fail(res, 409, `เลขบัตรประชาชน ${input.idCardNumber} ถูกใช้งานแล้ว`)
+      }
+      if (field === 'fingerprintCode') {
+        return fail(res, 409, `รหัสลายนิ้วมือ ${input.fingerprintCode} ถูกใช้งานแล้ว`)
       }
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
     }

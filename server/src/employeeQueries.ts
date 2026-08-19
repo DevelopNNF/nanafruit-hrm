@@ -18,6 +18,7 @@ export type EmployeeRow = {
   id: string // bigint: pg hands these back as strings to avoid precision loss
   employee_code: string
   id_card_number: string | null
+  fingerprint_code: string | null
   title: string
   first_name_th: string
   last_name_th: string
@@ -54,7 +55,7 @@ export type EmployeeRow = {
 // column stopped being a safe "current shift" source the moment a change
 // could be scheduled for a future date with no job to flip it on arrival.
 export const SELECT_EMPLOYEE = `
-  SELECT e.id, e.employee_code, e.id_card_number, e.title,
+  SELECT e.id, e.employee_code, e.id_card_number, e.fingerprint_code, e.title,
          e.first_name_th, e.last_name_th, e.first_name_en, e.last_name_en,
          e.nickname, e.gender,
          d.status, d.hire_date, d.start_working_date, d.end_working_date,
@@ -100,6 +101,7 @@ export function rowToEmployee(row: EmployeeRow): Employee {
     id: Number(row.id),
     employeeCode: row.employee_code,
     idCardNumber: row.id_card_number,
+    fingerprintCode: row.fingerprint_code,
     title: row.title as Employee['title'],
     firstNameTh: row.first_name_th,
     lastNameTh: row.last_name_th,

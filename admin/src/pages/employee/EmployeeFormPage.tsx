@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import {
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
+  FINGERPRINT_CODE_MAX_LENGTH,
   GENDERS,
   TITLES,
   WORK_LOCATIONS,
@@ -53,6 +54,7 @@ function today(): string {
 const emptyDraft: EmployeeInput = {
   employeeCode: '',
   idCardNumber: null,
+  fingerprintCode: null,
   title: TITLES[0],
   firstNameTh: '',
   lastNameTh: '',
@@ -430,6 +432,15 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
                   onChange={(e) =>
                     setBasic('idCardNumber', e.target.value.replace(/\D/g, '') || null)
                   }
+                />
+              </label>
+              <label className={fieldLabel}>
+                <span>รหัสลายนิ้วมือ</span>
+                <input
+                  maxLength={FINGERPRINT_CODE_MAX_LENGTH}
+                  className={fieldControl}
+                  value={draft.fingerprintCode ?? ''}
+                  onChange={(e) => setBasic('fingerprintCode', e.target.value.trim() || null)}
                 />
               </label>
               <label className={fieldLabel}>
