@@ -30,6 +30,8 @@ import { FinanceItemListPage } from './pages/masters/finance_item/FinanceItemLis
 import { FinanceItemFormPage } from './pages/masters/finance_item/FinanceItemFormPage'
 import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
+import { AttendanceImportPage } from './pages/AttendanceImportPage'
+import { AttendanceImportHistoryPage } from './pages/AttendanceImportHistoryPage'
 import { AttendanceDailyListPage } from './pages/reports/AttendanceReport'
 import { OvertimeReport } from './pages/reports/OvertimeReport'
 import { TimeCorrectionListPage } from './pages/time_correction/TimeCorrectionListPage'
@@ -116,6 +118,10 @@ const router = createBrowserRouter([
       { path: 'employees/new', element: <KeyedEmployeeForm /> },
       { path: 'employees/:id', element: <KeyedEmployeeForm /> },
       { path: 'attendance', element: <AttendanceListPage /> },
+      // Both before nothing in particular — 'import'/'imports' are literal
+      // segments and 'attendance' has no :id child to shadow.
+      { path: 'attendance/import', element: <AttendanceImportPage /> },
+      { path: 'attendance/imports', element: <AttendanceImportHistoryPage /> },
       { path: 'time-corrections', element: <TimeCorrectionListPage /> },
       { path: 'time-corrections/:id', element: <TimeCorrectionDetailPage /> },
       { path: 'leave-requests', element: <LeaveRequestListPage /> },

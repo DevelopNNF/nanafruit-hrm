@@ -10,6 +10,7 @@ import { departmentsRouter } from './routes/departments.js'
 import { shiftsRouter } from './routes/shifts.js'
 import { locationsRouter } from './routes/locations.js'
 import { attendanceRouter } from './routes/attendance.js'
+import { attendanceImportRouter } from './routes/attendanceImport.js'
 import { timeCorrectionsRouter } from './routes/timeCorrections.js'
 import { leaveTypesRouter } from './routes/leaveTypes.js'
 import { holidayGroupsRouter } from './routes/holidayGroups.js'
@@ -85,6 +86,11 @@ app.use('/api', authenticate, jobsRouter)
 app.use('/api', authenticate, departmentsRouter)
 app.use('/api', authenticate, shiftsRouter)
 app.use('/api', authenticate, locationsRouter)
+// Before attendanceRouter: its GET /attendance/daily and this router's
+// /attendance/import paths do not collide, but keeping the import's own body
+// parser next to its routes means the global express.json above never sees an
+// .xlsx upload.
+app.use('/api', authenticate, attendanceImportRouter)
 app.use('/api', authenticate, attendanceRouter)
 app.use('/api', authenticate, timeCorrectionsRouter)
 app.use('/api', authenticate, leaveTypesRouter)

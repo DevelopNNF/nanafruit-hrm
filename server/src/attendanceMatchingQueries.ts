@@ -444,7 +444,7 @@ export async function resolveExpectedShiftWindows(
  *  still match — symmetric and fixed rather than per-shift-configurable,
  *  since this is a data-correlation tolerance, not an HR late/early policy
  *  (that's lateGraceMinutes/earlyLeaveGraceMinutes on master_shifts). */
-const MATCH_BUFFER_MINUTES = 120
+export const MATCH_BUFFER_MINUTES = 120
 
 function withBufferMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60_000)
@@ -496,8 +496,14 @@ async function loadEventsInRange(
  *
  * Returns null for a date with neither, which is a date that can hold no
  * punches at all: no shift assigned and no overtime approved.
+ *
+ * Exported for the attendance import, which has to decide which work-date an
+ * uploaded punch belongs to *before* there is a row to match against. It must
+ * use the same span as matchAttendanceForDates or the two disagree about who
+ * owns an overnight shift's 02:00 punch — the import would write it as one
+ * day's check-out and the matcher would then look for it on another.
  */
-function matchSpanOf(window: ExpectedShiftWindow): { start: Date; end: Date } | null {
+export function matchSpanOf(window: ExpectedShiftWindow): { start: Date; end: Date } | null {
   const starts: number[] = []
   const ends: number[] = []
 

@@ -1,9 +1,24 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Upload } from 'lucide-react'
 import type { AttendanceListItem, Employee } from '@hrm/shared'
 import { listAttendance } from '../api/attendance'
 import { listEmployees } from '../api/employees'
+import { useCanWrite } from '../auth/meContext'
 import { DatePicker } from '../components/DatePicker'
-import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../styles'
+import {
+  alert,
+  alertDetail,
+  alertTitle,
+  badge,
+  button,
+  cardEmpty,
+  eyebrow,
+  link,
+  muted,
+  pageHead,
+  subtitle,
+} from '../styles'
 
 type State =
   | { phase: 'loading' }
@@ -33,6 +48,7 @@ const selectClass =
   'min-w-0 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-[0.825rem] text-slate-900 hover:enabled:border-slate-500'
 
 export function AttendanceListPage() {
+  const canWrite = useCanWrite()
   const [state, setState] = useState<State>({ phase: 'loading' })
   const [employees, setEmployees] = useState<Employee[]>([])
   const [employeeId, setEmployeeId] = useState<string>('')
@@ -83,6 +99,16 @@ export function AttendanceListPage() {
           <p className={eyebrow}>Time Attendance</p>
           <h1>การลงเวลา</h1>
           <p className={subtitle}>ประวัติการลงเวลาเข้า-ออกงานของพนักงาน</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Link className={link} to="/attendance/imports">
+            ประวัติการนำเข้า
+          </Link>
+          {canWrite && (
+            <Link className={button('primary')} to="/attendance/import">
+              <Upload size={16} /> นำเข้าการลงเวลา
+            </Link>
+          )}
         </div>
       </header>
 
@@ -185,6 +211,8 @@ export function AttendanceListPage() {
                     <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap">
                       {event.source === 'admin_correction' ? (
                         <span className={badge('role')}>แก้ไขโดย HR</span>
+                      ) : event.source === 'fingerprint_import' ? (
+                        <span className={badge('pending')}>เครื่องสแกน</span>
                       ) : (
                         <span className={muted}>GPS</span>
                       )}

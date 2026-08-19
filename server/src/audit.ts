@@ -37,6 +37,7 @@ export type AuditAction =
   | 'shift.update'
   | 'location.create'
   | 'location.update'
+  | 'attendance.import'
   | 'time_correction.create'
   | 'time_correction.approve'
   | 'time_correction.reject'

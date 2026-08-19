@@ -1175,7 +1175,7 @@ export type AttendanceEventType = (typeof ATTENDANCE_EVENT_TYPES)[number]
  * Where the event came from: the LIFF app (GPS-backed), or an admin-approved
  * time correction request inserting the event on the employee's behalf.
  */
-export const ATTENDANCE_SOURCES = ['liff_gps', 'admin_correction'] as const
+export const ATTENDANCE_SOURCES = ['liff_gps', 'admin_correction', 'fingerprint_import'] as const
 export type AttendanceSource = (typeof ATTENDANCE_SOURCES)[number]
 
 /** A row in attendance_events. */
@@ -1248,6 +1248,117 @@ export type AttendanceListItem = AttendanceEvent & {
 
 /** GET /api/attendance */
 export type AttendanceListResponse = { events: AttendanceListItem[] }
+
+/* Attendance Import ----------------------------------------------------------
+ *
+ * Loading a fingerprint terminal's Excel export into attendance_events, for
+ * the staff who clock at a machine rather than through LINE.
+ *
+ * Two steps on purpose. The preview parses, matches fingerprint codes to
+ * employees and works out which punch is a check-in — but writes nothing, so
+ * HR can see what the file will do before it does it. That matters more than
+ * usual here: nothing in the sheet says whether 02:00 is an arrival or an
+ * overnight departure, the server infers it from the employee's shift, and the
+ * preview is the only place a wrong inference is visible before the events are
+ * in the ledger for good.
+ *
+ * Both endpoints take the .xlsx bytes as the raw request body, with the file
+ * name in the `fileName` query parameter. The confirm step re-sends the file
+ * rather than posting back the preview's rows: what gets written is then what
+ * the file says, not what a browser round-trip claims it said.
+ */
+
+/** One punch, as the preview explains it back to HR. */
+export type AttendanceImportPunchPreview = {
+  /** ISO 8601. */
+  eventTime: string
+  eventType: AttendanceEventType
+  /** The work-date the punch was attributed to — not always the calendar day
+   *  it happened on, for an overnight shift. */
+  workDate: string
+  /** False when no shift window claimed this punch, so its type came from the
+   *  calendar-day fallback. Worth surfacing: it is the case most likely to be
+   *  read the wrong way round. */
+  matchedShift: boolean
+  /** Already present in attendance_events — it will be skipped, not written
+   *  twice. Re-uploading an overlapping period is expected, not a mistake. */
+  duplicate: boolean
+}
+
+export type AttendanceImportEmployeePreview = {
+  fingerprintCode: string
+  /** The name the sheet carried, when it carried one. Display only. */
+  nameInFile: string | null
+  /** Null when no employee has this fingerprint code — the punches below are
+   *  then empty and the code appears in unmatchedCodes. */
+  employeeId: number | null
+  employeeCode: string | null
+  employeeName: string | null
+  punches: AttendanceImportPunchPreview[]
+  newCount: number
+  duplicateCount: number
+  /** How many of the punches fell outside every expected shift window. */
+  unmatchedShiftCount: number
+}
+
+/** POST /api/attendance/import/preview */
+export type AttendanceImportPreview = {
+  fileName: string
+  /** The period the file itself declares, inclusive, 'YYYY-MM-DD'. */
+  rangeFrom: string
+  rangeTo: string
+  /** The terminal's own export date, when the sheet carried one. */
+  generatedOn: string | null
+  employees: AttendanceImportEmployeePreview[]
+  /** Fingerprint codes in the file that match no employee. Importing goes
+   *  ahead without them — the fix is to fill in the missing รหัสลายนิ้วมือ and
+   *  upload the same file again, which skips everything already loaded. */
+  unmatchedCodes: string[]
+  /** Recoverable oddities in the sheet, phrased for HR. */
+  warnings: string[]
+  totalNewCount: number
+  totalDuplicateCount: number
+}
+
+export type AttendanceImportPreviewResponse = { preview: AttendanceImportPreview }
+
+/** POST /api/attendance/import */
+export type AttendanceImportResult = {
+  batchId: number
+  importedCount: number
+  skippedDuplicateCount: number
+  employeeCount: number
+  unmatchedCodes: string[]
+  /** False when the daily report could not be rebuilt because the attendance
+   *  job already held its lock — the import itself still committed, and the
+   *  next scheduled run picks the dates up. */
+  recomputed: boolean
+}
+
+export type AttendanceImportResponse = { result: AttendanceImportResult }
+
+/** A row of attendance_import_batches — the import history. Read-only: there
+ *  is no undo, because attendance_events has no delete path at all. A wrong
+ *  punch is corrected the way every other wrong punch is. */
+export type AttendanceImportBatch = {
+  id: number
+  fileName: string
+  fileSizeBytes: number
+  rangeFrom: string
+  rangeTo: string
+  generatedOn: string | null
+  employeeCount: number
+  eventCount: number
+  skippedDuplicateCount: number
+  unmatchedCodes: string[]
+  /** Display name of whoever uploaded it. */
+  importedByName: string | null
+  /** ISO 8601. */
+  importedAt: string
+}
+
+/** GET /api/attendance/import/batches */
+export type AttendanceImportBatchListResponse = { batches: AttendanceImportBatch[] }
 
 /* Attendance Daily -----------------------------------------------------------
  *
