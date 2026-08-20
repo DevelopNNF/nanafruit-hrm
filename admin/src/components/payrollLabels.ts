@@ -1,4 +1,4 @@
-import type { PayDayRule, PayrollPeriodStatus } from '@hrm/shared'
+import type { PayDayRule, PayrollEntryReviewReasonCode, PayrollPeriodStatus } from '@hrm/shared'
 
 /** English slugs live in the database; Thai is what people read. Same split as
  *  employeeFinanceLabels.ts and employmentLabels.ts. */
@@ -15,6 +15,16 @@ export const PAYROLL_PERIOD_STATUS_LABELS: Record<PayrollPeriodStatus, string> =
   paid: 'จ่ายแล้ว',
   closed: 'ปิดงวดแล้ว',
   voided: 'ยกเลิก',
+}
+
+/** Why calculatePayrollEntries flagged an entry — shown on the payslip so
+ *  "ต้องตรวจสอบ" is followed by an actual explanation instead of a bare badge. */
+export const PAYROLL_ENTRY_REVIEW_REASON_LABELS: Record<PayrollEntryReviewReasonCode, string> = {
+  incomplete_day: 'ลงเวลาไม่ครบ (มีแค่เข้าหรือออกอย่างใดอย่างหนึ่ง)',
+  unscheduled_work_day: 'มาทำงานในวันที่ไม่มีตารางกะ',
+  missing_wage: 'ไม่พบอัตราค่าจ้างของวันนั้น',
+  unpriceable_deduction: 'มีนาทีที่ควรหักสาย/ออกก่อน แต่หาชั่วโมงทำงานของกะไม่ได้',
+  mixed_wage_type: 'ประเภทค่าจ้าง (รายเดือน/รายวัน) เปลี่ยนกลางงวด ระบบจึงยังไม่คำนวณให้',
 }
 
 /** Thai date, e.g. "25 ส.ค. 2569" — the same rendering DatePicker shows, so a

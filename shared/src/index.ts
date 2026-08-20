@@ -1161,6 +1161,119 @@ export type EmployeeFinanceItemListResponse = { employeeFinanceItems: EmployeeFi
 /** POST and PUT /api/employees/:id/finance-items */
 export type EmployeeFinanceItemResponse = { employeeFinanceItem: EmployeeFinanceItem }
 
+/* Payroll Entry ---------------------------------------------------------------
+ *
+ * The frozen result of running "calculate" for one employee in one payroll
+ * period — see 055_create_payroll_entries.sql / 056_create_payroll_entry_lines.sql.
+ * Phase 2 only ever produces basic-wage lines; OT (Phase 3) and statutory
+ * deductions (Phase 4/5) add their own line codes to the same shape later.
+ */
+
+/** The four payslip lines Phase 2 writes. Not master_finance_items rows —
+ *  these are core payroll lines every employee can have, not HR-configured
+ *  per-employee allowances. See 056's comment for why Phase 3's
+ *  finance-item-backed lines are a separate column, not a fifth code here. */
+export const PAYROLL_ENTRY_LINE_CODES = [
+  'BASIC_WAGE',
+  'ABSENCE_DEDUCT',
+  'LATE_DEDUCT',
+  'EARLY_LEAVE_DEDUCT',
+] as const
+export type PayrollEntryLineCode = (typeof PAYROLL_ENTRY_LINE_CODES)[number]
+
+/** Why calculatePayrollEntries flagged an entry needs_review — see
+ *  057_add_review_reasons_to_payroll_entries.sql. English slugs; the Thai
+ *  wording is PAYROLL_ENTRY_REVIEW_REASON_LABELS in admin/. */
+export const PAYROLL_ENTRY_REVIEW_REASON_CODES = [
+  /** A day with only one of check-in/check-out punched. */
+  'incomplete_day',
+  /** Work punched on a day with no shift expected — Phase 2 does not guess
+   *  whether it should be paid as ordinary time or OT. */
+  'unscheduled_work_day',
+  /** A 'present' day with no wage assignment covering it. */
+  'missing_wage',
+  /** A late/early deduction was owed but could not be priced (no shift
+   *  assigned that day, so its working minutes are unknown). */
+  'unpriceable_deduction',
+  /** wage_type (monthly/daily) changed partway through the period — Phase 2
+   *  does not attempt a split calculation. */
+  'mixed_wage_type',
+] as const
+export type PayrollEntryReviewReasonCode = (typeof PAYROLL_ENTRY_REVIEW_REASON_CODES)[number]
+
+/** One triggered reason, and which dates it applies to. workDates is empty
+ *  for a period-level reason (mixed_wage_type has no single date to name). */
+export type PayrollEntryReviewReason = {
+  code: PayrollEntryReviewReasonCode
+  /** 'YYYY-MM-DD', ascending. */
+  workDates: string[]
+}
+
+/** A row in payroll_entry_lines. No fields to join out to resolve — everything
+ *  a payslip line needs is snapshotted onto the row itself. */
+export type PayrollEntryLine = {
+  id: number
+  itemCode: string
+  itemName: string
+  itemType: FinanceItemType
+  quantity: number | null
+  rate: number | null
+  /** Always positive; itemType's job is the sign. */
+  amount: number
+  sortOrder: number
+}
+
+/** A row in payroll_entries: one employee's result for one period.
+ *  employeeCode/employeeName/wageType are snapshots taken at calculate time —
+ *  see the migration's comment on why they are copied rather than joined. */
+export type PayrollEntry = {
+  id: number
+  payrollPeriodId: number
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  wageType: WageType
+  /** Monthly only — null for a daily entry. */
+  employedDays: number | null
+  isFullPeriod: boolean | null
+  /** Daily only — null for a monthly entry. */
+  workDays: number | null
+  paidLeaveDays: number | null
+  absentDays: number
+  lateMinutesTotal: number
+  lateMinutesDeducted: number
+  earlyLeaveMinutesTotal: number
+  earlyLeaveMinutesDeducted: number
+  grossEarnings: number
+  totalDeductions: number
+  netPay: number
+  /** True when reviewReasons is non-empty — a day Phase 2 does not guess a
+   *  wage for landed in this period, or its wage_type changed mid-period. HR
+   *  reviews these instead of the system silently deciding. */
+  needsReview: boolean
+  /** Empty when needsReview is false. See PayrollEntryReviewReason for what
+   *  each code means. */
+  reviewReasons: PayrollEntryReviewReason[]
+  calculatedAt: string
+}
+
+/** A payroll_entries row together with its lines — the shape the payslip
+ *  screen renders. */
+export type PayrollEntryWithLines = PayrollEntry & { lines: PayrollEntryLine[] }
+
+/** GET /api/payroll-periods/:id/entries */
+export type PayrollEntryListResponse = { payrollEntries: PayrollEntry[] }
+
+/** GET /api/payroll-entries/:id */
+export type PayrollEntryResponse = { payrollEntry: PayrollEntryWithLines }
+
+/** POST /api/payroll-periods/:id/calculate */
+export type PayrollCalculateResponse = {
+  payrollPeriod: PayrollPeriod
+  entryCount: number
+  needsReviewCount: number
+}
+
 /* Attendance ---------------------------------------------------------------- */
 
 /**

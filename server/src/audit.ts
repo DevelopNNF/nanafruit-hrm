@@ -79,6 +79,7 @@ export type AuditAction =
   | 'payroll_period.create'
   | 'payroll_period.update'
   | 'payroll_period.void'
+  | 'payroll_period.calculate'
 
 type Entry = {
   actor: AuthUser

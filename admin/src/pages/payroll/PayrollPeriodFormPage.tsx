@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
-import type { PayrollGroup, PayrollPeriod } from '@hrm/shared'
+import { ArrowLeft, Calculator } from 'lucide-react'
+import type { PayrollEntry, PayrollGroup, PayrollPeriod } from '@hrm/shared'
 import { listPayrollGroups } from '../../api/payrollGroups'
 import {
   createPayrollPeriod,
@@ -10,6 +10,7 @@ import {
   updatePayrollPeriod,
   voidPayrollPeriod,
 } from '../../api/payrollPeriods'
+import { calculatePayrollPeriod, listPayrollEntries } from '../../api/payrollEntries'
 import { useCanWritePayroll } from '../../auth/meContext'
 import { DatePicker } from '../../components/DatePicker'
 import {
@@ -32,6 +33,17 @@ import {
   requiredMark,
   subtitle,
 } from '../../styles'
+
+/** Same rendering as WageHistoryCard's formatAmount — repeated locally rather
+ *  than shared, matching how this codebase treats small formatting helpers. */
+function formatAmount(amount: number): string {
+  return amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+const WAGE_TYPE_LABEL: Record<PayrollEntry['wageType'], string> = {
+  monthly: 'รายเดือน',
+  daily: 'รายวัน',
+}
 
 const sectionTitle =
   'mb-5 border-b border-slate-200 pb-3 text-xs font-bold tracking-wider text-slate-500 uppercase'
@@ -85,6 +97,9 @@ export function PayrollPeriodFormPage() {
   const [error, setError] = useState<string | null>(null)
   const [voidReason, setVoidReason] = useState('')
   const [voidOpen, setVoidOpen] = useState(false)
+  const [entries, setEntries] = useState<PayrollEntry[]>([])
+  const [entriesLoading, setEntriesLoading] = useState(!isNew)
+  const [calculating, setCalculating] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -121,6 +136,40 @@ export function PayrollPeriodFormPage() {
 
     return () => controller.abort()
   }, [id])
+
+  useEffect(() => {
+    if (id === null) return
+    const controller = new AbortController()
+    listPayrollEntries(id, controller.signal)
+      .then((loaded) => setEntries(loaded))
+      .catch(() => {
+        // Same reasoning as the group-list load above: entries are secondary
+        // to the period header itself, not worth replacing the whole page.
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setEntriesLoading(false)
+      })
+    return () => controller.abort()
+  }, [id])
+
+  async function handleCalculate() {
+    if (id === null) return
+    setCalculating(true)
+    try {
+      const result = await calculatePayrollPeriod(id)
+      setPeriod(result.payrollPeriod)
+      const reloaded = await listPayrollEntries(id)
+      setEntries(reloaded)
+      notify.success(
+        `คำนวณแล้ว ${result.entryCount} คน`,
+        result.needsReviewCount > 0 ? `${result.needsReviewCount} คนต้องตรวจสอบเพิ่มเติม` : undefined
+      )
+    } catch (err) {
+      notify.error('คำนวณไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setCalculating(false)
+    }
+  }
 
   /** Fills the window from the server's derivation. Only ever called on the
    *  create form — an existing period's dates are what they are. */
@@ -232,11 +281,10 @@ export function PayrollPeriodFormPage() {
         </div>
       )}
 
-      {canWrite && !isNew && status !== 'draft' && (
-        <div className={alert('info')}>
-          <p className={alertTitle()}>งวดนี้พ้นสถานะร่างแล้ว</p>
+      {canWrite && !isNew && status === 'voided' && (
+        <div className={alert('danger')}>
+          <p className={alertTitle()}>งวดนี้ถูกยกเลิก</p>
           <p className={muted}>
-            แก้ช่วงวันที่ไม่ได้ เพราะตัวเลขที่คำนวณไว้อ้างอิงกับช่วงเดิม
             {period?.voidReason ? ` — เหตุผลที่ยกเลิก: ${period.voidReason}` : ''}
           </p>
         </div>
@@ -304,7 +352,6 @@ export function PayrollPeriodFormPage() {
                     void fillWindow(draft.payrollGroupId, value)
                   }}
                 />
-                <span className={muted}>เดือนที่จ่ายเงิน เช่น 2026-08</span>
               </label>
             </div>
           </section>
@@ -373,14 +420,16 @@ export function PayrollPeriodFormPage() {
               {saving ? 'กำลังบันทึก…' : 'บันทึก'}
             </button>
           )}
-          <button
-            className={button()}
-            type="button"
-            onClick={() => void navigate('/payroll/periods')}
-            disabled={saving}
-          >
-            {editable ? 'ยกเลิก' : 'กลับ'}
-          </button>
+          {(isNew &&
+            <button
+              className={button()}
+              type="button"
+              onClick={() => void navigate('/payroll/periods')}
+              disabled={saving}
+              >
+              {'ยกเลิก'}
+            </button>
+          )}
           {/* Void, not delete: the row stays and stops blocking its month. */}
           {canWrite && !isNew && (status === 'draft' || status === 'review' || status === 'approved') && (
             <button
@@ -421,6 +470,88 @@ export function PayrollPeriodFormPage() {
               ยืนยันยกเลิกงวด
             </button>
           </div>
+        </section>
+      )}
+
+      {!isNew && (
+        <section className={`${card} mt-4`}>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className={sectionTitle}>คำนวณเงินเดือน (Calculate)</h2>
+              <p className={muted}>
+                คำนวณค่าจ้างพื้นฐานของทุกคนในกลุ่มนี้ใหม่ทั้งหมด — เรียกซ้ำได้ตราบใดที่งวดยังไม่ผ่านขั้นตอนตรวจสอบ
+              </p>
+            </div>
+            {canWrite && (status === 'draft' || status === 'calculating') && (
+              <button
+                className={button('primary')}
+                type="button"
+                disabled={calculating}
+                onClick={() => void handleCalculate()}
+              >
+                <Calculator size={16} />
+                {calculating ? 'กำลังคำนวณ…' : entries.length > 0 ? 'คำนวณใหม่' : 'คำนวณ'}
+              </button>
+            )}
+          </div>
+
+          {entriesLoading && <p className={muted}>กำลังโหลด…</p>}
+
+          {!entriesLoading && entries.length === 0 && (
+            <p className={muted}>ยังไม่มีการคำนวณสำหรับงวดนี้</p>
+          )}
+
+          {!entriesLoading && entries.length > 0 && (
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
+                  <thead>
+                    <tr>
+                      {['รหัส', 'ชื่อ', 'ประเภท', 'รับรวม', 'หักรวม', 'สุทธิ', ''].map((h) => (
+                        <th
+                          key={h}
+                          className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entries.map((entry) => (
+                      <tr
+                        key={entry.id}
+                        className="cursor-pointer hover:bg-slate-50"
+                        onClick={() => void navigate(`/payroll/entries/${entry.id}`)}
+                      >
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-700">
+                          {entry.employeeCode}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
+                          {entry.employeeName}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                          {WAGE_TYPE_LABEL[entry.wageType]}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right tabular-nums text-slate-700">
+                          {formatAmount(entry.grossEarnings)}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right tabular-nums text-slate-700">
+                          {formatAmount(entry.totalDeductions)}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right tabular-nums font-medium text-slate-900">
+                          {formatAmount(entry.netPay)}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
+                          {entry.needsReview && <span className={badge('danger')}>ต้องตรวจสอบ</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </section>
       )}
 

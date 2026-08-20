@@ -26,6 +26,7 @@ import { PayrollGroupListPage } from './pages/masters/payroll_group/PayrollGroup
 import { PayrollGroupFormPage } from './pages/masters/payroll_group/PayrollGroupFormPage'
 import { PayrollPeriodListPage } from './pages/payroll/PayrollPeriodListPage'
 import { PayrollPeriodFormPage } from './pages/payroll/PayrollPeriodFormPage'
+import { PayrollEntryDetailPage } from './pages/payroll/PayrollEntryDetailPage'
 import { FinanceItemListPage } from './pages/masters/finance_item/FinanceItemListPage'
 import { FinanceItemFormPage } from './pages/masters/finance_item/FinanceItemFormPage'
 import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
@@ -101,6 +102,11 @@ function KeyedPayrollPeriodForm() {
   return <PayrollPeriodFormPage key={id ?? 'new'} />
 }
 
+function KeyedPayrollEntryDetail() {
+  const { id } = useParams()
+  return <PayrollEntryDetailPage key={id} />
+}
+
 function KeyedFinanceItemForm() {
   const { id } = useParams()
   return <FinanceItemFormPage key={id ?? 'new'} />
@@ -163,6 +169,7 @@ const router = createBrowserRouter([
       { path: 'payroll/periods', element: <PayrollPeriodListPage /> },
       { path: 'payroll/periods/new', element: <KeyedPayrollPeriodForm /> },
       { path: 'payroll/periods/:id', element: <KeyedPayrollPeriodForm /> },
+      { path: 'payroll/entries/:id', element: <KeyedPayrollEntryDetail /> },
       { path: 'report/attendance', element: <AttendanceDailyListPage /> },
       { path: 'report/overtime', element: <OvertimeReport /> },
       { path: 'health', element: <HealthPage /> },

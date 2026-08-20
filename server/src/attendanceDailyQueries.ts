@@ -210,9 +210,10 @@ export async function recomputeAttendanceDaily(
           actual_check_in_event_id, actual_check_out_event_id,
           late_minutes, early_leave_minutes, worked_minutes,
           expected_work_minutes, leave_minutes, is_overnight,
-          approved_ot_minutes, actual_ot_minutes, ot_normal_minutes, ot_extra_minutes)
+          approved_ot_minutes, actual_ot_minutes, ot_normal_minutes, ot_extra_minutes,
+          late_grace_minutes, early_leave_grace_minutes)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-               $20, $21, $22, $23)
+               $20, $21, $22, $23, $24, $25)
        ON CONFLICT (employee_id, work_date) DO UPDATE SET
          shift_id = EXCLUDED.shift_id,
          day_status = EXCLUDED.day_status,
@@ -235,6 +236,8 @@ export async function recomputeAttendanceDaily(
          actual_ot_minutes = EXCLUDED.actual_ot_minutes,
          ot_normal_minutes = EXCLUDED.ot_normal_minutes,
          ot_extra_minutes = EXCLUDED.ot_extra_minutes,
+         late_grace_minutes = EXCLUDED.late_grace_minutes,
+         early_leave_grace_minutes = EXCLUDED.early_leave_grace_minutes,
          computed_at = now(),
          updated_at = now()`,
       [
@@ -261,6 +264,8 @@ export async function recomputeAttendanceDaily(
         overtime.actualMinutes,
         overtime.normalMinutes,
         overtime.extraMinutes,
+        day.lateGraceMinutes ?? 0,
+        day.earlyLeaveGraceMinutes ?? 0,
       ]
     )
   }

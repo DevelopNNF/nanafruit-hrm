@@ -4,6 +4,7 @@ import {
   PAYROLL_PERIOD_STATUSES,
   ROLES,
   type AuthUser,
+  type PayrollCalculateResponse,
   type PayrollPeriodListResponse,
   type PayrollPeriodPreviewResponse,
   type PayrollPeriodResponse,
@@ -21,6 +22,7 @@ import {
   rowToPayrollPeriod,
   type PayrollPeriodRow,
 } from '../payrollPeriodQueries.js'
+import { calculatePayrollEntries } from '../payrollEntryQueries.js'
 import {
   canTransition,
   derivePeriodWindow,
@@ -410,6 +412,43 @@ payrollPeriodsRouter.post(
       if (result.kind === 'conflict') return fail(res, 409, result.message)
 
       const body: PayrollPeriodResponse = { payrollPeriod: result.payrollPeriod }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Basic-wage calculation (Phase 2). Rebuilds every payroll_entries row for
+// the period from scratch, so calling this again on a still-draft/calculating
+// period is how HR re-runs it after fixing an attendance record or a wage —
+// not a separate "recalculate" endpoint. Blocked once the period has moved
+// past review: those figures are what got approved, and calculate silently
+// changing them underneath an approval would defeat the point of having one.
+payrollPeriodsRouter.post(
+  '/payroll-periods/:id/calculate',
+  canWritePayroll,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const result = await withTransaction((client) => calculatePayrollEntries(id, actor, client))
+
+      if (result.kind === 'not_found') return fail(res, 404, `no payroll period with id ${id}`)
+      if (result.kind === 'conflict') return fail(res, 409, result.message)
+
+      const payrollPeriod = await findPayrollPeriodById(id)
+      if (!payrollPeriod) throw new Error('payroll period vanished after its own calculation')
+
+      const body: PayrollCalculateResponse = {
+        payrollPeriod,
+        entryCount: result.entryCount,
+        needsReviewCount: result.needsReviewCount,
+      }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
