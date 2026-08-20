@@ -192,3 +192,79 @@ export function overtimeAmount(input: {
   const extraHours = input.extraMinutes / 60
   return (normalHours * normalRate + extraHours * extraRate) * input.hourlyWage
 }
+
+/* Payslip buckets -----------------------------------------------------------
+ * Which of the five payroll_entry_lines codes (Phase 3) one day's overtime
+ * belongs to. Kept apart from overtimeAmount above because a payslip line is
+ * a period-long sum across many days, and this is the per-day routing
+ * decision that sum is built from — not a third way of pricing a day.
+ */
+
+export type OvertimeBucketCode =
+  | 'OT_WORKDAY'
+  | 'OT_NORMAL_DAYOFF'
+  | 'OT_EXTRA_DAYOFF'
+  | 'OT_NORMAL_HOLIDAY'
+  | 'OT_EXTRA_HOLIDAY'
+
+export type OvertimeBucketShare = {
+  code: OvertimeBucketCode
+  minutes: number
+  rate: number
+  /** null when overtimeAmount() could not price this share — the day's
+   *  hourlyWage was unresolvable. A caller must treat this as "needs review",
+   *  not zero, the same distinction overtimeAmount() itself draws. */
+  amount: number | null
+}
+
+/**
+ * Splits one day's normal/extra overtime minutes into the payslip bucket(s)
+ * they belong to. A working day contributes to exactly one bucket
+ * (normalMinutes is always 0 there — see isWorkingDay above); a day off or
+ * holiday can contribute to two, since a single day can carry both an
+ * "in the first 8 hours" and a "past 8 hours" portion.
+ *
+ * Each bucket's amount comes from calling overtimeAmount() with the other
+ * bucket's minutes zeroed out, not from splitting one combined call
+ * proportionally afterward — overtimeAmount's formula has no cross-term
+ * between normal and extra minutes, so the two amounts always sum to exactly
+ * what one combined call would have returned.
+ */
+export function bucketOvertimeDay(input: {
+  status: CalendarDayStatus
+  normalMinutes: number
+  extraMinutes: number
+  group: OvertimeGroup
+  hourlyWage: number | null
+}): OvertimeBucketShare[] {
+  const { status, normalMinutes, extraMinutes, group, hourlyWage } = input
+  const rates = overtimeRatesFor(status, group)
+
+  if (isWorkingDay(status)) {
+    return [
+      {
+        code: 'OT_WORKDAY',
+        minutes: extraMinutes,
+        rate: rates.extraRate,
+        amount: overtimeAmount({ normalMinutes: 0, extraMinutes, status, group, hourlyWage }),
+      },
+    ]
+  }
+
+  const normalCode: OvertimeBucketCode = status === 'holiday' ? 'OT_NORMAL_HOLIDAY' : 'OT_NORMAL_DAYOFF'
+  const extraCode: OvertimeBucketCode = status === 'holiday' ? 'OT_EXTRA_HOLIDAY' : 'OT_EXTRA_DAYOFF'
+  return [
+    {
+      code: normalCode,
+      minutes: normalMinutes,
+      rate: rates.normalRate,
+      amount: overtimeAmount({ normalMinutes, extraMinutes: 0, status, group, hourlyWage }),
+    },
+    {
+      code: extraCode,
+      minutes: extraMinutes,
+      rate: rates.extraRate,
+      amount: overtimeAmount({ normalMinutes: 0, extraMinutes, status, group, hourlyWage }),
+    },
+  ]
+}

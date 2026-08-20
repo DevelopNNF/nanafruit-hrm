@@ -24,6 +24,7 @@ export const PAYROLL_ENTRY_REVIEW_REASON_LABELS: Record<PayrollEntryReviewReason
   unscheduled_work_day: 'มาทำงานในวันที่ไม่มีตารางกะ',
   missing_wage: 'ไม่พบอัตราค่าจ้างของวันนั้น',
   unpriceable_deduction: 'มีนาทีที่ควรหักสาย/ออกก่อน แต่หาชั่วโมงทำงานของกะไม่ได้',
+  unpriceable_overtime: 'มีการล่วงเวลาที่อนุมัติแล้ว แต่หากลุ่มค่าล่วงเวลาหรือค่าจ้างของวันนั้นไม่ได้',
   mixed_wage_type: 'ประเภทค่าจ้าง (รายเดือน/รายวัน) เปลี่ยนกลางงวด ระบบจึงยังไม่คำนวณให้',
 }
 

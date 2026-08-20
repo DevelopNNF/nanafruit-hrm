@@ -1169,15 +1169,35 @@ export type EmployeeFinanceItemResponse = { employeeFinanceItem: EmployeeFinance
  * deductions (Phase 4/5) add their own line codes to the same shape later.
  */
 
-/** The four payslip lines Phase 2 writes. Not master_finance_items rows —
- *  these are core payroll lines every employee can have, not HR-configured
- *  per-employee allowances. See 056's comment for why Phase 3's
- *  finance-item-backed lines are a separate column, not a fifth code here. */
+/** The payslip lines this system can price without asking HR to configure an
+ *  item first — Phase 2's four wage/attendance lines plus Phase 3's five
+ *  overtime buckets, one per master_overtime_groups rate (see
+ *  overtimeRatesFor in overtimeCalculation.ts for what each pays). Not
+ *  master_finance_items rows: these are core payroll lines every employee can
+ *  have, not HR-configured per-employee allowances. See 056's comment for why
+ *  Phase 3's finance-item-backed lines are a separate column (finance_item_id,
+ *  058) instead of a tenth code here — their item_code is
+ *  master_finance_items.item_code itself, which is why PayrollEntryLine.itemCode
+ *  below is `string`, not this union: only the writer (payrollEntryQueries.ts)
+ *  needs the closed set. */
 export const PAYROLL_ENTRY_LINE_CODES = [
   'BASIC_WAGE',
   'ABSENCE_DEDUCT',
   'LATE_DEDUCT',
   'EARLY_LEAVE_DEDUCT',
+  /** Extra minutes on an ordinary working day — group.rateOtWorkday. No
+   *  "normal" counterpart: isWorkingDay days never carry normalMinutes, see
+   *  overtimeRatesFor's comment. */
+  'OT_WORKDAY',
+  /** First 8 hours of approved OT on a weekly off / swap day-off —
+   *  group.rateNormalDayoff. */
+  'OT_NORMAL_DAYOFF',
+  /** Anything past 8 hours on the same day-off — group.rateOtDayoff. */
+  'OT_EXTRA_DAYOFF',
+  /** First 8 hours of approved OT on a holiday — group.rateNormalHoliday. */
+  'OT_NORMAL_HOLIDAY',
+  /** Anything past 8 hours on the same holiday — group.rateOtHoliday. */
+  'OT_EXTRA_HOLIDAY',
 ] as const
 export type PayrollEntryLineCode = (typeof PAYROLL_ENTRY_LINE_CODES)[number]
 
@@ -1195,6 +1215,15 @@ export const PAYROLL_ENTRY_REVIEW_REASON_CODES = [
   /** A late/early deduction was owed but could not be priced (no shift
    *  assigned that day, so its working minutes are unknown). */
   'unpriceable_deduction',
+  /** Approved overtime existed on a day (attendance_daily.approved_ot_minutes
+   *  > 0) but could not be priced — either no overtime group resolved for
+   *  that day (no approved request's snapshot, no current group assignment),
+   *  or overtimeAmount() returned null because no hourly wage could be
+   *  derived (no shift assigned, or the wage on file that day was zero).
+   *  Phase 3's counterpart to unpriceable_deduction, kept separate: the two
+   *  point HR at different tables to fix and mean opposite things for the
+   *  payslip (less owed vs. more owed). */
+  'unpriceable_overtime',
   /** wage_type (monthly/daily) changed partway through the period — Phase 2
    *  does not attempt a split calculation. */
   'mixed_wage_type',
@@ -1213,6 +1242,10 @@ export type PayrollEntryReviewReason = {
  *  a payslip line needs is snapshotted onto the row itself. */
 export type PayrollEntryLine = {
   id: number
+  /** master_finance_items.item_code when financeItemId is set; one of
+   *  PAYROLL_ENTRY_LINE_CODES otherwise. string rather than the narrower
+   *  union because a finance-item line's code is whatever HR typed into the
+   *  master, not one this codebase enumerates. */
   itemCode: string
   itemName: string
   itemType: FinanceItemType
@@ -1221,6 +1254,11 @@ export type PayrollEntryLine = {
   /** Always positive; itemType's job is the sign. */
   amount: number
   sortOrder: number
+  /** FK to master_finance_items — set only for a line built from
+   *  employee_finance_items (buildFinanceItemLines). null for every core
+   *  line (Phase 2's four, Phase 3's five OT buckets). See 058's migration
+   *  comment. */
+  financeItemId: number | null
 }
 
 /** A row in payroll_entries: one employee's result for one period.

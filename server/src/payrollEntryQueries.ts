@@ -13,16 +13,21 @@
 import type pg from 'pg'
 import type {
   AuthUser,
+  CalendarDayStatus,
   FinanceItemType,
+  OvertimeGroup,
+  OvertimeRoundingMinutes,
   PayrollEntry,
   PayrollEntryLine,
   PayrollEntryLineCode,
   PayrollEntryReviewReason,
   PayrollEntryReviewReasonCode,
   PayrollEntryWithLines,
+  WageType,
 } from '@hrm/shared'
 import { pool } from './db.js'
 import { recordAudit } from './audit.js'
+import { bucketOvertimeDay, type OvertimeBucketCode } from './overtimeCalculation.js'
 import { hourlyWage } from './wageRate.js'
 import { getWageForDate, wageJoinSqlForDate } from './wageAssignmentQueries.js'
 import { parseDateOnlyUtc, toDateOnlyString } from './leaveRequestQueries.js'
@@ -108,6 +113,7 @@ export type PayrollEntryLineRow = {
   rate: string | null
   amount: string
   sort_order: number
+  finance_item_id: string | null
 }
 
 function rowToPayrollEntryLine(row: PayrollEntryLineRow): PayrollEntryLine {
@@ -120,6 +126,7 @@ function rowToPayrollEntryLine(row: PayrollEntryLineRow): PayrollEntryLine {
     rate: row.rate === null ? null : Number(row.rate),
     amount: Number(row.amount),
     sortOrder: row.sort_order,
+    financeItemId: row.finance_item_id === null ? null : Number(row.finance_item_id),
   }
 }
 
@@ -146,7 +153,7 @@ export async function findPayrollEntryById(
   if (!row) return null
 
   const { rows: lineRows } = await db.query<PayrollEntryLineRow>(
-    `SELECT id, item_code, item_name, item_type, quantity, rate, amount, sort_order
+    `SELECT id, item_code, item_name, item_type, quantity, rate, amount, sort_order, finance_item_id
      FROM payroll_entry_lines WHERE payroll_entry_id = $1 ORDER BY sort_order, id`,
     [id]
   )
@@ -166,24 +173,94 @@ const LINE_NAME: Record<PayrollEntryLineCode, string> = {
   ABSENCE_DEDUCT: 'หักขาดงาน',
   LATE_DEDUCT: 'หักมาสาย',
   EARLY_LEAVE_DEDUCT: 'หักออกก่อนเวลา',
+  OT_WORKDAY: 'ค่าล่วงเวลาวันทำงาน',
+  OT_NORMAL_DAYOFF: 'ค่าล่วงเวลาวันหยุด (8 ชม.แรก)',
+  OT_EXTRA_DAYOFF: 'ค่าล่วงเวลาวันหยุด (เกิน 8 ชม.)',
+  OT_NORMAL_HOLIDAY: 'ค่าล่วงเวลาวันหยุดนักขัตฤกษ์ (8 ชม.แรก)',
+  OT_EXTRA_HOLIDAY: 'ค่าล่วงเวลาวันหยุดนักขัตฤกษ์ (เกิน 8 ชม.)',
 }
 const LINE_TYPE: Record<PayrollEntryLineCode, FinanceItemType> = {
   BASIC_WAGE: 'income',
   ABSENCE_DEDUCT: 'deduction',
   LATE_DEDUCT: 'deduction',
   EARLY_LEAVE_DEDUCT: 'deduction',
+  OT_WORKDAY: 'income',
+  OT_NORMAL_DAYOFF: 'income',
+  OT_EXTRA_DAYOFF: 'income',
+  OT_NORMAL_HOLIDAY: 'income',
+  OT_EXTRA_HOLIDAY: 'income',
 }
 const LINE_SORT_ORDER: Record<PayrollEntryLineCode, number> = {
   BASIC_WAGE: 10,
   ABSENCE_DEDUCT: 20,
   LATE_DEDUCT: 30,
   EARLY_LEAVE_DEDUCT: 40,
+  // 50-59: the five OT buckets, grouped together between Phase 2's core
+  // lines and Phase 3's finance-item lines (which start at 100 — see
+  // financeItemLine below), ordered least-to-most-premium so a slip reads
+  // "ordinary OT, then day-off OT, then holiday OT".
+  OT_WORKDAY: 50,
+  OT_NORMAL_DAYOFF: 51,
+  OT_EXTRA_DAYOFF: 52,
+  OT_NORMAL_HOLIDAY: 53,
+  OT_EXTRA_HOLIDAY: 54,
 }
 
-type DraftLine = { code: PayrollEntryLineCode; quantity: number | null; rate: number | null; amount: number }
+/** name/itemType/sortOrder travel with the line itself rather than being
+ *  looked up from the tables above at insert time — a finance-item line's
+ *  code is whatever HR typed into master_finance_items, not a key those
+ *  Records can index. */
+type DraftLine = {
+  code: string
+  name: string
+  itemType: FinanceItemType
+  sortOrder: number
+  financeItemId: number | null
+  quantity: number | null
+  rate: number | null
+  amount: number
+}
 
+/** A core line — one of PAYROLL_ENTRY_LINE_CODES. name/type/sort resolved
+ *  from the static tables above, same as Phase 2 always did. */
 function line(code: PayrollEntryLineCode, quantity: number | null, rate: number | null, amount: number): DraftLine {
-  return { code, quantity, rate: rate === null ? null : round2(rate), amount: round2(amount) }
+  return {
+    code,
+    name: LINE_NAME[code],
+    itemType: LINE_TYPE[code],
+    sortOrder: LINE_SORT_ORDER[code],
+    financeItemId: null,
+    quantity,
+    rate: rate === null ? null : round2(rate),
+    amount: round2(amount),
+  }
+}
+
+/** A finance-item-backed line — name/type/sort/financeItemId come from the
+ *  master_finance_items row itself (see buildFinanceItemLines), never from
+ *  the static tables above, because HR configures this item's vocabulary,
+ *  not this file. sortOrder starts at 100 + the item's own
+ *  master_finance_items.sort_order so HR's configured relative order between
+ *  finance items is preserved, and the whole block sorts after every core
+ *  line (Phase 2's 10-40, Phase 3's OT 50-54). */
+function financeItemLine(args: {
+  financeItemId: number
+  itemCode: string
+  itemName: string
+  itemType: FinanceItemType
+  masterSortOrder: number
+  amount: number
+}): DraftLine {
+  return {
+    code: args.itemCode,
+    name: args.itemName,
+    itemType: args.itemType,
+    sortOrder: 100 + args.masterSortOrder,
+    financeItemId: args.financeItemId,
+    quantity: null,
+    rate: null,
+    amount: round2(args.amount),
+  }
 }
 
 /** Same arithmetic as shiftWorkMinutesOf in overtimeReportQueries.ts and
@@ -505,6 +582,235 @@ async function buildMonthlyEntry(
   }
 }
 
+type OvertimeDayRow = {
+  work_date: string
+  day_status: string
+  approved_ot_minutes: number
+  ot_normal_minutes: number
+  ot_extra_minutes: number
+  group_id: string | null
+  group_code: string | null
+  group_name: string | null
+  rate_ot_workday: string | null
+  rate_normal_dayoff: string | null
+  rate_ot_dayoff: string | null
+  rate_normal_holiday: string | null
+  rate_ot_holiday: string | null
+  rounding_minutes: number | null
+  shift_start_time: string | null
+  shift_end_time: string | null
+  break_start_time: string | null
+  break_end_time: string | null
+  wage_type: string | null
+  wage_amount: string | null
+}
+
+/**
+ * One employee's overtime lines for the period — the five buckets
+ * master_overtime_groups' five rates define, each summed across every day in
+ * [periodStart, periodEnd] that carried approved OT.
+ *
+ * Deliberately its own step, called once per employee regardless of
+ * wage_type: OT pricing (overtimeAmount/overtimeRatesFor, imported unchanged
+ * from overtimeCalculation.ts — never reimplemented here) does not depend on
+ * whether the employee is paid daily or monthly.
+ *
+ * Query shape mirrors SELECT_REPORT_ROWS in overtimeReportQueries.ts (LATERAL
+ * join to snapshot the overtime group actually approved that day, COALESCE to
+ * the employee's current group only as a fallback for a since-deleted
+ * request) — not reused directly because that query is a multi-employee,
+ * multi-week aggregate and this is single-employee, period-scoped.
+ *
+ * Per-day bucket routing (which of the five payslip codes a day's minutes
+ * belong to, and their amount) is bucketOvertimeDay() in
+ * overtimeCalculation.ts — this function only sums that across the period.
+ * rate on each line is the bucket's multiplier (e.g. group.rateOtWorkday),
+ * not the hourly wage: a raise mid-period prices different days' minutes at
+ * different hourly wages, so no single rate reads correctly for the bucket as
+ * a whole — only quantity (minutes) and amount (baht) are exact sums.
+ */
+async function buildOvertimeLines(
+  employeeId: number,
+  periodStart: string,
+  periodEnd: string,
+  db: Queryable
+): Promise<{ lines: DraftLine[]; reviewReasons: PayrollEntryReviewReason[] }> {
+  const { rows } = await db.query<OvertimeDayRow>(
+    `SELECT d.work_date, d.day_status, d.approved_ot_minutes,
+            d.ot_normal_minutes, d.ot_extra_minutes,
+            mog.id AS group_id, mog.group_code, mog.group_name,
+            mog.rate_ot_workday, mog.rate_normal_dayoff, mog.rate_ot_dayoff,
+            mog.rate_normal_holiday, mog.rate_ot_holiday, mog.rounding_minutes,
+            ms.shift_start_time, ms.shift_end_time, ms.break_start_time, ms.break_end_time,
+            wage_on_date.wage_type, wage_on_date.wage_amount
+     FROM attendance_daily d
+     JOIN employment_details ed ON ed.employee_id = d.employee_id
+     LEFT JOIN master_shifts ms ON ms.id = d.shift_id
+     LEFT JOIN LATERAL (
+       SELECT otr.overtime_group_id FROM overtime_requests otr
+       WHERE otr.employee_id = d.employee_id AND otr.ot_date = d.work_date
+         AND otr.status = 'approved'
+       ORDER BY otr.start_time LIMIT 1
+     ) snap ON true
+     LEFT JOIN master_overtime_groups mog
+       ON mog.id = COALESCE(snap.overtime_group_id, ed.overtime_group_id)
+     ${wageJoinSqlForDate('d.employee_id', 'd.work_date')}
+     WHERE d.employee_id = $1 AND d.work_date BETWEEN $2 AND $3
+       AND d.approved_ot_minutes > 0
+     ORDER BY d.work_date`,
+    [employeeId, periodStart, periodEnd]
+  )
+
+  const totals: Record<OvertimeBucketCode, { minutes: number; amount: number; rate: number }> = {
+    OT_WORKDAY: { minutes: 0, amount: 0, rate: 0 },
+    OT_NORMAL_DAYOFF: { minutes: 0, amount: 0, rate: 0 },
+    OT_EXTRA_DAYOFF: { minutes: 0, amount: 0, rate: 0 },
+    OT_NORMAL_HOLIDAY: { minutes: 0, amount: 0, rate: 0 },
+    OT_EXTRA_HOLIDAY: { minutes: 0, amount: 0, rate: 0 },
+  }
+  const reviewReasons = new ReviewReasons()
+
+  for (const row of rows) {
+    if (row.group_id === null) {
+      // Neither the day's approved request nor the employee's current
+      // assignment resolved to an overtime group — cannot even pick a rate,
+      // let alone price it.
+      reviewReasons.flag('unpriceable_overtime', row.work_date)
+      continue
+    }
+    const group: OvertimeGroup = {
+      id: Number(row.group_id),
+      groupCode: row.group_code ?? '',
+      groupName: row.group_name ?? '',
+      rateOtWorkday: Number(row.rate_ot_workday),
+      rateNormalDayoff: Number(row.rate_normal_dayoff),
+      rateOtDayoff: Number(row.rate_ot_dayoff),
+      rateNormalHoliday: Number(row.rate_normal_holiday),
+      rateOtHoliday: Number(row.rate_ot_holiday),
+      roundingMinutes: (row.rounding_minutes ?? 0) as OvertimeRoundingMinutes,
+      isActive: true,
+    }
+    const status = row.day_status as CalendarDayStatus
+    const workMinutes = shiftWorkMinutes(
+      row.shift_start_time,
+      row.shift_end_time,
+      row.break_start_time,
+      row.break_end_time
+    )
+    const wage =
+      row.wage_type === null || row.wage_amount === null
+        ? null
+        : hourlyWage({
+            wageType: row.wage_type as WageType,
+            wageAmount: Number(row.wage_amount),
+            shiftWorkMinutes: workMinutes,
+          })
+
+    const shares = bucketOvertimeDay({
+      status,
+      normalMinutes: row.ot_normal_minutes,
+      extraMinutes: row.ot_extra_minutes,
+      group,
+      hourlyWage: wage,
+    })
+    for (const share of shares) {
+      // A share with 0 minutes (e.g. a holiday day whose OT was entirely
+      // "extra", leaving its "normal" share empty) has nothing to price —
+      // skip before the null check below, or an unresolvable wage on an
+      // empty share would flag a review reason for a bucket that owes nothing.
+      if (share.minutes === 0) continue
+      if (share.amount === null) {
+        reviewReasons.flag('unpriceable_overtime', row.work_date)
+        continue
+      }
+      const total = totals[share.code]
+      total.minutes += share.minutes
+      total.amount += share.amount
+      total.rate = share.rate
+    }
+  }
+
+  const lines: DraftLine[] = []
+  for (const code of Object.keys(totals) as OvertimeBucketCode[]) {
+    const total = totals[code]
+    if (total.minutes > 0) lines.push(line(code, total.minutes, total.rate, total.amount))
+  }
+
+  return { lines, reviewReasons: reviewReasons.toArray() }
+}
+
+type FinanceItemOverlapRow = {
+  finance_item_id: string
+  item_code: string
+  item_name: string
+  item_type: string
+  amount: string
+  master_sort_order: number
+}
+
+/**
+ * One employee's HR-configured allowances/deductions for the period — every
+ * employee_finance_items row overlapping [periodStart, periodEnd], snapshot
+ * onto its own line (item_code/item_name/item_type/amount copied, not
+ * joined) per 045's instruction to whoever built this: a join here would let
+ * HR renaming an item in the master silently rewrite an already-run payslip.
+ *
+ * Full amount, not prorated, when the item's own [effective_from,
+ * effective_to] only partly overlaps the period — amount on
+ * employee_finance_items reads as a configured-per-period figure ("2,000
+ * บาท"), not a per-diem rate with an implicit daily equivalent, and there is
+ * no column anywhere recording what that daily equivalent would even be.
+ * Flagged as an open question for HR to confirm before this runs in
+ * production (see the phase plan).
+ */
+async function buildFinanceItemLines(
+  employeeId: number,
+  periodStart: string,
+  periodEnd: string,
+  db: Queryable
+): Promise<DraftLine[]> {
+  const { rows } = await db.query<FinanceItemOverlapRow>(
+    `SELECT efi.finance_item_id, mfi.item_code, mfi.item_name, mfi.item_type,
+            efi.amount, mfi.sort_order AS master_sort_order
+     FROM employee_finance_items efi
+     JOIN master_finance_items mfi ON mfi.id = efi.finance_item_id
+     WHERE efi.employee_id = $1
+       AND efi.effective_from <= $3 AND (efi.effective_to IS NULL OR efi.effective_to >= $2)
+     ORDER BY mfi.sort_order, mfi.item_code`,
+    [employeeId, periodStart, periodEnd]
+  )
+
+  return rows.map((row) =>
+    financeItemLine({
+      financeItemId: Number(row.finance_item_id),
+      itemCode: row.item_code,
+      itemName: row.item_name,
+      itemType: row.item_type as FinanceItemType,
+      masterSortOrder: row.master_sort_order,
+      amount: Number(row.amount),
+    })
+  )
+}
+
+/** Merges review-reason lists from separate sources (e.g. buildDailyEntry's
+ *  own reasons and buildOvertimeLines' reasons) by code, unioning workDates
+ *  rather than concatenating the lists — so if two sources ever flag the same
+ *  code, the entry gets one reason with every date, not two duplicate
+ *  reasons. Not expected to collide today (unpriceable_overtime doesn't
+ *  overlap any code the daily/monthly builders flag), but cheap enough to do
+ *  correctly rather than assume it stays that way. */
+function mergeReviewReasons(...lists: PayrollEntryReviewReason[][]): PayrollEntryReviewReason[] {
+  const byCode = new Map<PayrollEntryReviewReasonCode, Set<string>>()
+  for (const list of lists) {
+    for (const reason of list) {
+      const dates = byCode.get(reason.code) ?? new Set<string>()
+      for (const d of reason.workDates) dates.add(d)
+      byCode.set(reason.code, dates)
+    }
+  }
+  return [...byCode.entries()].map(([code, dates]) => ({ code, workDates: [...dates].sort() }))
+}
+
 /** Whether more than one wage_type applied to this employee at any point
  *  inside the period — a monthly-to-daily reclassification mid-run, not just
  *  a raise. Neither buildDailyEntry nor buildMonthlyEntry can price this
@@ -549,11 +855,11 @@ async function insertEntry(
   }
 ): Promise<void> {
   const grossEarnings = round2(
-    args.lines.filter((l) => LINE_TYPE[l.code] === 'income').reduce((sum, l) => sum + l.amount, 0)
+    args.lines.filter((l) => l.itemType === 'income').reduce((sum, l) => sum + l.amount, 0)
   )
   const totalDeductions = round2(
     args.lines
-      .filter((l) => LINE_TYPE[l.code] === 'deduction' || LINE_TYPE[l.code] === 'tax')
+      .filter((l) => l.itemType === 'deduction' || l.itemType === 'tax')
       .reduce((sum, l) => sum + l.amount, 0)
   )
   const netPay = round2(grossEarnings - totalDeductions)
@@ -594,9 +900,9 @@ async function insertEntry(
   for (const l of args.lines) {
     await client.query(
       `INSERT INTO payroll_entry_lines
-         (payroll_entry_id, item_code, item_name, item_type, quantity, rate, amount, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [entryId, l.code, LINE_NAME[l.code], LINE_TYPE[l.code], l.quantity, l.rate, l.amount, LINE_SORT_ORDER[l.code]]
+         (payroll_entry_id, item_code, item_name, item_type, quantity, rate, amount, sort_order, finance_item_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [entryId, l.code, l.name, l.itemType, l.quantity, l.rate, l.amount, l.sortOrder, l.financeItemId]
     )
   }
 }
@@ -671,8 +977,7 @@ export async function calculatePayrollEntries(
     // ฿0 payslip to review. See the phase plan's open questions.
     if (wage === null) continue
 
-    let reviewReasons: PayrollEntryReviewReason[] = []
-    const lines: DraftLine[] = []
+    let reviewReasons: PayrollEntryReviewReason[]
     let entryFields: Omit<Parameters<typeof insertEntry>[1], 'periodId' | 'employeeId' | 'employeeCode' | 'employeeName' | 'wageType' | 'lines' | 'reviewReasons'>
 
     if (await hasMixedWageType(employeeId, period.period_start, period.period_end, client)) {
@@ -703,9 +1008,17 @@ export async function calculatePayrollEntries(
       continue
     }
 
+    // Called once per employee, independent of the daily/monthly branch
+    // below — OT pricing and HR-configured finance items follow the same
+    // rule for both wage types, so duplicating either query into both
+    // branches would be one calculation read from two places that can drift.
+    const overtime = await buildOvertimeLines(employeeId, period.period_start, period.period_end, client)
+    const financeLines = await buildFinanceItemLines(employeeId, period.period_start, period.period_end, client)
+    const lines: DraftLine[] = [...overtime.lines, ...financeLines]
+
     if (wage.wageType === 'daily') {
       const daily = await buildDailyEntry(employeeId, period.period_start, period.period_end, client)
-      reviewReasons = daily.reviewReasons
+      reviewReasons = mergeReviewReasons(daily.reviewReasons, overtime.reviewReasons)
       if (daily.grossWage > 0) {
         lines.push(line('BASIC_WAGE', daily.workDays, wage.wageAmount, daily.grossWage))
       }
@@ -737,7 +1050,7 @@ export async function calculatePayrollEntries(
         wage.wageAmount,
         client
       )
-      reviewReasons = monthly.reviewReasons
+      reviewReasons = mergeReviewReasons(monthly.reviewReasons, overtime.reviewReasons)
       if (monthly.grossWage > 0) {
         lines.push(line('BASIC_WAGE', monthly.employedDays, wage.wageAmount, monthly.grossWage))
       }
