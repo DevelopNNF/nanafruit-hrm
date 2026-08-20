@@ -11,17 +11,32 @@
   margin-bottom: 1.5rem;
 }
 
-.profile img {
+.profile img,
+.avatar {
   border-radius: 50%;
   flex-shrink: 0;
 }
 
+.avatar {
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #dce7de;
+  color: var(--accent-ink);
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
 .greeting {
   font-size: 0.8rem;
-  opacity: 0.65;
+  color: var(--text-faint);
 }
 
 .name {
+  font-family: var(--display);
   font-weight: 600;
   color: var(--text-h);
   /* Display names are user-supplied and can be arbitrarily long. */
@@ -30,37 +45,183 @@
 
 .subtitle {
   margin: 0.25rem 0 1.5rem;
-  opacity: 0.65;
+  color: var(--text-faint);
   font-size: 0.9rem;
 }
 
-/* Home nav list ------------------------------------------------------------ */
+.profile-text {
+  flex: 1;
+  min-width: 0;
+}
 
-.nav-list {
+.icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+/* Home leave balances preview ------------------------------------------------ */
+
+.home-balances {
+  margin-bottom: 0.9rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  margin-top: 1.25rem;
 }
 
-.nav-item {
+.home-balances .headline {
+  margin-bottom: 0;
+}
+
+.home-balances-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  width: 100%;
-  padding: 1rem 1.15rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--card-bg);
-  color: var(--text-h);
-  font: inherit;
+  gap: 0.5rem;
+}
+
+.text-link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-ink);
+  font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
 }
 
-.nav-item span {
-  opacity: 0.5;
-  font-weight: 400;
+.home-balance-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.home-balance-row .leave-gauge-row-label {
+  margin-bottom: 0;
+}
+
+/* Home tile grid ------------------------------------------------------------ */
+
+.home-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.home-tile-calendar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 4rem;
+  padding: 0 1rem;
+  border: none;
+  border-radius: 16px;
+  background: var(--text-h);
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-tile-calendar-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.14);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.home-tile-calendar-label {
+  display: block;
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.home-tile-calendar-sub {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.home-tile-calendar-text {
+  flex: 1;
+}
+
+.home-tile-calendar-arrow {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.home-tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-height: 5.7rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card-bg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-tile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.4rem;
+}
+
+.home-tile-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.home-tile-badge {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--status-pending-bg);
+  color: var(--status-pending-fg);
+  font-family: var(--mono);
+  font-size: 0.625rem;
+}
+
+.home-tile-label {
+  display: block;
+  font-family: var(--display);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-h);
+}
+
+.home-tile-en {
+  display: block;
+  margin-top: 0.1rem;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--text-faint);
 }
 
 /* Sub-screen header ---------------------------------------------------------- */
@@ -84,7 +245,7 @@
   height: 2.5rem;
   flex-shrink: 0;
   border: 1px solid var(--border);
-  border-radius: 50%;
+  border-radius: 12px;
   background: var(--card-bg);
   color: var(--text-h);
   font-size: 1.1rem;
@@ -96,8 +257,8 @@
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-left-width: 4px;
-  border-radius: 10px;
-  padding: 1rem 1.15rem;
+  border-radius: 16px;
+  padding: 1.1rem 1.2rem;
 }
 
 .card.ok {
@@ -114,6 +275,7 @@
 
 .headline {
   margin-bottom: 0.75rem;
+  font-family: var(--display);
   font-weight: 600;
   color: var(--text-h);
 }
@@ -121,14 +283,14 @@
 .detail {
   font-family: var(--mono);
   font-size: 0.8rem;
-  opacity: 0.75;
+  color: var(--text-faint);
   overflow-wrap: anywhere;
 }
 
 .hint {
   margin-top: 0.75rem;
   font-size: 0.85rem;
-  opacity: 0.65;
+  color: var(--text-faint);
 }
 
 /* Link screen ------------------------------------------------------------- */
@@ -141,29 +303,35 @@
 }
 
 .link-form input {
-  padding: 0.75rem;
+  padding: 0.75rem 1rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--bg);
   color: var(--text-h);
   font-family: var(--mono);
   /* 1rem, not smaller: iOS Safari zooms the page on focus below 16px. */
-  font-size: 1rem;
+  font-size: 1.15rem;
   text-align: center;
   letter-spacing: 0.15em;
   text-transform: uppercase;
 }
 
+.link-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--card-bg);
+}
+
 .link-form button {
   padding: 0.75rem;
   border: none;
-  border-radius: 8px;
+  border-radius: 13px;
   background: var(--accent);
   color: #fff;
-  font: inherit;
+  font-family: var(--display);
   font-weight: 600;
   /* Thumb-sized: this is the only control on the screen. */
-  min-height: 2.75rem;
+  min-height: 3rem;
   cursor: pointer;
 }
 
@@ -183,22 +351,68 @@
   margin-bottom: 1.25rem;
 }
 
+.day-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.day-card-head .headline {
+  margin-bottom: 0;
+}
+
+.day-card-head .hint {
+  margin-top: 0.15rem;
+}
+
+.punch-grid {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.punch-box {
+  flex: 1;
+  background: var(--bg);
+  border-radius: 12px;
+  padding: 0.6rem 0.75rem;
+}
+
+.punch-box-label {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.punch-box-value {
+  margin: 0.15rem 0 0;
+  font-family: var(--display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
 .clock-button {
   width: 100%;
   padding: 0.9rem;
   margin-top: 0.9rem;
   border: none;
-  border-radius: 8px;
-  font: inherit;
+  border-radius: 15px;
+  font-family: var(--display);
+  font-size: 1.1rem;
   font-weight: 600;
   /* Thumb-sized: the primary action on this screen. */
-  min-height: 3rem;
+  min-height: 3.75rem;
   cursor: pointer;
   color: #fff;
 }
 
 .clock-button.check_in {
   background: var(--accent);
+  box-shadow: 0 8px 20px -10px rgba(6, 199, 85, 0.95);
 }
 
 .clock-button.check_out {
@@ -206,7 +420,10 @@
 }
 
 .clock-button:disabled {
-  opacity: 0.5;
+  background: var(--border);
+  color: var(--text-faint);
+  box-shadow: none;
+  opacity: 1;
   cursor: default;
 }
 
@@ -277,10 +494,10 @@
   width: 100%;
   padding: 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
+  border-radius: 13px;
+  background: var(--card-bg);
   color: var(--text-h);
-  font: inherit;
+  font-family: var(--display);
   font-weight: 600;
   min-height: 2.75rem;
   cursor: pointer;
@@ -309,10 +526,10 @@
 .correction-form input,
 .correction-form select,
 .correction-form textarea {
-  padding: 0.7rem;
+  padding: 0.7rem 0.85rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
+  border-radius: 12px;
+  background: var(--card-bg);
   color: var(--text-h);
   font: inherit;
   /* 1rem, not smaller: iOS Safari zooms the page on focus below 16px. */
@@ -332,13 +549,14 @@
 .correction-form-actions button[type='submit'] {
   padding: 0.75rem;
   border: none;
-  border-radius: 8px;
+  border-radius: 14px;
   background: var(--accent);
   color: #fff;
-  font: inherit;
+  font-family: var(--display);
   font-weight: 600;
   min-height: 2.75rem;
   cursor: pointer;
+  box-shadow: 0 6px 16px -8px rgba(6, 199, 85, 0.9);
 }
 
 .correction-form-actions button[type='submit']:disabled {
@@ -697,48 +915,304 @@
   margin-top: 0.25rem;
 }
 
-/* Confirm modal ------------------------------------------------------------ */
+/* Status pill ---------------------------------------------------------------
+   Shared across every request type's list view — see RequestShell.tsx. */
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.status-pill.pending {
+  color: var(--status-pending-fg);
+  background: var(--status-pending-bg);
+}
+
+.status-pill.approved {
+  color: var(--status-approved-fg);
+  background: var(--status-approved-bg);
+}
+
+.status-pill.rejected {
+  color: var(--status-rejected-fg);
+  background: var(--status-rejected-bg);
+}
+
+.status-pill.cancelled {
+  color: var(--status-cancelled-fg);
+  background: var(--status-cancelled-bg);
+}
+
+/* Request shell ---------------------------------------------------------------
+   Shared list/form chrome for every request type — see RequestShell.tsx.
+   Feature-specific fields are passed in as children of .request-form. */
+
+.request-shell-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.request-shell-header h1 {
+  flex: 1;
+  font-size: 1.25rem;
+}
+
+.request-shell-en {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--text-faint);
+}
+
+.request-shell-rule {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--border);
+  border-radius: 12px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.request-shell-primary {
+  width: 100%;
+  padding: 0.75rem;
+  margin-bottom: 1.1rem;
+  border: none;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 600;
+  min-height: 3.25rem;
+  cursor: pointer;
+  box-shadow: 0 6px 16px -8px rgba(6, 199, 85, 0.9);
+}
+
+.request-shell-subheading {
+  margin: 0 0 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.request-empty {
+  padding: 1.75rem 1rem;
+  text-align: center;
+  background: var(--card-bg);
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+}
+
+.request-empty p {
+  color: var(--text-faint);
+  font-size: 0.85rem;
+}
+
+.request-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.request-item {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.request-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.request-item-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-h);
+}
+
+.request-item-meta {
+  margin: 0.15rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-faint);
+}
+
+.request-item-reason {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.request-item-decision {
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  background: var(--status-rejected-bg);
+  color: var(--status-rejected-fg);
+  border-radius: 10px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.request-item-file {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--accent-ink);
+}
+
+.request-item-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 0.1rem;
+}
+
+.request-item-actions button {
+  min-height: 2.4rem;
+  padding: 0 0.9rem;
+  border-radius: 10px;
+  font-size: 0.775rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.request-item-actions .request-edit-button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.request-item-actions .request-cancel-button {
+  border: 1px solid var(--status-rejected-bg);
+  background: var(--card-bg);
+  color: var(--status-rejected-fg);
+}
+
+.request-item-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.request-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.request-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.request-form .field span {
+  font-family: var(--display);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.request-form .field-row {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.request-form .field-row .field {
+  flex: 1;
+}
+
+.leave-type-gauge-box {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.request-form-summary {
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  background: var(--status-approved-bg);
+  color: var(--status-approved-fg);
+  border-radius: 12px;
+  font-family: var(--display);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+/* Confirm modal ------------------------------------------------------------
+   Anchored near the bottom of the screen, matching Claude Design's bottom
+   sheet — a phone-sized surface has no room for a centred dialog to feel
+   like anything but a full-screen interruption. */
 
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(8, 6, 13, 0.45);
+  background: rgba(15, 31, 22, 0.45);
   /* Above everything else in the app; there is only ever one modal at a time. */
   z-index: 100;
 }
 
 .modal-dialog {
   /* Radix renders this as a sibling of .modal-overlay, not a child, so
-     centring lives here instead of on the overlay's old flexbox. */
+     positioning lives here instead of on the overlay's old flexbox. */
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: calc(100% - 2rem);
+  left: 1rem;
+  right: 1rem;
+  bottom: max(1rem, env(safe-area-inset-bottom));
   max-width: 26rem;
-  padding: 2.5rem 1.25rem;
-  border-radius: 14px;
-  background: var(--bg);
-  box-shadow: 0 -4px 24px rgba(8, 6, 13, 0.12);
+  margin: 0 auto;
+  padding: 1.4rem 1.25rem;
+  border-radius: 20px;
+  background: var(--card-bg);
+  box-shadow: 0 24px 48px -20px rgba(15, 31, 22, 0.35);
   z-index: 100;
 }
 
 .modal-title {
+  font-family: var(--display);
   font-weight: 600;
   font-size: 1.05rem;
-  text-align: center;
   color: var(--text-h);
 }
 
 .modal-message {
-  margin-top: 0.5rem;
+  margin-top: 0.4rem;
   font-size: 0.85rem;
-  opacity: 0.7;
+  color: var(--text-faint);
+  line-height: 1.6;
 }
 
 .modal-actions {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.6rem;
   margin-top: 1.1rem;
 }
 
@@ -750,10 +1224,10 @@
   flex: 1;
   padding: 0.75rem;
   border: none;
-  border-radius: 8px;
+  border-radius: 13px;
   background: var(--accent);
   color: #fff;
-  font: inherit;
+  font-family: var(--display);
   font-weight: 600;
   min-height: 2.75rem;
   cursor: pointer;

@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import type { Employee, LeaveBalanceSummary, LeaveRequest, LeaveType } from '@hrm/shared'
 import { fetchMyLeaveBalances } from '../api/leaveBalances'
 import { fetchActiveLeaveTypes } from '../api/leaveTypes'
 import { cancelLeaveRequest, fetchMyLeaveRequests, submitLeaveRequest } from '../api/leaveRequests'
 import { ApiRequestError } from '../api/client'
 import { LeaveBalanceGauge } from './LeaveBalanceGauge'
+import { RequestShell, type RequestListItem } from './RequestShell'
+import { ConfirmModal } from './ConfirmModal'
 
 type Props = {
   employee: Employee
+  onBack: () => void
 }
 
 type ListState =
@@ -57,13 +61,6 @@ function formatDateRange(request: LeaveRequest): string {
   return range
 }
 
-function statusLabel(request: LeaveRequest): string {
-  if (request.status === 'pending') return 'รอดำเนินการ'
-  if (request.status === 'approved') return 'อนุมัติแล้ว'
-  if (request.status === 'cancelled') return 'ยกเลิกแล้ว'
-  return `ปฏิเสธ: ${request.decisionReason ?? ''}`
-}
-
 function timeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number)
   return (h ?? 0) * 60 + (m ?? 0)
@@ -86,11 +83,12 @@ function shiftMidpoint(start: string, end: string): string {
   return minutesToTime(s + Math.round((e - s) / 2))
 }
 
-export function LeaveRequestCard({ employee }: Props) {
+export function LeaveRequestCard({ employee, onBack }: Props) {
   const [listState, setListState] = useState<ListState>({ phase: 'loading' })
   const [mode, setMode] = useState<'list' | 'form'>('list')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [cancelId, setCancelId] = useState<number | null>(null)
 
   const [leaveTypeState, setLeaveTypeState] = useState<LeaveTypeState>({ phase: 'loading' })
   const [balances, setBalances] = useState<LeaveBalanceSummary[]>([])
@@ -221,6 +219,7 @@ export function LeaveRequestCard({ employee }: Props) {
         requests: [request, ...(prev.phase === 'ready' ? prev.requests : [])],
       }))
       setMode('list')
+      toast('ส่งคำขอแล้ว รอผู้อนุมัติ')
     } catch (err) {
       setError(messageFor(err))
     } finally {
@@ -228,226 +227,222 @@ export function LeaveRequestCard({ employee }: Props) {
     }
   }
 
-  async function cancel(id: number) {
-    if (!confirm('ยกเลิกคำขอลานี้?')) return
+  async function confirmCancel() {
+    if (cancelId === null) return
     setBusy(true)
     try {
-      const updated = await cancelLeaveRequest(id)
+      const updated = await cancelLeaveRequest(cancelId)
       setListState((prev) => ({
         phase: 'ready',
-        requests: prev.phase === 'ready' ? prev.requests.map((r) => (r.id === id ? updated : r)) : [updated],
+        requests: prev.phase === 'ready' ? prev.requests.map((r) => (r.id === cancelId ? updated : r)) : [updated],
       }))
+      toast('ยกเลิกคำขอแล้ว')
     } catch (err) {
       alert(messageFor(err))
     } finally {
       setBusy(false)
+      setCancelId(null)
+    }
+  }
+
+  const cancelTarget =
+    listState.phase === 'ready' ? listState.requests.find((r) => r.id === cancelId) ?? null : null
+
+  const items: RequestListItem[] =
+    listState.phase === 'ready'
+      ? listState.requests.map((request) => ({
+          id: request.id,
+          title: `${request.leaveTypeName} · ${formatDateRange(request)}`,
+          meta: `${request.totalDays} วัน · ยื่น ${formatDate(request.createdAt.slice(0, 10))}`,
+          status: request.status,
+          reason: request.reason,
+          decisionNote:
+            request.status === 'rejected' ? `เหตุผลจากผู้อนุมัติ: ${request.decisionReason ?? ''}` : undefined,
+          onCancel: request.status === 'pending' ? () => setCancelId(request.id) : undefined,
+        }))
+      : []
+
+  let leaveSummary: string | null = null
+  if (leaveTypeId) {
+    if (!isSingleDay) {
+      const days =
+        Math.round((new Date(`${endDate}T00:00:00Z`).getTime() - new Date(`${startDate}T00:00:00Z`).getTime()) / 86400000) + 1
+      leaveSummary = `รวมประมาณ ${days > 0 ? days : 1} วัน · ${formatDate(startDate)} – ${formatDate(endDate)}`
+    } else if (partialMode === 'morning' || partialMode === 'afternoon') {
+      leaveSummary = `รวม 0.5 วัน · ${formatDate(startDate)}`
+    } else if (partialMode === 'custom') {
+      leaveSummary = `${formatDate(startDate)} · ระบบจะคำนวณจำนวนวันจากช่วงเวลาที่เลือก`
+    } else {
+      leaveSummary = `รวมประมาณ 1 วัน · ${formatDate(startDate)}`
     }
   }
 
   return (
-    <div className="leave-card">
-      {/* <p className="headline">คำขอลา</p> */}
-
-      {mode === 'list' && (
-        <>
-          {listState.phase === 'loading' && <p className="hint">กำลังโหลด…</p>}
-          {listState.phase === 'error' && <p className="form-error">{listState.message}</p>}
-
-          {listState.phase === 'ready' && (
-            <>
-              <button type="button" className="secondary-button" onClick={openForm}>
-                ยื่นขอลา
-              </button>
-
-              {listState.requests.length === 0 ? (
-                <p className="hint">ยังไม่มีคำขอลา</p>
-              ) : (
-                <ul className="leave-list">
-                  {listState.requests.map((request) => (
-                    <li key={request.id} className={`leave-item ${request.status}`}>
-                      <div className="leave-item-head">
-                        <span>
-                          {request.leaveTypeName} · {formatDateRange(request)}
-                        </span>
-                        <span className="leave-item-status">{statusLabel(request)}</span>
-                      </div>
-                      <span>{request.totalDays} วัน</span>
-                      {request.reason && <span className="leave-item-reason">{request.reason}</span>}
-                      {request.status === 'pending' && (
-                        <button
-                          type="button"
-                          className="leave-item-cancel"
-                          disabled={busy}
-                          onClick={() => void cancel(request.id)}
-                        >
-                          ยกเลิกคำขอ
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-        </>
-      )}
-
-      {mode === 'form' && (
-        <form onSubmit={(e) => void submit(e)} className="correction-form">
-          <label>
-            ประเภทการลา
-            {leaveTypeState.phase === 'loading' && <span className="hint">กำลังโหลด…</span>}
-            {leaveTypeState.phase === 'error' && <span className="form-error">{leaveTypeState.message}</span>}
-            {leaveTypeState.phase === 'ready' && (
-              <select
-                value={leaveTypeId || ''}
-                onChange={(e) => setLeaveTypeId(Number(e.target.value))}
-                disabled={busy}
-                required
-              >
-                <option value="" disabled>
-                  — เลือกประเภทการลา —
+    <>
+      <RequestShell
+        title="คำขอลา"
+        englishTag="LeaveScreen"
+        ruleText="ยกเลิกได้เฉพาะคำขอที่รอดำเนินการ · ไม่มีปุ่มแก้ไข ถ้าต้องแก้ให้ยกเลิกแล้วยื่นใหม่"
+        onBack={onBack}
+        mode={mode}
+        busy={busy}
+        newLabel="ยื่นขอลา"
+        onOpenForm={openForm}
+        listPhase={listState.phase}
+        listErrorMessage={listState.phase === 'error' ? listState.message : undefined}
+        emptyText="ยังไม่มีคำขอลา"
+        items={items}
+        onSubmit={(e) => void submit(e)}
+        onCloseForm={() => setMode('list')}
+        formError={error}
+        submitLabel="ส่งคำขอ"
+        canSubmit={leaveTypeId !== 0}
+        reasonLabel={selectedLeaveType?.requireReason ? 'เหตุผล *' : 'เหตุผล (ไม่บังคับ)'}
+        reason={reason}
+        onReasonChange={setReason}
+      >
+        <label className="field">
+          <span>ประเภทการลา</span>
+          {leaveTypeState.phase === 'loading' && <span className="hint">กำลังโหลด…</span>}
+          {leaveTypeState.phase === 'error' && <span className="form-error">{leaveTypeState.message}</span>}
+          {leaveTypeState.phase === 'ready' && (
+            <select
+              value={leaveTypeId || ''}
+              onChange={(e) => setLeaveTypeId(Number(e.target.value))}
+              disabled={busy}
+              required
+            >
+              <option value="" disabled>
+                — เลือกประเภทการลา —
+              </option>
+              {eligibleLeaveTypes.map((lt) => (
+                <option key={lt.id} value={lt.id}>
+                  {lt.leaveName}
                 </option>
-                {eligibleLeaveTypes.map((lt) => (
-                  <option key={lt.id} value={lt.id}>
-                    {lt.leaveName}
-                  </option>
-                ))}
-              </select>
-            )}
-          </label>
-
-          {selectedLeaveType && (
-            <div className="leave-gauges">
-              <div>
-                <p className="leave-gauge-row-label">{selectedLeaveType.leaveName}</p>
-                <LeaveBalanceGauge
-                  usedDays={selectedSummary?.usedDays ?? 0}
-                  pendingDays={selectedSummary?.pendingDays ?? 0}
-                  remainingDays={selectedSummary?.remainingDays ?? 0}
-                />
-              </div>
-            </div>
+              ))}
+            </select>
           )}
+        </label>
 
-          <div className="leave-form-row">
-            <label>
-              วันที่เริ่มลา
-              <input
-                type="date"
-                value={startDate}
-                min={today()}
-                onChange={(e) => changeStartDate(e.target.value)}
-                required
-                disabled={busy}
-              />
-            </label>
-            <label>
-              วันที่สิ้นสุด
-              <input
-                type="date"
-                value={endDate}
-                min={startDate}
-                onChange={(e) => changeEndDate(e.target.value)}
-                required
-                disabled={busy}
-              />
-            </label>
+        {selectedLeaveType && (
+          <div className="leave-type-gauge-box">
+            <p className="leave-gauge-row-label">{selectedLeaveType.leaveName}</p>
+            <LeaveBalanceGauge
+              usedDays={selectedSummary?.usedDays ?? 0}
+              pendingDays={selectedSummary?.pendingDays ?? 0}
+              remainingDays={selectedSummary?.remainingDays ?? 0}
+            />
           </div>
+        )}
 
-          {supportsPartialDay && (
-            <>
-              <div className="leave-half-day-toggle">
-                <button
-                  type="button"
-                  className={partialMode === 'full' ? 'active' : ''}
-                  disabled={busy}
-                  onClick={() => applyPartialMode('full')}
-                >
-                  เต็มวัน
-                </button>
-                {selectedLeaveType?.allowHalfDay && (
-                  <>
-                    <button
-                      type="button"
-                      className={partialMode === 'morning' ? 'active' : ''}
-                      disabled={busy}
-                      onClick={() => applyPartialMode('morning')}
-                    >
-                      ครึ่งเช้า
-                    </button>
-                    <button
-                      type="button"
-                      className={partialMode === 'afternoon' ? 'active' : ''}
-                      disabled={busy}
-                      onClick={() => applyPartialMode('afternoon')}
-                    >
-                      ครึ่งบ่าย
-                    </button>
-                  </>
-                )}
-                {selectedLeaveType?.allowHourly && (
-                  <button
-                    type="button"
-                    className={partialMode === 'custom' ? 'active' : ''}
-                    disabled={busy}
-                    onClick={() => applyPartialMode('custom')}
-                  >
-                    ระบุเวลาเอง
-                  </button>
-                )}
-              </div>
-
-              {partialMode === 'custom' && (
-                <div className="leave-form-row">
-                  <label>
-                    เวลาเริ่ม
-                    <input
-                      type="time"
-                      value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
-                      required
-                      disabled={busy}
-                    />
-                  </label>
-                  <label>
-                    เวลาสิ้นสุด
-                    <input
-                      type="time"
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                      required
-                      disabled={busy}
-                    />
-                  </label>
-                </div>
-              )}
-            </>
-          )}
-
-          <label>
-            เหตุผล{selectedLeaveType?.requireReason && ' *'}
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              required={selectedLeaveType?.requireReason ?? false}
-              rows={3}
+        <div className="field-row">
+          <label className="field">
+            <span>วันที่เริ่มลา</span>
+            <input
+              type="date"
+              value={startDate}
+              min={today()}
+              onChange={(e) => changeStartDate(e.target.value)}
+              required
               disabled={busy}
             />
           </label>
+          <label className="field">
+            <span>วันที่สิ้นสุด</span>
+            <input
+              type="date"
+              value={endDate}
+              min={startDate}
+              onChange={(e) => changeEndDate(e.target.value)}
+              required
+              disabled={busy}
+            />
+          </label>
+        </div>
 
-          {error !== null && <p className="form-error">{error}</p>}
+        {supportsPartialDay && (
+          <>
+            <div className="leave-half-day-toggle">
+              <button
+                type="button"
+                className={partialMode === 'full' ? 'active' : ''}
+                disabled={busy}
+                onClick={() => applyPartialMode('full')}
+              >
+                เต็มวัน
+              </button>
+              {selectedLeaveType?.allowHalfDay && (
+                <>
+                  <button
+                    type="button"
+                    className={partialMode === 'morning' ? 'active' : ''}
+                    disabled={busy}
+                    onClick={() => applyPartialMode('morning')}
+                  >
+                    ครึ่งเช้า
+                  </button>
+                  <button
+                    type="button"
+                    className={partialMode === 'afternoon' ? 'active' : ''}
+                    disabled={busy}
+                    onClick={() => applyPartialMode('afternoon')}
+                  >
+                    ครึ่งบ่าย
+                  </button>
+                </>
+              )}
+              {selectedLeaveType?.allowHourly && (
+                <button
+                  type="button"
+                  className={partialMode === 'custom' ? 'active' : ''}
+                  disabled={busy}
+                  onClick={() => applyPartialMode('custom')}
+                >
+                  ระบุเวลาเอง
+                </button>
+              )}
+            </div>
 
-          <div className="correction-form-actions">
-            <button type="submit" disabled={busy || !leaveTypeId}>
-              {busy ? 'กำลังส่ง…' : 'ส่งคำขอ'}
-            </button>
-            <button type="button" className="secondary-button" disabled={busy} onClick={() => setMode('list')}>
-              ยกเลิก
-            </button>
-          </div>
-        </form>
+            {partialMode === 'custom' && (
+              <div className="field-row">
+                <label className="field">
+                  <span>เวลาเริ่ม</span>
+                  <input
+                    type="time"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    required
+                    disabled={busy}
+                  />
+                </label>
+                <label className="field">
+                  <span>เวลาสิ้นสุด</span>
+                  <input
+                    type="time"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    required
+                    disabled={busy}
+                  />
+                </label>
+              </div>
+            )}
+          </>
+        )}
+
+        {leaveSummary !== null && <p className="request-form-summary">{leaveSummary}</p>}
+      </RequestShell>
+
+      {cancelTarget && (
+        <ConfirmModal
+          title="ยกเลิกคำขอลานี้?"
+          message={`${cancelTarget.leaveTypeName} · ${formatDateRange(cancelTarget)} — ยกเลิกแล้วจะกู้คืนไม่ได้ ต้องยื่นใหม่`}
+          confirmLabel="ยกเลิกคำขอ"
+          busy={busy}
+          onConfirm={() => void confirmCancel()}
+          onCancel={() => setCancelId(null)}
+        />
       )}
-    </div>
+    </>
   )
 }

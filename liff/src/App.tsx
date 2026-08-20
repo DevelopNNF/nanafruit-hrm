@@ -51,7 +51,7 @@ function EmployeeHome({ employee }: { employee: Employee }) {
   if (screen === 'overtime') return <OvertimeRequestScreen onBack={back} />
   if (screen === 'profile') return <ProfileScreen employee={employee} onBack={back} />
   if (screen === 'calendar') return <CalendarScreen onBack={back} />
-  return <HomeScreen onNavigate={navigate} />
+  return <HomeScreen employee={employee} onNavigate={navigate} />
 }
 
 function App({ idToken, initialSession }: Props) {

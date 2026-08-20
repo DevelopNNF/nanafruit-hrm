@@ -5,26 +5,27 @@
    the same palette as the rest of the hand-written CSS, instead of a second,
    drifting set of colours. */
 @theme {
-  --color-text: #6b6375;
-  --color-text-h: #08060d;
-  --color-bg: #fff;
-  --color-border: #e5e4e7;
-  --color-card: #fbfbfa;
+  --color-text: #5c6b62;
+  --color-text-h: #0f1f16;
+  --color-bg: #f4f6f3;
+  --color-border: #e4e9e3;
+  --color-card: #ffffff;
   --color-ok: #06c755;
   --color-warn: #f2a900;
   --color-error: #d64545;
   --color-accent: #06c755;
 
-  --font-sans: system-ui, 'Segoe UI', Roboto, 'Noto Sans Thai', sans-serif;
-  --font-mono: ui-monospace, Consolas, monospace;
+  --font-sans: 'Sarabun', 'Noto Sans Thai', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
 }
 
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --card-bg: #fbfbfa;
+  --text: #5c6b62;
+  --text-h: #0f1f16;
+  --text-faint: #93a099;
+  --bg: #f4f6f3;
+  --border: #e4e9e3;
+  --card-bg: #ffffff;
   --ok: #06c755;
   --warn: #f2a900;
   --error: #d64545;
@@ -33,9 +34,25 @@
      "this went well", the other means "press this", and they will not always
      want to move together. */
   --accent: #06c755;
+  --accent-dark: #05b34c;
+  /* Darker green for text-on-light-green (links, badges) — #06c755 itself
+     fails contrast as foreground text on a white/light background. */
+  --accent-ink: #06803c;
 
-  --sans: system-ui, 'Segoe UI', Roboto, 'Noto Sans Thai', sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  /* Request status pills — distinct from --ok/--warn/--error, which other
+     screens (calendar day types, plain form errors) already own. */
+  --status-pending-fg: #9a6b00;
+  --status-pending-bg: #fff3d6;
+  --status-approved-fg: #06803c;
+  --status-approved-bg: #e3f7e9;
+  --status-rejected-fg: #b23a28;
+  --status-rejected-bg: #fbe9e5;
+  --status-cancelled-fg: #5f6b63;
+  --status-cancelled-bg: #ebeee9;
+
+  --sans: 'Sarabun', 'Noto Sans Thai', system-ui, sans-serif;
+  --display: 'Kanit', 'Noto Sans Thai', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
 
   font: 16px/155% var(--sans);
   /* Light only. Pinning this (rather than `light dark`) also keeps native
@@ -68,9 +85,10 @@ body {
 }
 
 h1 {
+  font-family: var(--display);
   font-size: 1.75rem;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   color: var(--text-h);
   margin: 0;
 }

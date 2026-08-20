@@ -1,16 +1,27 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import type { AttendanceEvent, AttendanceEventType } from '@hrm/shared'
+import type { AttendanceEvent, AttendanceEventType, Employee } from '@hrm/shared'
 import { clockAttendance, fetchAttendanceStatus } from '../api/attendance'
 import { ApiRequestError } from '../api/client'
 import { getCurrentCoordinates, type CoordinatesResult } from '../lib/geolocation'
 import { describeDevice } from '../lib/deviceInfo'
 import { ConfirmModal } from './ConfirmModal'
 
+type Props = {
+  employee: Employee
+}
+
 type State =
   | { phase: 'loading' }
   | { phase: 'ready'; lastEvent: AttendanceEvent | null }
   | { phase: 'error'; message: string }
+
+const WEEKDAYS_FULL_TH = [
+  'วันอาทิตย์', 'วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์',
+]
+const MONTHS_SHORT_TH = [
+  'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.',
+]
 
 function messageFor(err: unknown): string {
   if (err instanceof ApiRequestError) return err.message
@@ -24,6 +35,15 @@ function formatTime(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function formatTimeOnly(iso: string): string {
+  return new Date(iso).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+}
+
+function todayHeading(): string {
+  const now = new Date()
+  return `${WEEKDAYS_FULL_TH[now.getDay()]}ที่ ${now.getDate()} ${MONTHS_SHORT_TH[now.getMonth()]}`
 }
 
 /** check_in and check_out alternate strictly — this is the only rule the
@@ -48,7 +68,7 @@ function locationHintFor(result: CoordinatesResult): string | null {
   }
 }
 
-export function AttendanceCard() {
+export function AttendanceCard({ employee }: Props) {
   const [state, setState] = useState<State>({ phase: 'loading' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -97,9 +117,33 @@ export function AttendanceCard() {
     setConfirming(false)
   }
 
+  const shiftStart = employee.employment.shiftStartTime?.slice(0, 5) ?? null
+  const shiftEnd = employee.employment.shiftEndTime?.slice(0, 5) ?? null
+
   return (
     <div className="card ok attendance-card">
-      <p className="headline">ลงเวลาทำงาน</p>
+      <div className="day-card-head">
+        <div>
+          <p className="headline">{todayHeading()}</p>
+          <p className="hint">
+            {shiftStart && shiftEnd ? `กะ ${shiftStart}–${shiftEnd}` : 'ไม่มีกะที่กำหนดไว้'}
+          </p>
+        </div>
+
+        {state.phase === 'ready' && (
+          <span
+            className={`status-pill ${
+              state.lastEvent === null ? 'pending' : state.lastEvent.eventType === 'check_in' ? 'approved' : 'cancelled'
+            }`}
+          >
+            {state.lastEvent === null
+              ? 'ยังไม่ลงเวลา'
+              : state.lastEvent.eventType === 'check_in'
+                ? 'กำลังทำงาน'
+                : 'ลงเวลาล่าสุดแล้ว'}
+          </span>
+        )}
+      </div>
 
       {state.phase === 'loading' && <p className="hint">กำลังโหลดสถานะ…</p>}
 
@@ -107,6 +151,21 @@ export function AttendanceCard() {
 
       {state.phase === 'ready' && (
         <>
+          <div className="punch-grid">
+            <div className="punch-box">
+              <p className="punch-box-label">CHECK IN</p>
+              <p className="punch-box-value">
+                {state.lastEvent?.eventType === 'check_in' ? formatTimeOnly(state.lastEvent.eventTime) : '—:—'}
+              </p>
+            </div>
+            <div className="punch-box">
+              <p className="punch-box-label">CHECK OUT</p>
+              <p className="punch-box-value">
+                {state.lastEvent?.eventType === 'check_out' ? formatTimeOnly(state.lastEvent.eventTime) : '—:—'}
+              </p>
+            </div>
+          </div>
+
           <p className="hint">
             {state.lastEvent
               ? `${state.lastEvent.eventType === 'check_in' ? 'เข้างานล่าสุด' : 'ออกงานล่าสุด'}: ${formatTime(state.lastEvent.eventTime)}`
