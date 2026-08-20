@@ -14,6 +14,7 @@ import type pg from 'pg'
 import type {
   AuthUser,
   CalendarDayStatus,
+  EmployeeFinance,
   FinanceItemType,
   OvertimeGroup,
   OvertimeRoundingMinutes,
@@ -31,6 +32,8 @@ import { bucketOvertimeDay, type OvertimeBucketCode } from './overtimeCalculatio
 import { hourlyWage } from './wageRate.js'
 import { getWageForDate, wageJoinSqlForDate } from './wageAssignmentQueries.js'
 import { parseDateOnlyUtc, toDateOnlyString } from './leaveRequestQueries.js'
+import { findEmployeeFinanceById } from './employeeFinanceQueries.js'
+import { socialSecurityContribution, SOCIAL_SECURITY_RATE } from './socialSecurityCalculation.js'
 import {
   employedDayCount,
   isFullPeriodEmployment,
@@ -178,6 +181,7 @@ const LINE_NAME: Record<PayrollEntryLineCode, string> = {
   OT_EXTRA_DAYOFF: 'ค่าล่วงเวลาวันหยุด (เกิน 8 ชม.)',
   OT_NORMAL_HOLIDAY: 'ค่าล่วงเวลาวันหยุดนักขัตฤกษ์ (8 ชม.แรก)',
   OT_EXTRA_HOLIDAY: 'ค่าล่วงเวลาวันหยุดนักขัตฤกษ์ (เกิน 8 ชม.)',
+  SOCIAL_SECURITY_DEDUCT: 'ประกันสังคม',
 }
 const LINE_TYPE: Record<PayrollEntryLineCode, FinanceItemType> = {
   BASIC_WAGE: 'income',
@@ -189,6 +193,7 @@ const LINE_TYPE: Record<PayrollEntryLineCode, FinanceItemType> = {
   OT_EXTRA_DAYOFF: 'income',
   OT_NORMAL_HOLIDAY: 'income',
   OT_EXTRA_HOLIDAY: 'income',
+  SOCIAL_SECURITY_DEDUCT: 'deduction',
 }
 const LINE_SORT_ORDER: Record<PayrollEntryLineCode, number> = {
   BASIC_WAGE: 10,
@@ -204,6 +209,10 @@ const LINE_SORT_ORDER: Record<PayrollEntryLineCode, number> = {
   OT_EXTRA_DAYOFF: 52,
   OT_NORMAL_HOLIDAY: 53,
   OT_EXTRA_HOLIDAY: 54,
+  // 60: statutory deductions — the system computes this one automatically,
+  // same as OT, so it sits right after OT and before the 100+ block of
+  // finance items HR configures by hand.
+  SOCIAL_SECURITY_DEDUCT: 60,
 }
 
 /** name/itemType/sortOrder travel with the line itself rather than being
@@ -792,6 +801,45 @@ async function buildFinanceItemLines(
   )
 }
 
+/**
+ * The social-security deduction line, if any, for one employee — driven by
+ * employee_finance.socialSecurityType, not something payroll decides on its
+ * own. Only two of the six types produce a line here:
+ *
+ * - actual_wage_employee_paid: 5% of wageReceived (the same grossWage
+ *   buildDailyEntry/buildMonthlyEntry already computed — NOT including OT,
+ *   per HR), clamped to [1,650, 17,500] and rounded to a whole baht by
+ *   socialSecurityContribution().
+ * - fixed_monthly: employee_finance.socialSecurityFixedAmount verbatim, no
+ *   clamp or 5% involved — HR set this figure directly.
+ *
+ * Every other type (none, actual_wage_company_paid, section_39, formula)
+ * produces no line at all: none/section_39 mean this employee's contribution
+ * genuinely does not run through payroll, actual_wage_company_paid means the
+ * company absorbs it outside this system (out of scope for Phase 4 — see the
+ * phase plan), and formula is the legacy config value this company never
+ * used. finance === null (no employee_finance row at all, which the
+ * employee-finance form should prevent but this function does not assume)
+ * is treated the same as 'none' rather than guessed at.
+ */
+function buildSocialSecurityLine(finance: EmployeeFinance | null, wageReceived: number): DraftLine | null {
+  if (finance === null) return null
+
+  if (finance.socialSecurityType === 'actual_wage_employee_paid') {
+    const amount = socialSecurityContribution(wageReceived)
+    if (amount <= 0) return null
+    return line('SOCIAL_SECURITY_DEDUCT', null, SOCIAL_SECURITY_RATE, amount)
+  }
+
+  if (finance.socialSecurityType === 'fixed_monthly') {
+    const amount = finance.socialSecurityFixedAmount ?? 0
+    if (amount <= 0) return null
+    return line('SOCIAL_SECURITY_DEDUCT', null, null, amount)
+  }
+
+  return null
+}
+
 /** Merges review-reason lists from separate sources (e.g. buildDailyEntry's
  *  own reasons and buildOvertimeLines' reasons) by code, unioning workDates
  *  rather than concatenating the lists — so if two sources ever flag the same
@@ -1014,6 +1062,7 @@ export async function calculatePayrollEntries(
     // branches would be one calculation read from two places that can drift.
     const overtime = await buildOvertimeLines(employeeId, period.period_start, period.period_end, client)
     const financeLines = await buildFinanceItemLines(employeeId, period.period_start, period.period_end, client)
+    const finance = await findEmployeeFinanceById(employeeId, client)
     const lines: DraftLine[] = [...overtime.lines, ...financeLines]
 
     if (wage.wageType === 'daily') {
@@ -1028,6 +1077,8 @@ export async function calculatePayrollEntries(
       if (daily.earlyLeaveDeductAmount > 0) {
         lines.push(line('EARLY_LEAVE_DEDUCT', daily.earlyLeaveMinutesDeducted, null, daily.earlyLeaveDeductAmount))
       }
+      const ssLine = buildSocialSecurityLine(finance, daily.grossWage)
+      if (ssLine) lines.push(ssLine)
       entryFields = {
         employedDays: null,
         isFullPeriod: null,
@@ -1058,6 +1109,8 @@ export async function calculatePayrollEntries(
       if (absenceDeduct > 0) {
         lines.push(line('ABSENCE_DEDUCT', monthly.absentDays, round2(wage.wageAmount / 30), absenceDeduct))
       }
+      const ssLine = buildSocialSecurityLine(finance, monthly.grossWage)
+      if (ssLine) lines.push(ssLine)
       entryFields = {
         employedDays: monthly.employedDays,
         isFullPeriod: monthly.isFullPeriod,

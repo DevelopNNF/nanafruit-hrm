@@ -1198,6 +1198,13 @@ export const PAYROLL_ENTRY_LINE_CODES = [
   'OT_NORMAL_HOLIDAY',
   /** Anything past 8 hours on the same holiday — group.rateOtHoliday. */
   'OT_EXTRA_HOLIDAY',
+  /** Social security deduction — only for employee_finance.socialSecurityType
+   *  'actual_wage_employee_paid' (5% of actual wage received this period,
+   *  clamped and rounded to a whole baht) or 'fixed_monthly' (uses
+   *  socialSecurityFixedAmount directly). 'none', 'actual_wage_company_paid',
+   *  'section_39' and 'formula' never produce this line — see
+   *  buildSocialSecurityLine() in payrollEntryQueries.ts. */
+  'SOCIAL_SECURITY_DEDUCT',
 ] as const
 export type PayrollEntryLineCode = (typeof PAYROLL_ENTRY_LINE_CODES)[number]
 
