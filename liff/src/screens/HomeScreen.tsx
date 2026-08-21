@@ -79,7 +79,7 @@ export function HomeScreen({ employee, onNavigate }: Props) {
         </button>
       </header>
 
-      <AttendanceCard employee={employee} />
+      <AttendanceCard />
 
       <HomeLeaveBalances employee={employee} onViewAll={() => onNavigate('leave')} />
 

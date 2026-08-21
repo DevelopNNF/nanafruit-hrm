@@ -628,3 +628,34 @@ export async function matchAttendanceForDates(
       }
   )
 }
+
+/**
+ * Which of yesterday's/today's matched windows is "the one right now" —
+ * for a live status display (the liff home screen), not a report, so there
+ * is exactly one answer rather than a set of days to reconcile.
+ *
+ * Defaults to today. Prefers yesterday only while `now` is still inside its
+ * buffered match span (see matchSpanOf) — i.e. still inside an overnight
+ * shift that started the evening before, or its late-checkout grace period.
+ * Once that span has passed, today's window takes over even if it's empty
+ * (no shift yet started, nothing punched) — an empty "today" is still the
+ * more honest answer than a stale "yesterday" once yesterday's shift is
+ * unambiguously over.
+ *
+ * `yesterday`/`today` must be exactly the two MatchedAttendanceDay entries
+ * matchAttendanceForDates([yesterday, today]) returns, in that order —
+ * enforced by the caller, not re-derived here, since this is pure and has no
+ * way to know which work-date is which.
+ */
+export function chooseAttendanceWindow(
+  yesterday: MatchedAttendanceDay,
+  today: MatchedAttendanceDay,
+  now: Date
+): MatchedAttendanceDay {
+  const span = matchSpanOf(yesterday)
+  if (span === null) return today
+
+  const bufferedStart = withBufferMinutes(span.start, -MATCH_BUFFER_MINUTES)
+  const bufferedEnd = withBufferMinutes(span.end, MATCH_BUFFER_MINUTES)
+  return now >= bufferedStart && now <= bufferedEnd ? yesterday : today
+}

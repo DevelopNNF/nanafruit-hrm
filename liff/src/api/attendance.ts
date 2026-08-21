@@ -4,15 +4,17 @@ import type {
   AttendanceEvent,
   AttendanceEventType,
   AttendanceStatusResponse,
+  AttendanceTodayStatus,
 } from '@hrm/shared'
 import type { Coordinates } from '../lib/geolocation'
 import { apiFetch, jsonHeaders, unwrap } from './client'
 
-/** This employee's own most recent clock event, or null if they have none. */
-export async function fetchAttendanceStatus(signal?: AbortSignal): Promise<AttendanceEvent | null> {
+/** This employee's check-in/check-out for whichever shift is currently
+ *  relevant — not necessarily today's, see AttendanceTodayStatus. */
+export async function fetchAttendanceStatus(signal?: AbortSignal): Promise<AttendanceTodayStatus> {
   const res = await apiFetch('/api/attendance/me', { signal })
   const body = await unwrap<AttendanceStatusResponse>(res)
-  return body.lastEvent
+  return body.today
 }
 
 export async function clockAttendance(

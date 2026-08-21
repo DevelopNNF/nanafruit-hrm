@@ -1,19 +1,15 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import type { AttendanceEvent, AttendanceEventType, Employee } from '@hrm/shared'
+import type { AttendanceEventType, AttendanceTodayStatus } from '@hrm/shared'
 import { clockAttendance, fetchAttendanceStatus } from '../api/attendance'
 import { ApiRequestError } from '../api/client'
 import { getCurrentCoordinates, type CoordinatesResult } from '../lib/geolocation'
 import { describeDevice } from '../lib/deviceInfo'
 import { ConfirmModal } from './ConfirmModal'
 
-type Props = {
-  employee: Employee
-}
-
 type State =
   | { phase: 'loading' }
-  | { phase: 'ready'; lastEvent: AttendanceEvent | null }
+  | { phase: 'ready'; today: AttendanceTodayStatus }
   | { phase: 'error'; message: string }
 
 const WEEKDAYS_FULL_TH = [
@@ -28,28 +24,24 @@ function messageFor(err: unknown): string {
   return 'เชื่อมต่อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'
 }
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleString('th-TH', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 function formatTimeOnly(iso: string): string {
   return new Date(iso).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
 }
 
-function todayHeading(): string {
-  const now = new Date()
-  return `${WEEKDAYS_FULL_TH[now.getDay()]}ที่ ${now.getDate()} ${MONTHS_SHORT_TH[now.getMonth()]}`
+/** The date heading follows `workDate`, not the device's own today — past
+ *  midnight, still inside an overnight shift, the server reports last
+ *  night's work-date, and labelling that "today" would misdescribe whose
+ *  shift is on screen. Same local-parse convention as the other request
+ *  cards' formatDate. */
+function dateHeading(workDate: string): string {
+  const d = new Date(`${workDate}T00:00:00`)
+  return `${WEEKDAYS_FULL_TH[d.getDay()]}ที่ ${d.getDate()} ${MONTHS_SHORT_TH[d.getMonth()]}`
 }
 
 /** check_in and check_out alternate strictly — this is the only rule the
  *  client enforces; the server re-checks it against the real last event. */
-function nextEventType(lastEvent: AttendanceEvent | null): AttendanceEventType {
-  return lastEvent?.eventType === 'check_in' ? 'check_out' : 'check_in'
+function nextEventType(today: AttendanceTodayStatus): AttendanceEventType {
+  return today.checkInAt !== null && today.checkOutAt === null ? 'check_out' : 'check_in'
 }
 
 /** Shown after a successful clock event whose GPS fix didn't come through —
@@ -68,7 +60,7 @@ function locationHintFor(result: CoordinatesResult): string | null {
   }
 }
 
-export function AttendanceCard({ employee }: Props) {
+export function AttendanceCard() {
   const [state, setState] = useState<State>({ phase: 'loading' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -81,7 +73,7 @@ export function AttendanceCard({ employee }: Props) {
   useEffect(() => {
     const controller = new AbortController()
     fetchAttendanceStatus(controller.signal)
-      .then((lastEvent) => setState({ phase: 'ready', lastEvent }))
+      .then((today) => setState({ phase: 'ready', today }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({ phase: 'error', message: messageFor(err) })
@@ -98,7 +90,21 @@ export function AttendanceCard({ employee }: Props) {
       // geolocation.ts — so this always proceeds to clockAttendance.
       const result = await getCurrentCoordinates()
       const event = await clockAttendance(eventType, result.ok ? result.coordinates : null, describeDevice())
-      setState({ phase: 'ready', lastEvent: event })
+      // Optimistic patch of just the slot this event fills, rather than a
+      // refetch — a refetch could in principle re-run chooseAttendanceWindow
+      // and land on a different work-date than the one just clocked against,
+      // which would be a stranger result than briefly trusting our own write.
+      setState((prev) =>
+        prev.phase === 'ready'
+          ? {
+              phase: 'ready',
+              today:
+                eventType === 'check_in'
+                  ? { ...prev.today, checkInAt: event.eventTime, checkInEventId: event.id }
+                  : { ...prev.today, checkOutAt: event.eventTime, checkOutEventId: event.id },
+            }
+          : prev
+      )
       setLocationHint(locationHintFor(result))
       toast(eventType === 'check_in' ? 'ลงเวลาเข้างานสำเร็จแล้ว' : 'ลงเวลาออกงานสำเร็จแล้ว')
       return true
@@ -117,68 +123,62 @@ export function AttendanceCard({ employee }: Props) {
     setConfirming(false)
   }
 
-  const shiftStart = employee.employment.shiftStartTime?.slice(0, 5) ?? null
-  const shiftEnd = employee.employment.shiftEndTime?.slice(0, 5) ?? null
-
   return (
     <div className="card ok attendance-card">
-      <div className="day-card-head">
-        <div>
-          <p className="headline">{todayHeading()}</p>
-          <p className="hint">
-            {shiftStart && shiftEnd ? `กะ ${shiftStart}–${shiftEnd}` : 'ไม่มีกะที่กำหนดไว้'}
-          </p>
-        </div>
-
-        {state.phase === 'ready' && (
-          <span
-            className={`status-pill ${
-              state.lastEvent === null ? 'pending' : state.lastEvent.eventType === 'check_in' ? 'approved' : 'cancelled'
-            }`}
-          >
-            {state.lastEvent === null
-              ? 'ยังไม่ลงเวลา'
-              : state.lastEvent.eventType === 'check_in'
-                ? 'กำลังทำงาน'
-                : 'ลงเวลาล่าสุดแล้ว'}
-          </span>
-        )}
-      </div>
-
       {state.phase === 'loading' && <p className="hint">กำลังโหลดสถานะ…</p>}
 
       {state.phase === 'error' && <p className="form-error">{state.message}</p>}
 
       {state.phase === 'ready' && (
         <>
+          <div className="day-card-head">
+            <div>
+              <p className="headline">{dateHeading(state.today.workDate)}</p>
+              <p className="hint">
+                {state.today.shiftStartAt && state.today.shiftEndAt
+                  ? `กะ ${formatTimeOnly(state.today.shiftStartAt)}–${formatTimeOnly(state.today.shiftEndAt)}`
+                  : 'ไม่มีกะที่กำหนดไว้'}
+              </p>
+            </div>
+            <span
+              className={`status-pill ${
+                state.today.checkInAt === null
+                  ? 'pending'
+                  : state.today.checkOutAt === null
+                    ? 'approved'
+                    : 'cancelled'
+              }`}
+            >
+              {state.today.checkInAt === null
+                ? 'ยังไม่ลงเวลา'
+                : state.today.checkOutAt === null
+                  ? 'กำลังทำงาน'
+                  : 'ลงเวลาครบแล้ว'}
+            </span>
+          </div>
+
           <div className="punch-grid">
             <div className="punch-box">
               <p className="punch-box-label">CHECK IN</p>
               <p className="punch-box-value">
-                {state.lastEvent?.eventType === 'check_in' ? formatTimeOnly(state.lastEvent.eventTime) : '—:—'}
+                {state.today.checkInAt ? formatTimeOnly(state.today.checkInAt) : '—:—'}
               </p>
             </div>
             <div className="punch-box">
               <p className="punch-box-label">CHECK OUT</p>
               <p className="punch-box-value">
-                {state.lastEvent?.eventType === 'check_out' ? formatTimeOnly(state.lastEvent.eventTime) : '—:—'}
+                {state.today.checkOutAt ? formatTimeOnly(state.today.checkOutAt) : '—:—'}
               </p>
             </div>
           </div>
 
-          <p className="hint">
-            {state.lastEvent
-              ? `${state.lastEvent.eventType === 'check_in' ? 'เข้างานล่าสุด' : 'ออกงานล่าสุด'}: ${formatTime(state.lastEvent.eventTime)}`
-              : 'ยังไม่มีประวัติการลงเวลา'}
-          </p>
-
           <button
             type="button"
-            className={`clock-button ${nextEventType(state.lastEvent)}`}
+            className={`clock-button ${nextEventType(state.today)}`}
             disabled={busy}
             onClick={() => setConfirming(true)}
           >
-            {nextEventType(state.lastEvent) === 'check_in' ? 'ลงเวลาเข้างาน' : 'ลงเวลาออกงาน'}
+            {nextEventType(state.today) === 'check_in' ? 'ลงเวลาเข้างาน' : 'ลงเวลาออกงาน'}
           </button>
 
           {error !== null && <p className="form-error">{error}</p>}
@@ -187,13 +187,13 @@ export function AttendanceCard({ employee }: Props) {
           {confirming && (
             <ConfirmModal
               title={
-                nextEventType(state.lastEvent) === 'check_in'
+                nextEventType(state.today) === 'check_in'
                   ? 'ยืนยันลงเวลาเข้างาน?'
                   : 'ยืนยันลงเวลาออกงาน?'
               }
               confirmLabel="ยืนยัน"
               busy={busy}
-              onConfirm={() => void handleConfirm(nextEventType(state.lastEvent))}
+              onConfirm={() => void handleConfirm(nextEventType(state.today))}
               onCancel={() => setConfirming(false)}
             />
           )}

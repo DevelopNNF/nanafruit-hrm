@@ -10,6 +10,7 @@ import {
   type AttendanceEventType,
   type AttendanceListResponse,
   type AttendanceStatusResponse,
+  type AttendanceTodayStatus,
 } from '@hrm/shared'
 import { pool } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
@@ -24,6 +25,8 @@ import {
   type AttendanceRow,
 } from '../attendanceQueries.js'
 import { listAttendanceDaily } from '../attendanceDailyQueries.js'
+import { chooseAttendanceWindow, matchAttendanceForDates } from '../attendanceMatchingQueries.js'
+import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 
 export const attendanceRouter = Router()
 
@@ -204,8 +207,26 @@ attendanceRouter.get('/attendance/me', async (req: Request, res: Response) => {
   if (employeeId === null) return
 
   try {
-    const lastEvent = await findLastAttendanceEvent(employeeId)
-    const body: AttendanceStatusResponse = { lastEvent }
+    const now = new Date()
+    const todayDate = toThailandDateString(now)
+    const yesterdayDate = addDays(todayDate, -1)
+    const [yesterday, today] = await matchAttendanceForDates(employeeId, [yesterdayDate, todayDate])
+    if (!yesterday || !today) throw new Error('matchAttendanceForDates returned fewer rows than dates requested')
+
+    const chosen = chooseAttendanceWindow(yesterday, today, now)
+    const status: AttendanceTodayStatus = {
+      workDate: chosen.workDate,
+      shiftId: chosen.shiftId,
+      shiftName: chosen.shiftName,
+      shiftStartAt: chosen.expectedCheckInAt,
+      shiftEndAt: chosen.expectedCheckOutAt,
+      isOvernight: chosen.isOvernight,
+      checkInAt: chosen.actualCheckInAt,
+      checkInEventId: chosen.actualCheckInEventId,
+      checkOutAt: chosen.actualCheckOutAt,
+      checkOutEventId: chosen.actualCheckOutEventId,
+    }
+    const body: AttendanceStatusResponse = { today: status }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)

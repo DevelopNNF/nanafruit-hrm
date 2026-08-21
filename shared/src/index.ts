@@ -1393,8 +1393,35 @@ export type AttendanceClockRequest = {
 /** POST /api/attendance/clock */
 export type AttendanceClockResponse = { event: AttendanceEvent }
 
-/** GET /api/attendance/me — null means this employee has no events yet. */
-export type AttendanceStatusResponse = { lastEvent: AttendanceEvent | null }
+/**
+ * The employee's own attendance for whichever shift is currently relevant —
+ * not just their single most recent event. "Relevant" resolves overnight
+ * shifts correctly: past midnight, still inside last night's shift window,
+ * this reports *last night's* pair rather than an empty "today". See
+ * chooseAttendanceWindow in attendanceMatchingQueries.ts (server) for the
+ * selection rule.
+ */
+export type AttendanceTodayStatus = {
+  /** The work-date this status is reported against — yesterday's, not
+   *  today's, whenever "now" is still inside an overnight shift that started
+   *  the evening before. */
+  workDate: string
+  shiftId: number | null
+  shiftName: string | null
+  /** ISO 8601. Both null exactly when shiftId is null. */
+  shiftStartAt: string | null
+  shiftEndAt: string | null
+  isOvernight: boolean
+  /** ISO 8601, from a matched attendance_events row — null when nothing has
+   *  been punched yet for this window. */
+  checkInAt: string | null
+  checkInEventId: number | null
+  checkOutAt: string | null
+  checkOutEventId: number | null
+}
+
+/** GET /api/attendance/me */
+export type AttendanceStatusResponse = { today: AttendanceTodayStatus }
 
 /** An attendance event as admin/ sees it: the employee it belongs to, joined
  *  in for display, since one caller's list spans every employee. */
