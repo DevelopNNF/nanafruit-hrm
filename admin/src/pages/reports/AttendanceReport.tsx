@@ -44,13 +44,14 @@ function toDateInput(date: Date): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
 }
 
-/** The last 7 days ending yesterday — the same window the attendance:compute
- *  job fills by default, so the page opens on data that actually exists. */
+/** Returns the default date range (26th of previous month to 25th of current month),
+ *  matching the default window used by the attendance:compute job. */
 function defaultRange(): { from: string; to: string } {
-  const to = new Date()
-  to.setDate(to.getDate() - 1)
-  const from = new Date(to)
-  from.setDate(from.getDate() - 6)
+  const current_date = new Date()
+  const year = current_date.getFullYear()
+  const month = current_date.getMonth()
+  const to = new Date(year, month, 25)
+  const from = new Date(year, month - 1, 26)
   return { from: toDateInput(from), to: toDateInput(to) }
 }
 
