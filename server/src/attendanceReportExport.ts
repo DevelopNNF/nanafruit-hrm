@@ -39,12 +39,17 @@ function formatTimeOfDay(iso: string): string {
   })
 }
 
-/** "08:27 - 17:34", matching the "เวลาจริง" column's sample formatting. */
-function formatActualTimeRange(checkInAt: string | null, checkOutAt: string | null): string {
-  if (checkInAt === null && checkOutAt === null) return '—'
-  const inText = checkInAt === null ? '—' : formatTimeOfDay(checkInAt)
-  const outText = checkOutAt === null ? '—' : formatTimeOfDay(checkOutAt)
-  return `${inText} - ${outText}`
+/** "08:27 - 17:34" from a pair of ISO instants, or "08:30 - 17:30" from a
+ *  pair of ISO instants standing in for the shift's own window — same shape
+ *  either way, so both the "เวลากะ" and "เวลาจริง" columns use this. Null in
+ *  either half (no shift applied, or a punch never landed) reads as '—'
+ *  rather than being handed to `new Date`, which turns a bare null into the
+ *  epoch instead of failing loudly. */
+function formatTimeRange(startAt: string | null, endAt: string | null): string {
+  if (startAt === null && endAt === null) return '—'
+  const startText = startAt === null ? '—' : formatTimeOfDay(startAt)
+  const endText = endAt === null ? '—' : formatTimeOfDay(endAt)
+  return `${startText} - ${endText}`
 }
 
 function writeRow(worksheet: ExcelJS.Worksheet, rowNumber: number, day: AttendanceDailyExportRow): void {
@@ -52,13 +57,15 @@ function writeRow(worksheet: ExcelJS.Worksheet, rowNumber: number, day: Attendan
   let colNo = 1
   row.getCell(colNo++).value = day.employeeCode
   row.getCell(colNo++).value = day.employeeName
+  row.getCell(colNo++).value = day.startWorkingDate === null ? null : parseDateOnlyUtc(day.startWorkingDate)
+  row.getCell(colNo++).value = day.endWorkingDate === null ? null : parseDateOnlyUtc(day.endWorkingDate)
   row.getCell(colNo++).value = day.departmentName ?? '—'
   row.getCell(colNo++).value = day.jobTitle ?? '—'
   row.getCell(colNo++).value = day.workLocation ?? '—'
   row.getCell(colNo++).value = parseDateOnlyUtc(day.workDate)
-  row.getCell(colNo++).value = day.shiftName ?? day.shiftCode ?? '—'
-  row.getCell(colNo++).value = `${formatTimeOfDay(day.expectedCheckInAt!)} - ${formatTimeOfDay(day.expectedCheckOutAt!)}`
-  row.getCell(colNo++).value = formatActualTimeRange(day.actualCheckInAt, day.actualCheckOutAt)
+  row.getCell(colNo++).value = day.shiftCode ?? day.shiftName ?? '—'
+  row.getCell(colNo++).value = formatTimeRange(day.expectedCheckInAt, day.expectedCheckOutAt)
+  row.getCell(colNo++).value = formatTimeRange(day.actualCheckInAt, day.actualCheckOutAt)
   row.getCell(colNo++).value = day.workedMinutes === null ? '—' : formatWorkMinutes(day.workedMinutes)
   row.getCell(colNo++).value = attendanceBadges(day)
     .map((b) => b.label)

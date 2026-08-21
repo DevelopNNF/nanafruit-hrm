@@ -485,12 +485,19 @@ export type AttendanceDailyExportRow = AttendanceDailyItem & {
   departmentName: string | null
   jobTitle: string | null
   workLocation: string | null
+  /** 'YYYY-MM-DD'. From employment_details — one value per employee, repeated
+   *  across every one of their rows, same as departmentName/jobTitle. */
+  startWorkingDate: string | null
+  /** 'YYYY-MM-DD', or null while still employed. */
+  endWorkingDate: string | null
 }
 
 type AttendanceDailyExportDbRow = AttendanceDailyRow & {
   department_name: string | null
   job_title: string | null
   work_location: string | null
+  start_working_date: string | null
+  end_working_date: string | null
 }
 
 export async function listAttendanceDailyForExport(
@@ -519,7 +526,8 @@ export async function listAttendanceDailyForExport(
             d.actual_check_in_at, d.actual_check_out_at,
             d.late_minutes, d.early_leave_minutes, d.worked_minutes,
             d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.computed_at,
-            md.dept_name AS department_name, mj.job_title, ed.work_location
+            md.dept_name AS department_name, mj.job_title, ed.work_location,
+            ed.start_working_date, ed.end_working_date
      ${from}
      ORDER BY e.employee_code, d.work_date`,
     params
@@ -530,5 +538,7 @@ export async function listAttendanceDailyForExport(
     departmentName: row.department_name,
     jobTitle: row.job_title,
     workLocation: row.work_location,
+    startWorkingDate: row.start_working_date,
+    endWorkingDate: row.end_working_date,
   }))
 }
