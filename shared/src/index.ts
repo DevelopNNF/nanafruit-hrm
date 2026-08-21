@@ -1545,6 +1545,56 @@ export type AttendanceImportBatch = {
 /** GET /api/attendance/import/batches */
 export type AttendanceImportBatchListResponse = { batches: AttendanceImportBatch[] }
 
+/* Employee Import/Export -----------------------------------------------------
+ *
+ * Both directions share one worksheet layout — server/templates/employee-template.xlsx
+ * — one row per employee, columns matching the Thai labels this type's own
+ * comments use. Import only ever touches the fields the sheet carries: status,
+ * endWorkingDate, terminationReason, overtimeGroupId, the English name fields
+ * and the finance tab all stay whatever they already were, changed only
+ * through their own dedicated screens.
+ */
+
+export type EmployeeImportRowAction = 'create' | 'update' | 'blocked' | 'skip'
+
+/** One data row of the uploaded sheet, after validation and matching against
+ *  the database. `reasons` explains why a skip/blocked row didn't go through,
+ *  or carries a heads-up for a create/update row — e.g. that it is about to
+ *  change someone's shift. */
+export type EmployeeImportRowPreview = {
+  /** 1-based row number in the sheet, so HR can find it in Excel. */
+  rowNumber: number
+  action: EmployeeImportRowAction
+  employeeCode: string | null
+  /** Set only when the code matched an existing employee (update/blocked). */
+  employeeId: number | null
+  /** firstNameTh + lastNameTh as read from the sheet, for display. */
+  name: string | null
+  reasons: string[]
+}
+
+/** POST /api/employees/import/preview */
+export type EmployeeImportPreview = {
+  fileName: string
+  rows: EmployeeImportRowPreview[]
+  createCount: number
+  updateCount: number
+  blockedCount: number
+  skipCount: number
+}
+
+export type EmployeeImportPreviewResponse = { preview: EmployeeImportPreview }
+
+/** POST /api/employees/import */
+export type EmployeeImportResult = {
+  createdCount: number
+  updatedCount: number
+  blockedCount: number
+  skippedCount: number
+}
+
+export type EmployeeImportResponse = { result: EmployeeImportResult }
+
 /* Attendance Daily -----------------------------------------------------------
  *
  * The computed daily verdict, one row per employee per work-date — what the

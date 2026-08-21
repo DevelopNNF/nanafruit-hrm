@@ -5,6 +5,8 @@ import helmet from 'helmet'
 import { pool } from './db.js'
 import { healthRouter } from './routes/health.js'
 import { employeesRouter } from './routes/employees.js'
+import { employeeImportRouter } from './routes/employeeImport.js'
+import { employeeExportRouter } from './routes/employeeExport.js'
 import { jobsRouter } from './routes/jobs.js'
 import { departmentsRouter } from './routes/departments.js'
 import { shiftsRouter } from './routes/shifts.js'
@@ -82,6 +84,12 @@ app.use('/api', meRouter)
 // external scheduler with no Entra account and no LINE session, so it proves
 // itself with a shared secret the route checks itself. See routes/cron.ts.
 app.use('/api', cronRouter)
+// Before employeesRouter for the same reason attendanceImportRouter sits
+// before attendanceRouter: its own express.raw body parser is scoped to just
+// these two paths, so the global express.json above never sees an .xlsx
+// upload.
+app.use('/api', authenticate, employeeImportRouter)
+app.use('/api', authenticate, employeeExportRouter)
 app.use('/api', authenticate, employeesRouter)
 app.use('/api', authenticate, jobsRouter)
 app.use('/api', authenticate, departmentsRouter)

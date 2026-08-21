@@ -22,7 +22,7 @@ import type {
   ShiftChangeResponse,
   ShiftHistoryResponse,
 } from '@hrm/shared'
-import { apiFetch, jsonHeaders, unwrap } from './client'
+import { apiFetch, ApiRequestError, jsonHeaders, unwrap } from './client'
 
 export async function listEmployees(signal?: AbortSignal): Promise<Employee[]> {
   const res = await apiFetch('/api/employees', { signal })
@@ -193,4 +193,32 @@ export async function getEmployeePhotoUrl(
 export async function deleteEmployeePhoto(id: number): Promise<void> {
   const res = await apiFetch(`/api/employees/${id}/photo`, { method: 'DELETE' })
   if (!res.ok) await unwrap<never>(res)
+}
+
+async function fetchWorkbook(path: string, signal?: AbortSignal): Promise<Blob> {
+  const res = await apiFetch(path, { ...(signal && { signal }) })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const body = (await res.json()) as { message?: string }
+      if (body.message) message = body.message
+    } catch {
+      // Non-JSON error body — the status is all we have.
+    }
+    throw new ApiRequestError(message)
+  }
+  return res.blob()
+}
+
+/** Every employee as a filled-in copy of the import template, generated
+ *  server-side so it isn't capped by listEmployees' on-screen row count. */
+export function exportEmployees(signal?: AbortSignal): Promise<Blob> {
+  return fetchWorkbook('/api/employees/export', signal)
+}
+
+/** A blank copy of the import template — headers and dropdowns only, no
+ *  employee data. Dropdowns are generated fresh from current master data on
+ *  every call, same as exportEmployees. */
+export function downloadEmployeeImportTemplate(signal?: AbortSignal): Promise<Blob> {
+  return fetchWorkbook('/api/employees/export-template', signal)
 }

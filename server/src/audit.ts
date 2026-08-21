@@ -29,6 +29,10 @@ export type AuditAction =
   | 'employee.delete'
   | 'employee.link_code_issued'
   | 'employee.line_linked'
+  | 'employee.import_create'
+  | 'employee.import_update'
+  | 'employee.export'
+  | 'employee.export_template'
   | 'job.create'
   | 'job.update'
   | 'department.create'
@@ -84,8 +88,9 @@ export type AuditAction =
 type Entry = {
   actor: AuthUser
   action: AuditAction
-  /** The employee the action happened to. */
-  entityId: number
+  /** The row the action happened to. Null for an action with no single
+   *  subject — an export of the whole employee list, say. */
+  entityId: number | null
   /** Anything not worth a column. Must hold no secrets — see recordAudit. */
   detail?: Record<string, unknown>
 }
@@ -102,6 +107,6 @@ export async function recordAudit(db: Queryable, entry: Entry): Promise<void> {
   await db.query(
     `INSERT INTO audit_log (actor_kind, actor_id, actor_label, action, entity_id, detail)
      VALUES ($1, $2, $3, $4, $5, $6)`,
-    [actor.kind, actorId, actorLabel, action, String(entityId), detail ?? null]
+    [actor.kind, actorId, actorLabel, action, entityId === null ? null : String(entityId), detail ?? null]
   )
 }

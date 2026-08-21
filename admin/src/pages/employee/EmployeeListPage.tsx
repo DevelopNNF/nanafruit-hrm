@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Plus, Search } from 'lucide-react'
+import { Download, Plus, Search, Upload } from 'lucide-react'
 import type { Employee, PayrollGroup } from '@hrm/shared'
-import { listEmployees } from '../../api/employees'
+import { exportEmployees, listEmployees } from '../../api/employees'
 import { listPayrollGroups } from '../../api/payrollGroups'
 import { useCanWrite } from '../../auth/meContext'
+import { notify } from '../../notifications/notify'
 import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, fieldControl, muted, pageHead, subtitle } from '../../styles'
 
 /** The payroll-group filter's own value space: a group id, everybody, or the
@@ -40,6 +41,24 @@ export function EmployeeListPage() {
   const [groupFilter, setGroupFilter] = useState<GroupFilter>('all')
   const navigate = useNavigate()
   const canWrite = useCanWrite()
+  const [exporting, setExporting] = useState(false)
+
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const blob = await exportEmployees()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `employees-${new Date().toISOString().slice(0, 10)}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      notify.error('ส่งออกข้อมูลไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -90,12 +109,24 @@ export function EmployeeListPage() {
           <h1>พนักงาน</h1>
           <p className={subtitle}>ข้อมูลประวัติและสถานะการจ้างงาน</p>
         </div>
-        {canWrite && (
-          <Link className={button('primary')} to="/employees/new">
-            <Plus size={16} />
-            เพิ่มพนักงาน
-          </Link>
-        )}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button type="button" className={button()} disabled={exporting} onClick={() => void handleExport()}>
+            <Download size={16} />
+            {exporting ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
+          </button>
+          {canWrite && (
+            <Link className={button()} to="/employees/import">
+              <Upload size={16} />
+              นำเข้า Excel
+            </Link>
+          )}
+          {canWrite && (
+            <Link className={button('primary')} to="/employees/new">
+              <Plus size={16} />
+              เพิ่มพนักงาน
+            </Link>
+          )}
+        </div>
       </header>
 
       {state.phase === 'loading' && <p className={muted}>กำลังโหลด…</p>}

@@ -8,6 +8,7 @@ import { AppLayout } from './components/AppLayout'
 import { DashboardPage } from './pages/DashboardPage'
 import { EmployeeListPage } from './pages/employee/EmployeeListPage'
 import { EmployeeFormPage } from './pages/employee/EmployeeFormPage'
+import { EmployeeImportPage } from './pages/employee/EmployeeImportPage'
 import { JobListPage } from './pages/masters/job_title/JobListPage'
 import { JobFormPage } from './pages/masters/job_title/JobFormPage'
 import { DepartmentListPage } from './pages/masters/department/DepartmentListPage'
@@ -121,6 +122,7 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'employees', element: <EmployeeListPage /> },
+      { path: 'employees/import', element: <EmployeeImportPage /> },
       { path: 'employees/new', element: <KeyedEmployeeForm /> },
       { path: 'employees/:id', element: <KeyedEmployeeForm /> },
       { path: 'attendance', element: <AttendanceListPage /> },
