@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search } from 'lucide-react'
-import { WORKDAYS, type Shift } from '@hrm/shared'
+import { WORKDAYS, formatWorkMinutes, type Shift } from '@hrm/shared'
 import { listShifts, updateShift } from '../../../api/shifts'
-import { computeWorkMinutes, formatWorkMinutes } from '../../../shiftHours'
+import { computeWorkMinutes } from '../../../shiftHours'
 import { useCanWrite } from '../../../auth/meContext'
 import { notify } from '../../../notifications/notify'
 import {

@@ -43,9 +43,3 @@ export function computeWorkMinutes(input: ShiftTimes): number | null {
 
   return Math.max(shiftMinutes - breakMinutes, 0)
 }
-
-export function formatWorkMinutes(minutes: number): string {
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-  return mins === 0 ? `${hours} ชม.` : `${hours} ชม. ${mins} นาที`
-}

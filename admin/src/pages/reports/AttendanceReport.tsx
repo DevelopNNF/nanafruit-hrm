@@ -1,20 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   ATTENDANCE_DAILY_FILTERS,
+  WORK_LOCATIONS,
+  attendanceBadges,
+  formatWorkMinutes,
   type AttendanceDailyFilter,
   type AttendanceDailyItem,
   type AttendanceDailySummary,
   type Department,
+  type WorkLocation,
 } from '@hrm/shared'
-import { listAttendanceDaily } from '../../api/attendanceDaily'
+import { exportAttendanceDaily, listAttendanceDaily } from '../../api/attendanceDaily'
 import { listDepartments } from '../../api/departments'
-import { attendanceBadges } from '../../attendanceBadges'
-import { formatWorkMinutes } from '../../shiftHours'
+import { notify } from '../../notifications/notify'
 import {
   alert,
   alertDetail,
   alertTitle,
   badge,
+  button,
   cardEmpty,
   eyebrow,
   fieldControl,
@@ -139,8 +143,10 @@ export function AttendanceDailyListPage() {
   const [toDate, setToDate] = useState(initial.to)
   const [departmentId, setDepartmentId] = useState<number | ''>('')
   const [status, setStatus] = useState<AttendanceDailyFilter | ''>('')
+  const [workLocation, setWorkLocation] = useState<WorkLocation | ''>('')
   const [departments, setDepartments] = useState<Department[]>([])
   const [state, setState] = useState<State>({ phase: 'loading' })
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -165,6 +171,7 @@ export function AttendanceDailyListPage() {
         toDate,
         ...(departmentId !== '' && { departmentId }),
         ...(status !== '' && { status }),
+        ...(workLocation !== '' && { workLocation }),
       },
       controller.signal
     )
@@ -175,9 +182,32 @@ export function AttendanceDailyListPage() {
       })
 
     return () => controller.abort()
-  }, [fromDate, toDate, departmentId, status])
+  }, [fromDate, toDate, departmentId, status, workLocation])
 
   const summary = state.phase === 'ok' ? state.summary : null
+
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const blob = await exportAttendanceDaily({
+        fromDate,
+        toDate,
+        ...(departmentId !== '' && { departmentId }),
+        ...(status !== '' && { status }),
+        ...(workLocation !== '' && { workLocation }),
+      })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `attendance-${fromDate}-to-${toDate}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      notify.error('ดาวน์โหลด Excel ไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <>
@@ -194,7 +224,7 @@ export function AttendanceDailyListPage() {
         )}
       </header>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <label className={fieldLabel}>
           <span>ตั้งแต่วันที่</span>
           <input
@@ -245,6 +275,31 @@ export function AttendanceDailyListPage() {
             ))}
           </select>
         </label>
+        <label className={fieldLabel}>
+          <span>สถานที่ปฏิบัติงาน</span>
+          <select
+            className={fieldControl}
+            value={workLocation}
+            onChange={(e) => setWorkLocation(e.target.value as WorkLocation | '')}
+          >
+            <option value="">ทุกสถานที่</option>
+            {WORK_LOCATIONS.map((loc) => (
+              <option key={loc} value={loc}>
+                {loc}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-end">
+          <button
+            type="button"
+            className={`${button('default')} w-full`}
+            disabled={exporting || state.phase !== 'ok' || state.days.length === 0}
+            onClick={handleExport}
+          >
+            {exporting ? 'กำลังสร้างไฟล์…' : 'ดาวน์โหลด Excel'}
+          </button>
+        </div>
       </div>
 
       {summary && (
@@ -292,7 +347,7 @@ export function AttendanceDailyListPage() {
               {state.summary.total} รายการ
               {state.truncated && ` (แสดง ${state.days.length} รายการแรก)`}
             </p>
-            <p className="text-[0.775rem] whitespace-nowrap text-slate-500">เรียงตามวันที่ล่าสุด</p>
+            <p className="text-[0.775rem] whitespace-nowrap text-slate-500">เรียงตามรหัสพนักงาน แล้วจึงตามวันที่</p>
           </div>
 
           <div className="overflow-x-auto">

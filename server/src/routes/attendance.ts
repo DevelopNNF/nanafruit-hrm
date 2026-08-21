@@ -4,6 +4,7 @@ import {
   ATTENDANCE_DAILY_FILTERS,
   ATTENDANCE_EVENT_TYPES,
   ROLES,
+  WORK_LOCATIONS,
   type AttendanceClockResponse,
   type AttendanceDailyFilter,
   type AttendanceDailyListResponse,
@@ -11,6 +12,7 @@ import {
   type AttendanceListResponse,
   type AttendanceStatusResponse,
   type AttendanceTodayStatus,
+  type WorkLocation,
 } from '@hrm/shared'
 import { pool } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
@@ -25,6 +27,7 @@ import {
   type AttendanceRow,
 } from '../attendanceQueries.js'
 import { listAttendanceDaily } from '../attendanceDailyQueries.js'
+import { buildAttendanceReportWorkbook } from '../attendanceReportExport.js'
 import { chooseAttendanceWindow, matchAttendanceForDates } from '../attendanceMatchingQueries.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 
@@ -248,6 +251,12 @@ function parseOptionalDate(value: unknown): string | null | undefined {
   return value
 }
 
+function parseOptionalWorkLocation(value: unknown): WorkLocation | null | undefined {
+  if (value === undefined) return null
+  if (typeof value !== 'string' || !WORK_LOCATIONS.includes(value as WorkLocation)) return undefined
+  return value as WorkLocation
+}
+
 attendanceRouter.get('/attendance', canReadAdmin, async (req: Request, res: Response) => {
   const employeeId = parseOptionalId(req.query['employeeId'])
   if (employeeId === undefined) return fail(res, 400, 'employeeId must be a positive integer')
@@ -293,6 +302,11 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
     return fail(res, 400, `status must be one of: ${ATTENDANCE_DAILY_FILTERS.join(', ')}`)
   }
 
+  const workLocation = parseOptionalWorkLocation(req.query['workLocation'])
+  if (workLocation === undefined) {
+    return fail(res, 400, `workLocation must be one of: ${WORK_LOCATIONS.join(', ')}`)
+  }
+
   try {
     const result = await listAttendanceDaily({
       ...(employeeId !== null && { employeeId }),
@@ -300,9 +314,57 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
       ...(fromDate !== null && { fromDate }),
       ...(toDate !== null && { toDate }),
       ...(statusRaw !== undefined && { status: statusRaw as AttendanceDailyFilter }),
+      ...(workLocation !== null && { workLocation }),
     })
     const body: AttendanceDailyListResponse = result
     res.json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
+
+// The Excel export — same filters as /attendance/daily, but unlimited rows
+// (see LIST_LIMIT in attendanceDailyQueries.ts) and read from the report
+// template, not the JSON contract. Placed after /attendance/daily so the
+// route table reads filter-then-export, but registered independently since
+// it answers with a file, not an AttendanceDailyListResponse.
+attendanceRouter.get('/attendance/daily/export', canReadAdmin, async (req: Request, res: Response) => {
+  const employeeId = parseOptionalId(req.query['employeeId'])
+  if (employeeId === undefined) return fail(res, 400, 'employeeId must be a positive integer')
+
+  const departmentId = parseOptionalId(req.query['departmentId'])
+  if (departmentId === undefined) return fail(res, 400, 'departmentId must be a positive integer')
+
+  const fromDate = parseOptionalDate(req.query['fromDate'])
+  if (fromDate === undefined) return fail(res, 400, 'fromDate must be YYYY-MM-DD')
+
+  const toDate = parseOptionalDate(req.query['toDate'])
+  if (toDate === undefined) return fail(res, 400, 'toDate must be YYYY-MM-DD')
+
+  const statusRaw = req.query['status']
+  if (statusRaw !== undefined && (typeof statusRaw !== 'string' || !ATTENDANCE_DAILY_FILTERS.includes(statusRaw as AttendanceDailyFilter))) {
+    return fail(res, 400, `status must be one of: ${ATTENDANCE_DAILY_FILTERS.join(', ')}`)
+  }
+
+  const workLocation = parseOptionalWorkLocation(req.query['workLocation'])
+  if (workLocation === undefined) {
+    return fail(res, 400, `workLocation must be one of: ${WORK_LOCATIONS.join(', ')}`)
+  }
+
+  try {
+    const buffer = await buildAttendanceReportWorkbook({
+      ...(employeeId !== null && { employeeId }),
+      ...(departmentId !== null && { departmentId }),
+      ...(fromDate !== null && { fromDate }),
+      ...(toDate !== null && { toDate }),
+      ...(statusRaw !== undefined && { status: statusRaw as AttendanceDailyFilter }),
+      ...(workLocation !== null && { workLocation }),
+    })
+
+    const filename = `attendance-${fromDate ?? 'all'}-to-${toDate ?? 'all'}.xlsx`
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`)
+    res.send(Buffer.from(buffer))
   } catch (err) {
     handleUnexpected(res, err)
   }

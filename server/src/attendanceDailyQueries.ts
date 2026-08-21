@@ -21,6 +21,7 @@ import type {
   AttendanceDayStatus,
   CalendarDayStatus,
   OvertimeRoundingMinutes,
+  WorkLocation,
 } from '@hrm/shared'
 import { pool } from './db.js'
 import { parseDateOnlyUtc, toDateOnlyString } from './leaveRequestQueries.js'
@@ -356,16 +357,17 @@ export type AttendanceDailyFilterInput = {
   employeeId?: number
   departmentId?: number
   status?: AttendanceDailyFilter
+  workLocation?: WorkLocation
 }
 
-/** How many rows one request will return. The summary is computed over the
- *  whole filtered range regardless, so truncation never skews the figures. */
-const LIST_LIMIT = 1000
-
-export async function listAttendanceDaily(
-  filter: AttendanceDailyFilterInput,
-  db: Queryable = pool
-): Promise<{ days: AttendanceDailyItem[]; summary: AttendanceDailySummary; truncated: boolean }> {
+/** The WHERE conditions shared by the on-screen list and the unlimited export
+ *  query, so the two can't drift apart on what a filter means. Both callers
+ *  build their own FROM clause on top — the export query joins in a couple
+ *  more master tables the list has no use for. */
+function buildAttendanceDailyConditions(filter: AttendanceDailyFilterInput): {
+  conditions: string[]
+  params: unknown[]
+} {
   const conditions: string[] = []
   const params: unknown[] = []
 
@@ -385,9 +387,26 @@ export async function listAttendanceDaily(
     params.push(filter.departmentId)
     conditions.push(`ed.department_id = $${params.length}`)
   }
+  if (filter.workLocation !== undefined) {
+    params.push(filter.workLocation)
+    conditions.push(`ed.work_location = $${params.length}`)
+  }
   if (filter.status !== undefined) {
     conditions.push(FILTER_SQL[filter.status])
   }
+  return { conditions, params }
+}
+
+/** How many rows one request will return. The summary is computed over the
+ *  whole filtered range regardless, so truncation never skews the figures.
+ *  The export endpoint bypasses this — see listAttendanceDailyForExport. */
+const LIST_LIMIT = 1000
+
+export async function listAttendanceDaily(
+  filter: AttendanceDailyFilterInput,
+  db: Queryable = pool
+): Promise<{ days: AttendanceDailyItem[]; summary: AttendanceDailySummary; truncated: boolean }> {
+  const { conditions, params } = buildAttendanceDailyConditions(filter)
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
   // employment_details is joined unconditionally rather than only when
@@ -413,7 +432,7 @@ export async function listAttendanceDaily(
               d.late_minutes, d.early_leave_minutes, d.worked_minutes,
               d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.computed_at
        ${from}
-       ORDER BY d.work_date DESC, e.employee_code
+       ORDER BY e.employee_code, d.work_date
        LIMIT ${LIST_LIMIT + 1}`,
       params
     ),
@@ -454,4 +473,62 @@ export async function listAttendanceDaily(
     },
     truncated,
   }
+}
+
+/* The Excel export ----------------------------------------------------------
+ * Unlike listAttendanceDaily, this has no LIST_LIMIT — the on-screen table
+ * exists to be skimmed, the export exists to be handed to HR whole, so a
+ * range with more than 1000 rows must not come back truncated.
+ */
+
+export type AttendanceDailyExportRow = AttendanceDailyItem & {
+  departmentName: string | null
+  jobTitle: string | null
+  workLocation: string | null
+}
+
+type AttendanceDailyExportDbRow = AttendanceDailyRow & {
+  department_name: string | null
+  job_title: string | null
+  work_location: string | null
+}
+
+export async function listAttendanceDailyForExport(
+  filter: AttendanceDailyFilterInput,
+  db: Queryable = pool
+): Promise<AttendanceDailyExportRow[]> {
+  const { conditions, params } = buildAttendanceDailyConditions(filter)
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+  const from = `
+    FROM attendance_daily d
+    JOIN employees e ON e.id = d.employee_id
+    JOIN employment_details ed ON ed.employee_id = d.employee_id
+    LEFT JOIN master_shifts ms ON ms.id = d.shift_id
+    LEFT JOIN master_departments md ON md.id = ed.department_id
+    LEFT JOIN master_jobs mj ON mj.id = ed.job_id
+    ${where}`
+
+  const { rows } = await db.query<AttendanceDailyExportDbRow>(
+    `SELECT d.id, d.employee_id, e.employee_code,
+            (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name,
+            d.work_date, d.shift_id, ms.shift_code, ms.shift_name,
+            d.day_status, d.attendance_status,
+            d.expected_check_in_at, d.expected_check_out_at,
+            d.effective_check_in_at, d.effective_check_out_at,
+            d.actual_check_in_at, d.actual_check_out_at,
+            d.late_minutes, d.early_leave_minutes, d.worked_minutes,
+            d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.computed_at,
+            md.dept_name AS department_name, mj.job_title, ed.work_location
+     ${from}
+     ORDER BY e.employee_code, d.work_date`,
+    params
+  )
+
+  return rows.map((row) => ({
+    ...rowToAttendanceDailyItem(row),
+    departmentName: row.department_name,
+    jobTitle: row.job_title,
+    workLocation: row.work_location,
+  }))
 }
