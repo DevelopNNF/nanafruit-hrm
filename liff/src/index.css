@@ -38,6 +38,9 @@
   /* Darker green for text-on-light-green (links, badges) — #06c755 itself
      fails contrast as foreground text on a white/light background. */
   --accent-ink: #06803c;
+  /* Faint green tint for a selected row/tile background — accent itself
+     would be too loud repeated across a whole picker list. */
+  --accent-soft: #f2fcf6;
 
   /* Request status pills — distinct from --ok/--warn/--error, which other
      screens (calendar day types, plain form errors) already own. */

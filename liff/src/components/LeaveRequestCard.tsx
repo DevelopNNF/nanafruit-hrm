@@ -296,7 +296,7 @@ export function LeaveRequestCard({ employee, onBack }: Props) {
         onCloseForm={() => setMode('list')}
         formError={error}
         submitLabel="ส่งคำขอ"
-        canSubmit={leaveTypeId !== 0}
+        canSubmit={leaveTypeId !== 0 && (!selectedLeaveType?.requireReason || reason.trim() !== '')}
         reasonLabel={selectedLeaveType?.requireReason ? 'เหตุผล *' : 'เหตุผล (ไม่บังคับ)'}
         reason={reason}
         onReasonChange={setReason}
@@ -362,7 +362,7 @@ export function LeaveRequestCard({ employee, onBack }: Props) {
 
         {supportsPartialDay && (
           <>
-            <div className="leave-half-day-toggle">
+            <div className="chip-toggle">
               <button
                 type="button"
                 className={partialMode === 'full' ? 'active' : ''}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { EMPLOYEE_PHOTO_MAX_BYTES, EMPLOYEE_PHOTO_MIME_TYPES, type ShiftChangeRequest, type Shift } from '@hrm/shared'
 import {
   cancelShiftChangeRequest,
@@ -12,6 +13,12 @@ import {
 } from '../api/shiftChangeRequests'
 import { fetchActiveShifts } from '../api/shifts'
 import { ApiRequestError } from '../api/client'
+import { RequestShell, type RequestListItem } from './RequestShell'
+import { ConfirmModal } from './ConfirmModal'
+
+type Props = {
+  onBack: () => void
+}
 
 type ListState =
   | { phase: 'loading' }
@@ -45,21 +52,15 @@ function formatDate(dateStr: string): string {
   })
 }
 
-function statusLabel(request: ShiftChangeRequest): string {
-  if (request.status === 'pending') return 'รอดำเนินการ'
-  if (request.status === 'approved') return 'อนุมัติแล้ว'
-  if (request.status === 'cancelled') return 'ยกเลิกแล้ว'
-  return `ปฏิเสธ: ${request.decisionReason ?? ''}`
-}
-
 function isAllowedMimeType(type: string): type is (typeof EMPLOYEE_PHOTO_MIME_TYPES)[number] {
   return (EMPLOYEE_PHOTO_MIME_TYPES as readonly string[]).includes(type)
 }
 
-export function ShiftChangeRequestCard() {
+export function ShiftChangeRequestCard({ onBack }: Props) {
   const [listState, setListState] = useState<ListState>({ phase: 'loading' })
   const [mode, setMode] = useState<'list' | 'form'>('list')
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [cancelId, setCancelId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -201,6 +202,7 @@ export function ShiftChangeRequestCard() {
         }
       })
       setMode('list')
+      toast(editingId === null ? 'ส่งคำขอแล้ว รอผู้อนุมัติ' : 'บันทึกการแก้ไขแล้ว')
     } catch (err) {
       setError(messageFor(err))
     } finally {
@@ -208,19 +210,21 @@ export function ShiftChangeRequestCard() {
     }
   }
 
-  async function cancel(id: number) {
-    if (!confirm('ยกเลิกคำขอเปลี่ยนกะนี้?')) return
+  async function confirmCancel() {
+    if (cancelId === null) return
     setBusy(true)
     try {
-      const updated = await cancelShiftChangeRequest(id)
+      const updated = await cancelShiftChangeRequest(cancelId)
       setListState((prev) => ({
         phase: 'ready',
-        requests: prev.phase === 'ready' ? prev.requests.map((r) => (r.id === id ? updated : r)) : [updated],
+        requests: prev.phase === 'ready' ? prev.requests.map((r) => (r.id === cancelId ? updated : r)) : [updated],
       }))
+      toast('ยกเลิกคำขอแล้ว')
     } catch (err) {
       alert(messageFor(err))
     } finally {
       setBusy(false)
+      setCancelId(null)
     }
   }
 
@@ -233,121 +237,102 @@ export function ShiftChangeRequestCard() {
     }
   }
 
+  const cancelTarget =
+    listState.phase === 'ready' ? listState.requests.find((r) => r.id === cancelId) ?? null : null
+
+  const items: RequestListItem[] =
+    listState.phase === 'ready'
+      ? listState.requests.map((request) => ({
+          id: request.id,
+          title: `${formatDate(request.requestedDate)} · ${request.currentShiftName ?? 'ไม่มีกะ'} → ${request.newShiftName}`,
+          meta: '',
+          status: request.status,
+          reason: request.reason,
+          decisionNote:
+            request.status === 'rejected' ? `เหตุผลจากผู้อนุมัติ: ${request.decisionReason ?? ''}` : undefined,
+          hasFile: request.attachmentKey !== null,
+          onViewFile: request.attachmentKey !== null ? () => void viewAttachment(request.id) : undefined,
+          onEdit: request.status === 'pending' ? () => openEditForm(request) : undefined,
+          onCancel: request.status === 'pending' ? () => setCancelId(request.id) : undefined,
+        }))
+      : []
+
   return (
-    <div className="leave-card">
-      {mode === 'list' && (
-        <>
-          {listState.phase === 'loading' && <p className="hint">กำลังโหลด…</p>}
-          {listState.phase === 'error' && <p className="form-error">{listState.message}</p>}
+    <>
+      <RequestShell
+        title="ขอเปลี่ยนกะ"
+        englishTag="ShiftChangeRequestScreen"
+        ruleText="แก้ไข/ยกเลิกได้ขณะรอดำเนินการ · หน้าเดียวที่แนบรูปได้"
+        onBack={onBack}
+        mode={mode}
+        busy={busy}
+        newLabel="ขอเปลี่ยนกะ"
+        onOpenForm={openCreateForm}
+        listPhase={listState.phase}
+        listErrorMessage={listState.phase === 'error' ? listState.message : undefined}
+        emptyText="ยังไม่มีคำขอเปลี่ยนกะ"
+        items={items}
+        onSubmit={(e) => void submit(e)}
+        onCloseForm={() => setMode('list')}
+        formError={error}
+        submitLabel={editingId === null ? 'ส่งคำขอ' : 'บันทึกการแก้ไข'}
+        canSubmit={newShiftId !== 0 && reason.trim() !== ''}
+        reasonLabel="เหตุผล *"
+        reason={reason}
+        onReasonChange={setReason}
+      >
+        <label className="field">
+          <span>วันที่ต้องการเปลี่ยนกะ</span>
+          <input
+            type="date"
+            value={requestedDate}
+            min={today()}
+            onChange={(e) => setRequestedDate(e.target.value)}
+            required
+            disabled={busy}
+          />
+        </label>
 
-          {listState.phase === 'ready' && (
-            <>
-              <button type="button" className="secondary-button" onClick={openCreateForm}>
-                ขอเปลี่ยนกะ
-              </button>
-
-              {listState.requests.length === 0 ? (
-                <p className="hint">ยังไม่มีคำขอเปลี่ยนกะ</p>
-              ) : (
-                <ul className="leave-list">
-                  {listState.requests.map((request) => (
-                    <li key={request.id} className={`leave-item ${request.status}`}>
-                      <div className="leave-item-head">
-                        <span>
-                          {formatDate(request.requestedDate)} · {request.currentShiftName ?? 'ไม่มีกะ'} →{' '}
-                          {request.newShiftName}
-                        </span>
-                        <span className="leave-item-status">{statusLabel(request)}</span>
-                      </div>
-                      {request.reason && <span className="leave-item-reason">{request.reason}</span>}
-                      {request.attachmentKey !== null && (
-                        <button type="button" className="attachment-link" onClick={() => void viewAttachment(request.id)}>
-                          ดูรูปที่แนบไว้
-                        </button>
-                      )}
-                      {request.status === 'pending' && (
-                        <div className="leave-item-actions">
-                          <button
-                            type="button"
-                            className="leave-item-cancel"
-                            disabled={busy}
-                            onClick={() => openEditForm(request)}
-                          >
-                            แก้ไข
-                          </button>
-                          <button
-                            type="button"
-                            className="leave-item-cancel"
-                            disabled={busy}
-                            onClick={() => void cancel(request.id)}
-                          >
-                            ยกเลิกคำขอ
-                          </button>
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
+        <div className="field">
+          <span>กะใหม่ที่ต้องการ</span>
+          {shiftState.phase === 'loading' && <p className="hint">กำลังโหลด…</p>}
+          {shiftState.phase === 'error' && <p className="form-error">{shiftState.message}</p>}
+          {shiftState.phase === 'ready' && (
+            <div className="option-list">
+              {shiftState.shifts.map((shift) => (
+                <button
+                  key={shift.id}
+                  type="button"
+                  className={`option-row ${newShiftId === shift.id ? 'selected' : ''}`}
+                  disabled={busy}
+                  onClick={() => setNewShiftId(shift.id)}
+                >
+                  <span className="option-row-name">{shift.shiftName}</span>
+                  <span className="option-row-detail">
+                    {shift.shiftStartTime.slice(0, 5)}-{shift.shiftEndTime.slice(0, 5)}
+                  </span>
+                </button>
+              ))}
+            </div>
           )}
-        </>
-      )}
+        </div>
 
-      {mode === 'form' && (
-        <form onSubmit={(e) => void submit(e)} className="correction-form">
-          <label>
-            วันที่ต้องการเปลี่ยนกะ
-            <input
-              type="date"
-              value={requestedDate}
-              min={today()}
-              onChange={(e) => setRequestedDate(e.target.value)}
-              required
-              disabled={busy}
-            />
-          </label>
-
-          <label>
-            กะใหม่ที่ต้องการ
-            {shiftState.phase === 'loading' && <span className="hint">กำลังโหลด…</span>}
-            {shiftState.phase === 'error' && <span className="form-error">{shiftState.message}</span>}
-            {shiftState.phase === 'ready' && (
-              <select
-                value={newShiftId || ''}
-                onChange={(e) => setNewShiftId(Number(e.target.value))}
-                disabled={busy}
-                required
-              >
-                <option value="" disabled>
-                  — เลือกกะ —
-                </option>
-                {shiftState.shifts.map((shift) => (
-                  <option key={shift.id} value={shift.id}>
-                    {shift.shiftName} ({shift.shiftStartTime.slice(0, 5)}-{shift.shiftEndTime.slice(0, 5)})
-                  </option>
-                ))}
-              </select>
-            )}
-          </label>
-
-          <label>
-            เหตุผล
-            <textarea value={reason} onChange={(e) => setReason(e.target.value)} required rows={3} disabled={busy} />
-          </label>
-
-          <label>
-            แนบรูปภาพ (ถ้ามี)
+        <div className="field">
+          <span>แนบรูปประกอบ</span>
+          <label className={`file-drop ${attachmentFile ? 'attached' : ''}`}>
             <input
               ref={fileInputRef}
               type="file"
+              className="file-drop-input"
               accept={EMPLOYEE_PHOTO_MIME_TYPES.join(',')}
               onChange={handleFileSelected}
               disabled={busy}
             />
+            <span className="file-drop-text">
+              {attachmentFile ? `เลือกไฟล์แล้ว: ${attachmentFile.name}` : 'แตะเพื่อเลือกรูปจากเครื่อง'}
+            </span>
+            <span className="file-drop-hint">JPEG / PNG / WebP · ไม่เกิน 5 MB</span>
           </label>
-
-          {attachmentFile && <p className="hint">เลือกไฟล์แล้ว: {attachmentFile.name} (จะอัปโหลดเมื่อกดส่งคำขอ)</p>}
 
           {savedAttachmentKey !== null && !attachmentFile && (
             <div className="attachment-existing">
@@ -358,24 +343,24 @@ export function ShiftChangeRequestCard() {
               ) : (
                 <span className="hint">มีไฟล์แนบอยู่</span>
               )}
-              <button type="button" className="leave-item-cancel" disabled={busy} onClick={() => void removeSavedAttachment()}>
+              <button type="button" className="request-cancel-button" disabled={busy} onClick={() => void removeSavedAttachment()}>
                 ลบไฟล์แนบ
               </button>
             </div>
           )}
+        </div>
+      </RequestShell>
 
-          {error !== null && <p className="form-error">{error}</p>}
-
-          <div className="correction-form-actions">
-            <button type="submit" disabled={busy || !newShiftId}>
-              {busy ? 'กำลังส่ง…' : editingId === null ? 'ส่งคำขอ' : 'บันทึกการแก้ไข'}
-            </button>
-            <button type="button" className="secondary-button" disabled={busy} onClick={() => setMode('list')}>
-              ยกเลิก
-            </button>
-          </div>
-        </form>
+      {cancelTarget && (
+        <ConfirmModal
+          title="ยกเลิกคำขอเปลี่ยนกะนี้?"
+          message={`${formatDate(cancelTarget.requestedDate)} · ${cancelTarget.currentShiftName ?? 'ไม่มีกะ'} → ${cancelTarget.newShiftName} — ยกเลิกแล้วจะกู้คืนไม่ได้ ต้องยื่นใหม่`}
+          confirmLabel="ยกเลิกคำขอ"
+          busy={busy}
+          onConfirm={() => void confirmCancel()}
+          onCancel={() => setCancelId(null)}
+        />
       )}
-    </div>
+    </>
   )
 }

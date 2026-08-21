@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import {
   OVERTIME_BACKDATE_LIMIT_DAYS,
   computeOvertimeMinutes,
@@ -16,6 +17,12 @@ import {
 } from '../api/overtimeRequests'
 import { fetchMonthCalendar } from '../api/calendar'
 import { ApiRequestError } from '../api/client'
+import { RequestShell, type RequestListItem } from './RequestShell'
+import { ConfirmModal } from './ConfirmModal'
+
+type Props = {
+  onBack: () => void
+}
 
 type ListState =
   | { phase: 'loading' }
@@ -77,21 +84,17 @@ const DAY_STATUS_LABEL: Record<CalendarDayStatus, string> = {
   swap_dayoff: 'วันหยุด (สลับวันหยุด)',
 }
 
-function statusLabel(request: OvertimeRequest): string {
-  if (request.status === 'pending') return 'รอดำเนินการ'
-  if (request.status === 'approved') return 'อนุมัติแล้ว'
-  if (request.status === 'cancelled') return 'ยกเลิกแล้ว'
-  return `ปฏิเสธ: ${request.decisionReason ?? ''}`
-}
+const RULE_TEXT = `ขอย้อนหลังได้ไม่เกิน ${OVERTIME_BACKDATE_LIMIT_DAYS} วัน · ช่วงเวลาที่ขอต้องอยู่นอกเวลาทำงานปกติ`
 
 function monthKey(dateStr: string): string {
   return dateStr.slice(0, 7)
 }
 
-export function OvertimeRequestCard() {
+export function OvertimeRequestCard({ onBack }: Props) {
   const [listState, setListState] = useState<ListState>({ phase: 'loading' })
   const [mode, setMode] = useState<'list' | 'form'>('list')
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [cancelId, setCancelId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -191,6 +194,7 @@ export function OvertimeRequestCard() {
         }
       })
       setMode('list')
+      toast(editingId === null ? 'ส่งคำขอแล้ว รอผู้อนุมัติ' : 'บันทึกการแก้ไขแล้ว')
     } catch (err) {
       setError(messageFor(err))
     } finally {
@@ -198,105 +202,91 @@ export function OvertimeRequestCard() {
     }
   }
 
-  async function cancel(id: number) {
-    if (!confirm('ยกเลิกคำขอทำงานล่วงเวลานี้?')) return
+  async function confirmCancel() {
+    if (cancelId === null) return
     setBusy(true)
     try {
-      const updated = await cancelOvertimeRequest(id)
+      const updated = await cancelOvertimeRequest(cancelId)
       setListState((prev) => ({
         phase: 'ready',
         requests:
-          prev.phase === 'ready' ? prev.requests.map((r) => (r.id === id ? updated : r)) : [updated],
+          prev.phase === 'ready' ? prev.requests.map((r) => (r.id === cancelId ? updated : r)) : [updated],
       }))
+      toast('ยกเลิกคำขอแล้ว')
     } catch (err) {
       alert(messageFor(err))
     } finally {
       setBusy(false)
+      setCancelId(null)
     }
   }
 
+  const cancelTarget =
+    listState.phase === 'ready' ? listState.requests.find((r) => r.id === cancelId) ?? null : null
+
+  const items: RequestListItem[] =
+    listState.phase === 'ready'
+      ? listState.requests.map((request) => ({
+          id: request.id,
+          title: `${formatDate(request.otDate)} ${hhmm(request.startTime)}-${hhmm(request.endTime)}${request.crossesMidnight ? ' (+1)' : ''}`,
+          meta: formatHours(request.requestedMinutes),
+          status: request.status,
+          reason: request.reason,
+          decisionNote:
+            request.status === 'rejected' ? `เหตุผลจากผู้อนุมัติ: ${request.decisionReason ?? ''}` : undefined,
+          onEdit: request.status === 'pending' ? () => openEditForm(request) : undefined,
+          onCancel: request.status === 'pending' ? () => setCancelId(request.id) : undefined,
+        }))
+      : []
+
   return (
-    <div className="leave-card">
-      {mode === 'list' && (
-        <>
-          {listState.phase === 'loading' && <p className="hint">กำลังโหลด…</p>}
-          {listState.phase === 'error' && <p className="form-error">{listState.message}</p>}
-
-          {listState.phase === 'ready' && (
-            <>
-              <button type="button" className="secondary-button" onClick={openCreateForm}>
-                ขอทำงานล่วงเวลา
-              </button>
-
-              {listState.requests.length === 0 ? (
-                <p className="hint">ยังไม่มีคำขอทำงานล่วงเวลา</p>
-              ) : (
-                <ul className="leave-list">
-                  {listState.requests.map((request) => (
-                    <li key={request.id} className={`leave-item ${request.status}`}>
-                      <div className="leave-item-head">
-                        <span>
-                          {formatDate(request.otDate)} {hhmm(request.startTime)}-
-                          {hhmm(request.endTime)}
-                          {request.crossesMidnight && ' (+1)'} · {formatHours(request.requestedMinutes)}
-                        </span>
-                        <span className="leave-item-status">{statusLabel(request)}</span>
-                      </div>
-                      {request.reason && <span className="leave-item-reason">{request.reason}</span>}
-                      {request.status === 'pending' && (
-                        <div className="leave-item-actions">
-                          <button
-                            type="button"
-                            className="leave-item-cancel"
-                            disabled={busy}
-                            onClick={() => openEditForm(request)}
-                          >
-                            แก้ไข
-                          </button>
-                          <button
-                            type="button"
-                            className="leave-item-cancel"
-                            disabled={busy}
-                            onClick={() => void cancel(request.id)}
-                          >
-                            ยกเลิกคำขอ
-                          </button>
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
+    <>
+      <RequestShell
+        title="ทำงานล่วงเวลา"
+        englishTag="OvertimeRequestScreen"
+        ruleText={RULE_TEXT}
+        onBack={onBack}
+        mode={mode}
+        busy={busy}
+        newLabel="ขอ OT"
+        onOpenForm={openCreateForm}
+        listPhase={listState.phase}
+        listErrorMessage={listState.phase === 'error' ? listState.message : undefined}
+        emptyText="ยังไม่มีคำขอ OT"
+        items={items}
+        onSubmit={(e) => void submit(e)}
+        onCloseForm={() => setMode('list')}
+        formError={error}
+        submitLabel={editingId === null ? 'ส่งคำขอ' : 'บันทึกการแก้ไข'}
+        canSubmit={preview.conflict === null && reason.trim() !== ''}
+        reasonLabel="เหตุผล *"
+        reason={reason}
+        onReasonChange={setReason}
+      >
+        <label className="field">
+          <span>วันที่ต้องการขอ OT</span>
+          <input
+            type="date"
+            value={otDate}
+            min={minRequestDate()}
+            onChange={(e) => setOtDate(e.target.value)}
+            required
+            disabled={busy}
+          />
+          {preview.day !== null && (
+            <span className="hint">
+              {DAY_STATUS_LABEL[preview.day.status]}
+              {preview.day.label !== null && ` — ${preview.day.label}`}
+              {preview.day.shiftName !== null &&
+                preview.day.shiftStartTime !== null &&
+                ` · เวลาทำงานปกติ ${preview.day.shiftName} ${hhmm(preview.day.shiftStartTime)}-${hhmm(preview.day.shiftEndTime ?? '')}`}
+            </span>
           )}
-        </>
-      )}
+        </label>
 
-      {mode === 'form' && (
-        <form onSubmit={(e) => void submit(e)} className="correction-form">
-          <label>
-            วันที่ต้องการขอ OT
-            <input
-              type="date"
-              value={otDate}
-              min={minRequestDate()}
-              onChange={(e) => setOtDate(e.target.value)}
-              required
-              disabled={busy}
-            />
-            {preview.day !== null && (
-              <span className="hint">
-                {DAY_STATUS_LABEL[preview.day.status]}
-                {preview.day.label !== null && ` — ${preview.day.label}`}
-                {preview.day.shiftName !== null &&
-                  preview.day.shiftStartTime !== null &&
-                  ` · เวลาทำงานปกติ ${preview.day.shiftName} ${hhmm(preview.day.shiftStartTime)}-${hhmm(preview.day.shiftEndTime ?? '')}`}
-              </span>
-            )}
-          </label>
-
-          <label>
-            เวลาเริ่ม
+        <div className="field-row">
+          <label className="field">
+            <span>เวลาเริ่ม</span>
             <input
               type="time"
               value={startTime}
@@ -305,9 +295,8 @@ export function OvertimeRequestCard() {
               disabled={busy}
             />
           </label>
-
-          <label>
-            เวลาสิ้นสุด
+          <label className="field">
+            <span>เวลาสิ้นสุด</span>
             <input
               type="time"
               value={endTime}
@@ -316,61 +305,38 @@ export function OvertimeRequestCard() {
               disabled={busy}
             />
           </label>
+        </div>
 
-          {preview.minutes !== null && (
-            <p className="hint">
-              รวม <span className="font-bold">{formatHours(preview.minutes)}</span>
-              {overtimeCrossesMidnight(startTime, endTime) && ' (ข้ามเที่ยงคืน)'}
-              {' — ระบบคำนวณคร่าว ๆ ยอดจริงยึดตามที่อนุมัติ'}
-            </p>
-          )}
+        {preview.minutes !== null && (
+          <p className={`request-form-summary ${preview.conflict !== null ? 'conflict' : ''}`}>
+            รวม {formatHours(preview.minutes)}
+            {overtimeCrossesMidnight(startTime, endTime) && ' (ข้ามเที่ยงคืน)'}
+            {preview.conflict === null && ' — ระบบคำนวณคร่าว ๆ ยอดจริงยึดตามที่อนุมัติ'}
+          </p>
+        )}
 
-          {/* Warned about here rather than only on submit, because the server
-              rejects this outright and the employee would otherwise fill in a
-              reason before finding out. */}
-          {preview.conflict !== null && (
-            <p className="form-error">
-              ช่วงเวลานี้ทับกับเวลาทำงานปกติ ({preview.conflict.shiftName}{' '}
-              {hhmm(preview.conflict.shiftStartTime ?? '')}-
-              {hhmm(preview.conflict.shiftEndTime ?? '')} ของวันที่{' '}
-              {formatDate(preview.conflict.date)}) กรุณาเลือกช่วงเวลานอกเวลาทำงาน
-            </p>
-          )}
+        {/* Warned about here rather than only on submit, because the server
+            rejects this outright and the employee would otherwise fill in a
+            reason before finding out. */}
+        {preview.conflict !== null && (
+          <p className="form-error">
+            ช่วงเวลานี้ทับกับเวลาทำงานปกติ ({preview.conflict.shiftName}{' '}
+            {hhmm(preview.conflict.shiftStartTime ?? '')}-{hhmm(preview.conflict.shiftEndTime ?? '')} ของวันที่{' '}
+            {formatDate(preview.conflict.date)}) กรุณาเลือกช่วงเวลานอกเวลาทำงาน
+          </p>
+        )}
+      </RequestShell>
 
-          <label>
-            เหตุผล
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              required
-              rows={3}
-              disabled={busy}
-            />
-          </label>
-
-          <span className="hint">
-            หมายเหตุ: ขอย้อนหลังได้ไม่เกิน{' '}
-            <span className="font-bold">{OVERTIME_BACKDATE_LIMIT_DAYS}</span> วัน
-            และช่วงเวลาที่ขอต้องอยู่นอกเวลาทำงานปกติ
-          </span>
-
-          {error !== null && <p className="form-error">{error}</p>}
-
-          <div className="correction-form-actions">
-            <button type="submit" disabled={busy || preview.conflict !== null}>
-              {busy ? 'กำลังส่ง…' : editingId === null ? 'ส่งคำขอ' : 'บันทึกการแก้ไข'}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={busy}
-              onClick={() => setMode('list')}
-            >
-              ยกเลิก
-            </button>
-          </div>
-        </form>
+      {cancelTarget && (
+        <ConfirmModal
+          title="ยกเลิกคำขอทำงานล่วงเวลานี้?"
+          message={`${formatDate(cancelTarget.otDate)} ${hhmm(cancelTarget.startTime)}-${hhmm(cancelTarget.endTime)} — ยกเลิกแล้วจะกู้คืนไม่ได้ ต้องยื่นใหม่`}
+          confirmLabel="ยกเลิกคำขอ"
+          busy={busy}
+          onConfirm={() => void confirmCancel()}
+          onCancel={() => setCancelId(null)}
+        />
       )}
-    </div>
+    </>
   )
 }

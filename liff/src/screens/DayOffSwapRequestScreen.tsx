@@ -1,4 +1,3 @@
-import { PageHeader } from '../components/PageHeader'
 import { DayOffSwapRequestCard } from '../components/DayOffSwapRequestCard'
 
 type Props = {
@@ -6,10 +5,5 @@ type Props = {
 }
 
 export function DayOffSwapRequestScreen({ onBack }: Props) {
-  return (
-    <main className="app">
-      <PageHeader title="สลับวันหยุด" onBack={onBack} />
-      <DayOffSwapRequestCard />
-    </main>
-  )
+  return <DayOffSwapRequestCard onBack={onBack} />
 }

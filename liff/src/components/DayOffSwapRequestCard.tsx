@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import type { DayOffSwapRequest } from '@hrm/shared'
 import {
   cancelDayOffSwapRequest,
@@ -7,6 +8,12 @@ import {
   updateDayOffSwapRequest,
 } from '../api/dayOffSwapRequests'
 import { ApiRequestError } from '../api/client'
+import { RequestShell, type RequestListItem } from './RequestShell'
+import { ConfirmModal } from './ConfirmModal'
+
+type Props = {
+  onBack: () => void
+}
 
 type ListState =
   | { phase: 'loading' }
@@ -36,17 +43,11 @@ function formatDate(dateStr: string): string {
   })
 }
 
-function statusLabel(request: DayOffSwapRequest): string {
-  if (request.status === 'pending') return 'รอดำเนินการ'
-  if (request.status === 'approved') return 'อนุมัติแล้ว'
-  if (request.status === 'cancelled') return 'ยกเลิกแล้ว'
-  return `ปฏิเสธ: ${request.decisionReason ?? ''}`
-}
-
-export function DayOffSwapRequestCard() {
+export function DayOffSwapRequestCard({ onBack }: Props) {
   const [listState, setListState] = useState<ListState>({ phase: 'loading' })
   const [mode, setMode] = useState<'list' | 'form'>('list')
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [cancelId, setCancelId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -102,6 +103,7 @@ export function DayOffSwapRequestCard() {
         }
       })
       setMode('list')
+      toast(editingId === null ? 'ส่งคำขอแล้ว รอผู้อนุมัติ' : 'บันทึกการแก้ไขแล้ว')
     } catch (err) {
       setError(messageFor(err))
     } finally {
@@ -109,124 +111,101 @@ export function DayOffSwapRequestCard() {
     }
   }
 
-  async function cancel(id: number) {
-    if (!confirm('ยกเลิกคำขอสลับวันหยุดนี้?')) return
+  async function confirmCancel() {
+    if (cancelId === null) return
     setBusy(true)
     try {
-      const updated = await cancelDayOffSwapRequest(id)
+      const updated = await cancelDayOffSwapRequest(cancelId)
       setListState((prev) => ({
         phase: 'ready',
-        requests: prev.phase === 'ready' ? prev.requests.map((r) => (r.id === id ? updated : r)) : [updated],
+        requests: prev.phase === 'ready' ? prev.requests.map((r) => (r.id === cancelId ? updated : r)) : [updated],
       }))
+      toast('ยกเลิกคำขอแล้ว')
     } catch (err) {
       alert(messageFor(err))
     } finally {
       setBusy(false)
+      setCancelId(null)
     }
   }
 
+  const cancelTarget =
+    listState.phase === 'ready' ? listState.requests.find((r) => r.id === cancelId) ?? null : null
+
+  const items: RequestListItem[] =
+    listState.phase === 'ready'
+      ? listState.requests.map((request) => ({
+          id: request.id,
+          title: `${formatDate(request.offDate)} (หยุด) → ${formatDate(request.workDate)} (ทำงาน)`,
+          meta: '',
+          status: request.status,
+          reason: request.reason,
+          decisionNote:
+            request.status === 'rejected' ? `เหตุผลจากผู้อนุมัติ: ${request.decisionReason ?? ''}` : undefined,
+          onEdit: request.status === 'pending' ? () => openEditForm(request) : undefined,
+          onCancel: request.status === 'pending' ? () => setCancelId(request.id) : undefined,
+        }))
+      : []
+
   return (
-    <div className="leave-card">
-      {mode === 'list' && (
-        <>
-          {listState.phase === 'loading' && <p className="hint">กำลังโหลด…</p>}
-          {listState.phase === 'error' && <p className="form-error">{listState.message}</p>}
+    <>
+      <RequestShell
+        title="สลับวันหยุด"
+        englishTag="DayOffSwapRequestScreen"
+        ruleText="ต้องขอล่วงหน้าอย่างน้อย 3 วัน · แก้ไข/ยกเลิกได้ขณะรอดำเนินการ"
+        onBack={onBack}
+        mode={mode}
+        busy={busy}
+        newLabel="ขอสลับวันหยุด"
+        onOpenForm={openCreateForm}
+        listPhase={listState.phase}
+        listErrorMessage={listState.phase === 'error' ? listState.message : undefined}
+        emptyText="ยังไม่มีคำขอสลับวันหยุด"
+        items={items}
+        onSubmit={(e) => void submit(e)}
+        onCloseForm={() => setMode('list')}
+        formError={error}
+        submitLabel={editingId === null ? 'ส่งคำขอ' : 'บันทึกการแก้ไข'}
+        canSubmit={reason.trim() !== ''}
+        reasonLabel="เหตุผล *"
+        reason={reason}
+        onReasonChange={setReason}
+      >
+        <label className="field">
+          <span>วันทำงานเดิม → ขอเป็นวันหยุด</span>
+          <input
+            type="date"
+            value={offDate}
+            min={minRequestDate()}
+            onChange={(e) => setOffDate(e.target.value)}
+            required
+            disabled={busy}
+          />
+        </label>
 
-          {listState.phase === 'ready' && (
-            <>
-              <button type="button" className="secondary-button" onClick={openCreateForm}>
-                ขอสลับวันหยุด
-              </button>
+        <label className="field">
+          <span>วันหยุด → ขอเป็นวันทำงาน</span>
+          <input
+            type="date"
+            value={workDate}
+            min={minRequestDate()}
+            onChange={(e) => setWorkDate(e.target.value)}
+            required
+            disabled={busy}
+          />
+        </label>
+      </RequestShell>
 
-              {listState.requests.length === 0 ? (
-                <p className="hint">ยังไม่มีคำขอสลับวันหยุด</p>
-              ) : (
-                <ul className="leave-list">
-                  {listState.requests.map((request) => (
-                    <li key={request.id} className={`leave-item ${request.status}`}>
-                      <div className="leave-item-head">
-                        <span>
-                          {formatDate(request.offDate)} (หยุด) → {formatDate(request.workDate)} (ทำงาน)  
-                        </span>
-                        <span className="leave-item-status">{statusLabel(request)}</span>
-                      </div>
-                      {request.reason && <span className="leave-item-reason">{request.reason}</span>}
-                      {request.status === 'pending' && (
-                        <div className="leave-item-actions">
-                          <button
-                            type="button"
-                            className="leave-item-cancel"
-                            disabled={busy}
-                            onClick={() => openEditForm(request)}
-                          >
-                            แก้ไข
-                          </button>
-                          <button
-                            type="button"
-                            className="leave-item-cancel"
-                            disabled={busy}
-                            onClick={() => void cancel(request.id)}
-                          >
-                            ยกเลิกคำขอ
-                          </button>
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-        </>
+      {cancelTarget && (
+        <ConfirmModal
+          title="ยกเลิกคำขอสลับวันหยุดนี้?"
+          message={`${formatDate(cancelTarget.offDate)} (หยุด) → ${formatDate(cancelTarget.workDate)} (ทำงาน) — ยกเลิกแล้วจะกู้คืนไม่ได้ ต้องยื่นใหม่`}
+          confirmLabel="ยกเลิกคำขอ"
+          busy={busy}
+          onConfirm={() => void confirmCancel()}
+          onCancel={() => setCancelId(null)}
+        />
       )}
-
-      {mode === 'form' && (
-        <form onSubmit={(e) => void submit(e)} className="correction-form">
-          <label>
-            วันทำงานเดิม
-            <input
-              type="date"
-              value={offDate}
-              min={minRequestDate()}
-              onChange={(e) => setOffDate(e.target.value)}
-              required
-              disabled={busy}
-            />
-            <span className="hint">วันทำงานที่ต้องการเปลี่ยนเป็นวันหยุด</span>
-          </label>
-
-          <label>
-            วันหยุดที่ต้องการสลับ
-            <input
-              type="date"
-              value={workDate}
-              min={minRequestDate()}
-              onChange={(e) => setWorkDate(e.target.value)}
-              required
-              disabled={busy}
-            />
-            <span className="hint">วันหยุดบริษัท หรือวันหยุดประจำสัปดาห์ ที่ต้องการเปลี่ยนเป็นวันทำงาน</span>
-          </label>
-
-          <label>
-            เหตุผล
-            <textarea value={reason} onChange={(e) => setReason(e.target.value)} required rows={3} disabled={busy} />
-          </label>
-
-          <span className="hint">หมายเหตุ: ต้องขอล่วงหน้าอย่างน้อย <span className='font-bold'>3</span> วัน</span>
-
-          {error !== null && <p className="form-error">{error}</p>}
-
-          <div className="correction-form-actions">
-            <button type="submit" disabled={busy}>
-              {busy ? 'กำลังส่ง…' : editingId === null ? 'ส่งคำขอ' : 'บันทึกการแก้ไข'}
-            </button>
-            <button type="button" className="secondary-button" disabled={busy} onClick={() => setMode('list')}>
-              ยกเลิก
-            </button>
-          </div>
-        </form>
-      )}
-    </div>
+    </>
   )
 }

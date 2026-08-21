@@ -15,6 +15,10 @@ export type RequestListItem = {
   reason: string | null
   decisionNote?: string | null
   hasFile?: boolean
+  /** Fetches a fresh presigned URL and opens it — the only current consumer
+   *  is ShiftChange's attachment. When absent but hasFile is true, falls
+   *  back to a plain (non-interactive) label. */
+  onViewFile?: () => void
   onEdit?: () => void
   onCancel?: () => void
 }
@@ -113,7 +117,14 @@ export function RequestShell({
                     </div>
                     {item.reason && <p className="request-item-reason">{item.reason}</p>}
                     {item.decisionNote && <p className="request-item-decision">{item.decisionNote}</p>}
-                    {item.hasFile && <p className="request-item-file">แนบรูป 1 ไฟล์</p>}
+                    {item.hasFile &&
+                      (item.onViewFile ? (
+                        <button type="button" className="attachment-link" onClick={item.onViewFile}>
+                          ดูรูปที่แนบไว้
+                        </button>
+                      ) : (
+                        <p className="request-item-file">แนบรูป 1 ไฟล์</p>
+                      ))}
                     {(item.onEdit || item.onCancel) && (
                       <div className="request-item-actions">
                         {item.onEdit && (

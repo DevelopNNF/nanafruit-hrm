@@ -719,24 +719,30 @@
   flex: 1;
 }
 
-.leave-half-day-toggle {
+/* Chip toggle — shared by Leave's partial-day toggle and TimeCorrection's
+   check-in/check-out toggle. */
+
+.chip-toggle {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
-.leave-half-day-toggle button {
+.chip-toggle button {
   flex: 1;
+  min-height: 2.75rem;
   padding: 0.6rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
+  border-radius: 12px;
+  background: var(--card-bg);
   color: var(--text-h);
   font: inherit;
   font-size: 0.85rem;
+  font-weight: 600;
   cursor: pointer;
 }
 
-.leave-half-day-toggle button.active {
+.chip-toggle button.active {
   border-color: var(--accent);
   background: var(--accent);
   color: #fff;
@@ -1092,7 +1098,11 @@
   padding-top: 0.1rem;
 }
 
-.request-item-actions button {
+/* Standalone (not scoped to .request-item-actions) so the same small
+   edit/danger buttons can be reused outside the list — e.g. "remove
+   attachment" inside a form. */
+.request-edit-button,
+.request-cancel-button {
   min-height: 2.4rem;
   padding: 0 0.9rem;
   border-radius: 10px;
@@ -1101,19 +1111,20 @@
   cursor: pointer;
 }
 
-.request-item-actions .request-edit-button {
+.request-edit-button {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-h);
 }
 
-.request-item-actions .request-cancel-button {
+.request-cancel-button {
   border: 1px solid var(--status-rejected-bg);
   background: var(--card-bg);
   color: var(--status-rejected-fg);
 }
 
-.request-item-actions button:disabled {
+.request-edit-button:disabled,
+.request-cancel-button:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -1135,6 +1146,38 @@
   font-size: 0.8rem;
   font-weight: 500;
   color: var(--text-h);
+}
+
+.request-form .field input,
+.request-form .field select,
+.request-form .field textarea {
+  /* iOS Safari draws its own (near-invisible) chrome for date/time/select
+     controls unless this is reset — without it the custom border below gets
+     drawn but visually fights the native appearance instead of replacing it. */
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-height: 3.125rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  color: var(--text-h);
+  font: inherit;
+  /* 1rem, not smaller: iOS Safari zooms the page on focus below 16px. */
+  font-size: 1rem;
+}
+
+.request-form .field input:focus,
+.request-form .field select:focus,
+.request-form .field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.request-form .field textarea {
+  min-height: auto;
+  resize: vertical;
 }
 
 .request-form .field-row {
@@ -1165,6 +1208,98 @@
   font-family: var(--display);
   font-size: 0.8rem;
   font-weight: 500;
+}
+
+.request-form-summary.conflict {
+  background: var(--status-rejected-bg);
+  color: var(--status-rejected-fg);
+}
+
+/* Option list — a picker of bordered rows (e.g. ShiftChange's shift picker),
+   for when there are too few options for a chip row but a native <select>
+   would hide useful detail (a shift's time range) behind one line. */
+
+.option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  min-height: 3.4rem;
+  padding: 0 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  color: var(--text-h);
+  text-align: left;
+  cursor: pointer;
+}
+
+.option-row.selected {
+  border: 1.5px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.option-row-name {
+  font-family: var(--display);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.option-row-detail {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-faint);
+}
+
+/* File drop — the attachment control, styled as a tappable box rather than a
+   bare <input type="file">, which the input stays underneath (visually
+   hidden) for. */
+
+.file-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  min-height: 4rem;
+  padding: 0.9rem 1rem;
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-drop.attached {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.file-drop-text {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.file-drop-hint {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-faint);
+}
+
+.file-drop-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 /* Confirm modal ------------------------------------------------------------
