@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import type { CalendarDay, CalendarDayStatus } from '@hrm/shared'
+import type { CalendarDay } from '@hrm/shared'
 import { fetchMonthCalendar } from '../api/calendar'
 import { ApiRequestError } from '../api/client'
 import { PageHeader } from '../components/PageHeader'
+import { DAY_STATUS_CLASS, DAY_STATUS_LABEL } from '../lib/calendarDayStatus'
 
 type Props = {
   onBack: () => void
@@ -23,14 +24,16 @@ const MONTHS_TH = [
   'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
   'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
 ]
+const MONTHS_SHORT_TH = [
+  'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.',
+]
 
-const STATUS_LABEL: Record<CalendarDayStatus, string> = {
-  workday: 'วันทำงาน',
-  weekly_off: 'วันหยุดประจำสัปดาห์',
-  holiday: 'Holiday',
-  leave: 'ลา',
-  swap_workday: 'สลับวันทำงาน',
-  swap_dayoff: 'สลับวันหยุด',
+/** Buddhist calendar year — Thai UI convention everywhere else in this app
+ *  already gets this for free from toLocaleDateString('th-TH'); the
+ *  calendar grid builds its own month label instead, so it has to add the
+ *  543 years by hand. */
+function buddhistYear(year: number): number {
+  return year + 543
 }
 
 function messageFor(err: unknown): string {
@@ -88,53 +91,16 @@ export function CalendarScreen({ onBack }: Props) {
     <main className="app">
       <PageHeader title="ปฏิทินการทำงาน" onBack={onBack} />
 
-      <div className="calendar-nav">
-        <button
-          type="button"
-          className="calendar-nav-button"
-          onClick={() => changeMonth(-1)}
-          aria-label="เดือนก่อนหน้า"
-        >
+      <div className="calendar-nav-card">
+        <button type="button" className="calendar-nav-button" onClick={() => changeMonth(-1)} aria-label="เดือนก่อนหน้า">
           ‹
         </button>
         <span className="calendar-month-label">
-          {MONTHS_TH[month - 1]} {year}
+          {MONTHS_TH[month - 1]} {buddhistYear(year)}
         </span>
-        <button
-          type="button"
-          className="calendar-nav-button"
-          onClick={() => changeMonth(1)}
-          aria-label="เดือนถัดไป"
-        >
+        <button type="button" className="calendar-nav-button" onClick={() => changeMonth(1)} aria-label="เดือนถัดไป">
           ›
         </button>
-      </div>
-
-      <div className="calendar-legend">
-        <span className="calendar-legend-item">
-          <span className="calendar-dot workday" />
-          วันทำงาน
-        </span>
-        <span className="calendar-legend-item">
-          <span className="calendar-dot weekly_off" />
-          วันหยุดประจำสัปดาห์
-        </span>
-        <span className="calendar-legend-item">
-          <span className="calendar-dot holiday" />
-          Holiday
-        </span>
-        <span className="calendar-legend-item">
-          <span className="calendar-dot leave" />
-          ลา
-        </span>
-        <span className="calendar-legend-item">
-          <span className="calendar-dot swap_workday" />
-          สลับวันทำงาน
-        </span>
-        <span className="calendar-legend-item">
-          <span className="calendar-dot swap_dayoff" />
-          สลับวันหยุด
-        </span>
       </div>
 
       {state.phase === 'loading' && <p className="hint">กำลังโหลดปฏิทิน…</p>}
@@ -142,54 +108,64 @@ export function CalendarScreen({ onBack }: Props) {
 
       {state.phase === 'ready' && (
         <>
-          <div className="calendar-grid">
-            {WEEKDAYS_TH.map((w) => (
-              <span key={w} className="calendar-weekday">
-                {w}
-              </span>
-            ))}
-            {Array.from({ length: firstWeekday }).map((_, i) => (
-              <span key={`pad-${i}`} className="calendar-day empty" aria-hidden="true" />
-            ))}
-            {state.days.map((day) => {
-              const dateNum = Number(day.date.slice(8, 10))
-              const isToday = isCurrentMonth && dateNum === now.date
-              const classes = ['calendar-day', day.status]
-              if (isToday) classes.push('today')
-              if (day.date === selected) classes.push('selected')
-              return (
-                <button
-                  key={day.date}
-                  type="button"
-                  className={classes.join(' ')}
-                  onClick={() => setSelected(day.date)}
-                >
-                  {dateNum}
-                </button>
-              )
-            })}
+          <div className="calendar-grid-card">
+            <div className="calendar-weekdays">
+              {WEEKDAYS_TH.map((w) => (
+                <span key={w} className="calendar-weekday">
+                  {w}
+                </span>
+              ))}
+            </div>
+            <div className="calendar-days">
+              {Array.from({ length: firstWeekday }).map((_, i) => (
+                <span key={`pad-${i}`} className="calendar-day empty" aria-hidden="true" />
+              ))}
+              {state.days.map((day) => {
+                const dateNum = Number(day.date.slice(8, 10))
+                const isToday = isCurrentMonth && dateNum === now.date
+                const classes = ['calendar-day']
+                if (day.status === 'weekly_off') classes.push('weekly-off')
+                if (isToday) classes.push('today')
+                if (day.date === selected) classes.push('selected')
+                return (
+                  <button key={day.date} type="button" className={classes.join(' ')} onClick={() => setSelected(day.date)}>
+                    <span>{dateNum}</span>
+                    <span className={`day-dot calendar-day-dot ${DAY_STATUS_CLASS[day.status]}`} />
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {selectedDay && (
-            <div className="card ok calendar-detail">
+            <div className="calendar-detail">
               <p className="headline">
                 {WEEKDAYS_FULL_TH[new Date(`${selectedDay.date}T00:00:00Z`).getUTCDay()]}ที่{' '}
-                {Number(selectedDay.date.slice(8, 10))} {MONTHS_TH[month - 1]} {year}
-                {isCurrentMonth && Number(selectedDay.date.slice(8, 10)) === now.date
-                  ? ' (วันนี้)'
-                  : ''}
+                {Number(selectedDay.date.slice(8, 10))} {MONTHS_SHORT_TH[month - 1]} {buddhistYear(year)}
+                {isCurrentMonth && Number(selectedDay.date.slice(8, 10)) === now.date ? ' (วันนี้)' : ''}
               </p>
-              <p className="hint">
-                {STATUS_LABEL[selectedDay.status]}
-                {selectedDay.label ? ` · ${selectedDay.label}` : ''}
+              <p className="calendar-detail-status">
+                <span className={`day-status-pill ${DAY_STATUS_CLASS[selectedDay.status]}`}>
+                  {DAY_STATUS_LABEL[selectedDay.status]}
+                </span>
+                {selectedDay.label && <span className="hint">{selectedDay.label}</span>}
               </p>
               <p className="hint">
                 {selectedDay.shiftName
-                  ? `กะ: ${selectedDay.shiftName} (${selectedDay.shiftStartTime?.slice(0, 5)}-${selectedDay.shiftEndTime?.slice(0, 5)})`
+                  ? `กะ ${selectedDay.shiftStartTime?.slice(0, 5)}–${selectedDay.shiftEndTime?.slice(0, 5)}`
                   : 'ไม่มีกะที่กำหนดไว้'}
               </p>
             </div>
           )}
+
+          <div className="calendar-legend">
+            {(Object.keys(DAY_STATUS_LABEL) as (keyof typeof DAY_STATUS_LABEL)[]).map((status) => (
+              <span key={status} className="calendar-legend-item">
+                <span className={`day-dot calendar-legend-dot ${DAY_STATUS_CLASS[status]}`} />
+                {DAY_STATUS_LABEL[status]}
+              </span>
+            ))}
+          </div>
         </>
       )}
     </main>

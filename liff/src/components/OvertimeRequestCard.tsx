@@ -6,7 +6,6 @@ import {
   findOvertimeShiftConflict,
   overtimeCrossesMidnight,
   type CalendarDay,
-  type CalendarDayStatus,
   type OvertimeRequest,
 } from '@hrm/shared'
 import {
@@ -17,6 +16,7 @@ import {
 } from '../api/overtimeRequests'
 import { fetchMonthCalendar } from '../api/calendar'
 import { ApiRequestError } from '../api/client'
+import { DAY_STATUS_LABEL } from '../lib/calendarDayStatus'
 import { RequestShell, type RequestListItem } from './RequestShell'
 import { ConfirmModal } from './ConfirmModal'
 
@@ -73,15 +73,6 @@ function formatHours(minutes: number): string {
   if (hours === 0) return `${rest} นาที`
   if (rest === 0) return `${hours} ชั่วโมง`
   return `${hours} ชั่วโมง ${rest} นาที`
-}
-
-const DAY_STATUS_LABEL: Record<CalendarDayStatus, string> = {
-  workday: 'วันทำงาน',
-  weekly_off: 'วันหยุดประจำสัปดาห์',
-  holiday: 'วันหยุดบริษัท',
-  leave: 'วันลา',
-  swap_workday: 'วันทำงาน (สลับวันหยุด)',
-  swap_dayoff: 'วันหยุด (สลับวันหยุด)',
 }
 
 const RULE_TEXT = `ขอย้อนหลังได้ไม่เกิน ${OVERTIME_BACKDATE_LIMIT_DAYS} วัน · ช่วงเวลาที่ขอต้องอยู่นอกเวลาทำงานปกติ`

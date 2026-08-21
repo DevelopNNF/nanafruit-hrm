@@ -124,7 +124,7 @@ export function AttendanceCard() {
   }
 
   return (
-    <div className="card ok attendance-card">
+    <div className="surface-card attendance-card">
       {state.phase === 'loading' && <p className="hint">กำลังโหลดสถานะ…</p>}
 
       {state.phase === 'error' && <p className="form-error">{state.message}</p>}

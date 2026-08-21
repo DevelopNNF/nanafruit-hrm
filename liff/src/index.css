@@ -53,6 +53,22 @@
   --status-cancelled-fg: #5f6b63;
   --status-cancelled-bg: #ebeee9;
 
+  /* Calendar day-type colors — shared by the calendar grid's dots, its
+     legend, and the day-detail pill. Distinct palette from the request
+     statuses above: a day's type and a request's approval state are
+     different axes and were on a collision course for tri/quad-state colors
+     if they shared one set. */
+  --day-workday: #06c755;
+  --day-weekly-off: #b6c0b8;
+  --day-holiday: #e0723c;
+  --day-leave: #3b82c4;
+  --day-swap-workday: #8b5cf6;
+  --day-swap-dayoff: #c99a06;
+
+  /* A hairline lighter than --border, for internal dividers (e.g. between
+     calendar day cells) that should barely register against a white card. */
+  --border-subtle: #f0f3ef;
+
   --sans: 'Sarabun', 'Noto Sans Thai', system-ui, sans-serif;
   --display: 'Kanit', 'Noto Sans Thai', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;

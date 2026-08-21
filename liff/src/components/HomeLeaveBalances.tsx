@@ -45,7 +45,7 @@ export function HomeLeaveBalances({ employee, onViewAll }: Props) {
   if (eligible.length === 0) return null
 
   return (
-    <div className="card ok home-balances">
+    <div className="surface-card home-balances">
       <div className="home-balances-head">
         <p className="headline">วันลาคงเหลือ ปี {new Date().getFullYear() + 543}</p>
         <button type="button" className="text-link-button" onClick={onViewAll}>
