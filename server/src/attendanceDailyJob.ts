@@ -49,7 +49,35 @@ export type AttendanceRunResult = {
 }
 
 /**
- * Recomputes [fromDate, toDate] for every active employee.
+ * Narrows `range` to the part that overlaps the employee's working dates, or
+ * null if there is no overlap at all.
+ *
+ * start_working_date falls back to hire_date, same as the payroll proration
+ * in payrollEntryQueries.ts — every employee has a hire_date, not every one
+ * has had start_working_date filled in. end_working_date stays null for
+ * anyone still active, meaning no upper bound.
+ *
+ * Without this, a run recomputes attendance_daily rows for dates before
+ * someone joined or after they left — there's no shift assignment on those
+ * dates, so they land as day_off/absent rather than erroring, which is
+ * exactly why the bug went unnoticed rather than throwing.
+ */
+function clampToEmploymentWindow(
+  range: AttendanceRunRange,
+  startWorkingDate: string | null,
+  hireDate: string,
+  endWorkingDate: string | null
+): AttendanceRunRange | null {
+  const employmentStart = startWorkingDate ?? hireDate
+  const fromDate = range.fromDate > employmentStart ? range.fromDate : employmentStart
+  const toDate =
+    endWorkingDate !== null && endWorkingDate < range.toDate ? endWorkingDate : range.toDate
+  return fromDate > toDate ? null : { fromDate, toDate }
+}
+
+/**
+ * Recomputes [fromDate, toDate] for every active employee, clamped per
+ * employee to their own start/end working date.
  *
  * One transaction per employee, so a single bad record can't roll back the
  * whole run and progress made before it stays committed. A thrown employee is
@@ -66,19 +94,41 @@ export async function runAttendanceCompute(
 ): Promise<AttendanceRunResult> {
   const startedAt = Date.now()
 
-  const { rows: employees } = await pool.query<{ employee_id: string }>(
-    `SELECT employee_id FROM employment_details WHERE status = 'Active' ORDER BY employee_id`
+  const { rows: employees } = await pool.query<{
+    employee_id: string
+    start_working_date: string | null
+    hire_date: string
+    end_working_date: string | null
+  }>(
+    `SELECT employee_id, start_working_date, hire_date, end_working_date
+     FROM employment_details WHERE status = 'Active' ORDER BY employee_id`
   )
 
   let rows = 0
   let failed = 0
 
-  for (const { employee_id } of employees) {
-    const employeeId = Number(employee_id)
+  for (const emp of employees) {
+    const employeeId = Number(emp.employee_id)
+    const employeeRange = clampToEmploymentWindow(
+      range,
+      emp.start_working_date,
+      emp.hire_date,
+      emp.end_working_date
+    )
+    if (employeeRange === null) {
+      onEmployee?.(employeeId, 0)
+      continue
+    }
+
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
-      const written = await recomputeAttendanceDaily(employeeId, range.fromDate, range.toDate, client)
+      const written = await recomputeAttendanceDaily(
+        employeeId,
+        employeeRange.fromDate,
+        employeeRange.toDate,
+        client
+      )
       await client.query('COMMIT')
       rows += written
       onEmployee?.(employeeId, written)
