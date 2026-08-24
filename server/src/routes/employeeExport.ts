@@ -7,7 +7,7 @@ import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
 import { SELECT_EMPLOYEE, rowToEmployee, type EmployeeRow } from '../employeeQueries.js'
-import { buildEmployeeWorkbook, buildTempWorkerImportTemplateWorkbook } from '../employeeExport.js'
+import { buildEmployeeWorkbook, buildTempWorkerEmployeeWorkbook } from '../employeeExport.js'
 
 export const employeeExportRouter = Router()
 
@@ -57,6 +57,40 @@ employeeExportRouter.get('/employees/export', canRead, async (req: Request, res:
   }
 })
 
+// Same idea as /employees/export above, but only employment_type =
+// 'ชั่วคราว' rows, written into the temp-worker template's columns — the
+// export counterpart to the TEMP-EMP-IMP import template, for HR to review/
+// re-import the temporary-daily-worker roster on its own.
+employeeExportRouter.get(
+  '/employees/export-temp-worker',
+  canRead,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    try {
+      const { rows } = await pool.query<EmployeeRow>(
+        `${SELECT_EMPLOYEE} WHERE d.employment_type = $1 ORDER BY e.employee_code`,
+        ['ชั่วคราว']
+      )
+      const employees = rows.map(rowToEmployee)
+      const buffer = await buildTempWorkerEmployeeWorkbook(employees)
+
+      await recordAudit(pool, {
+        actor,
+        action: 'employee.export',
+        entityId: null,
+        detail: { employeeCount: employees.length, templateCode: 'TEMP-EMP-IMP' },
+      })
+
+      const today = new Date().toISOString().slice(0, 10)
+      sendWorkbook(res, buffer, `employees-temp-worker-${today}.xlsx`)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
 // A blank copy of the template, with a dropdown for department/job/shift/
 // holiday group/payroll group/employment type built fresh from whatever is
 // active right now — never the static file in server/templates directly,
@@ -86,7 +120,7 @@ employeeExportRouter.get(
 
 // A blank copy of the temp-worker template (fingerprint code, name,
 // department, ค่าจ้าง — no employee code, no ID card, no shift) — see
-// buildTempWorkerImportTemplateWorkbook's own comment for why this is a
+// buildTempWorkerEmployeeWorkbook's own comment for why this is a
 // separate route rather than a query param on the one above: the two
 // templates map to entirely different columns/required fields on the way
 // back in (see employeeImportParse.ts's per-template config).
@@ -98,7 +132,7 @@ employeeExportRouter.get(
     if (!actor) return fail(res, 500, 'server misconfigured')
 
     try {
-      const buffer = await buildTempWorkerImportTemplateWorkbook()
+      const buffer = await buildTempWorkerEmployeeWorkbook()
 
       await recordAudit(pool, {
         actor,

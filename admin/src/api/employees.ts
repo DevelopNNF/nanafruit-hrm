@@ -233,6 +233,12 @@ export function exportEmployees(signal?: AbortSignal): Promise<Blob> {
   return fetchWorkbook('/api/employees/export', signal)
 }
 
+/** Only employment_type = 'ชั่วคราว' employees, in the temp-worker template's
+ *  columns (fingerprint code identity, no employee code/ID card/shift). */
+export function exportTempWorkerEmployees(signal?: AbortSignal): Promise<Blob> {
+  return fetchWorkbook('/api/employees/export-temp-worker', signal)
+}
+
 /** A blank copy of the import template — headers and dropdowns only, no
  *  employee data. Dropdowns are generated fresh from current master data on
  *  every call, same as exportEmployees. */
@@ -242,7 +248,7 @@ export function downloadEmployeeImportTemplate(signal?: AbortSignal): Promise<Bl
 
 /** The temp-worker template — fingerprint code, name, department, ค่าจ้าง,
  *  no employee code/ID card/shift column. See
- *  buildTempWorkerImportTemplateWorkbook's own comment server-side. */
+ *  buildTempWorkerEmployeeWorkbook's own comment server-side. */
 export function downloadTempWorkerEmployeeImportTemplate(signal?: AbortSignal): Promise<Blob> {
   return fetchWorkbook('/api/employees/export-template-temp-worker', signal)
 }

@@ -9,6 +9,7 @@ import {
 } from '../../api/employees'
 import { useCanWrite } from '../../auth/meContext'
 import { notify } from '../../notifications/notify'
+import { DropdownMenuButton } from '../../components/DropdownMenuButton'
 import {
   alert,
   alertDetail,
@@ -228,26 +229,23 @@ export function EmployeeImportPage() {
           >
             {phase.name === 'previewing' ? 'กำลังอ่านไฟล์…' : 'ตรวจสอบไฟล์'}
           </button>
-          <button
-            type="button"
-            className={button()}
+          <DropdownMenuButton
+            label={downloadingTemplate !== null ? 'กำลังดาวน์โหลด…' : 'ดาวน์โหลดเทมเพลตเปล่า'}
+            icon={<Download size={16} />}
             disabled={downloadingTemplate !== null}
-            onClick={() => void handleDownloadTemplate('standard')}
-          >
-            <Download size={16} />
-            {downloadingTemplate === 'standard' ? 'กำลังดาวน์โหลด…' : 'ดาวน์โหลดเทมเพลตเปล่า'}
-          </button>
-          <button
-            type="button"
-            className={button()}
-            disabled={downloadingTemplate !== null}
-            onClick={() => void handleDownloadTemplate('temp_worker')}
-          >
-            <Download size={16} />
-            {downloadingTemplate === 'temp_worker'
-              ? 'กำลังดาวน์โหลด…'
-              : 'ดาวน์โหลดเทมเพลตพนักงานรายวันชั่วคราว'}
-          </button>
+            items={[
+              {
+                label: 'เทมเพลตพนักงานทั่วไป',
+                description: 'เทมเพลตข้อมูลพนักงานมาตรฐาน (EMP-IMP)',
+                onClick: () => void handleDownloadTemplate('standard'),
+              },
+              {
+                label: 'เทมเพลตพนักงานรายวันชั่วคราว',
+                description: 'สำหรับพนักงานที่มีแค่รหัสลายนิ้วมือ ไม่มีรหัสพนักงาน (TEMP-EMP-IMP)',
+                onClick: () => void handleDownloadTemplate('temp_worker'),
+              },
+            ]}
+          />
         </div>
         <p className={`${muted} mt-3`}>
           ระบบจะรู้เองว่าไฟล์ที่อัปโหลดเป็นเทมเพลตแบบไหน — รหัสพนักงานที่มีอยู่แล้วในระบบจะถูกอัปเดตข้อมูล

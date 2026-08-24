@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Download, Plus, Search, Upload } from 'lucide-react'
 import type { Employee, PayrollGroup } from '@hrm/shared'
-import { exportEmployees, listEmployees } from '../../api/employees'
+import { exportEmployees, exportTempWorkerEmployees, listEmployees } from '../../api/employees'
 import { listPayrollGroups } from '../../api/payrollGroups'
 import { useCanWrite } from '../../auth/meContext'
 import { notify } from '../../notifications/notify'
+import { DropdownMenuButton } from '../../components/DropdownMenuButton'
 import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, fieldControl, muted, pageHead, subtitle } from '../../styles'
+
+type ExportKind = 'standard' | 'temp_worker'
 
 /** The payroll-group filter's own value space: a group id, everybody, or the
  *  people no group covers — which during the parallel run with the previous
@@ -43,14 +46,15 @@ export function EmployeeListPage() {
   const canWrite = useCanWrite()
   const [exporting, setExporting] = useState(false)
 
-  async function handleExport() {
+  async function handleExport(kind: ExportKind) {
     setExporting(true)
     try {
-      const blob = await exportEmployees()
+      const blob = kind === 'standard' ? await exportEmployees() : await exportTempWorkerEmployees()
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `employees-${new Date().toISOString().slice(0, 10)}.xlsx`
+      const today = new Date().toISOString().slice(0, 10)
+      link.download = kind === 'standard' ? `employees-${today}.xlsx` : `employees-temp-worker-${today}.xlsx`
       link.click()
       URL.revokeObjectURL(url)
     } catch (err) {
@@ -110,10 +114,23 @@ export function EmployeeListPage() {
           <p className={subtitle}>ข้อมูลประวัติและสถานะการจ้างงาน</p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
-          <button type="button" className={button()} disabled={exporting} onClick={() => void handleExport()}>
-            <Download size={16} />
-            {exporting ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
-          </button>
+          <DropdownMenuButton
+            label={exporting ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
+            icon={<Download size={16} />}
+            disabled={exporting}
+            items={[
+              {
+                label: 'พนักงานทั่วไป (EMP-IMP)',
+                description: 'พนักงานทุกคน ตามเทมเพลตข้อมูลพนักงานมาตรฐาน',
+                onClick: () => void handleExport('standard'),
+              },
+              {
+                label: 'พนักงานรายวันชั่วคราว (TEMP-EMP-IMP)',
+                description: 'เฉพาะพนักงานประเภท “ชั่วคราว” ตามเทมเพลตพนักงานรายวันชั่วคราว',
+                onClick: () => void handleExport('temp_worker'),
+              },
+            ]}
+          />
           {canWrite && (
             <Link className={button()} to="/employees/import">
               <Upload size={16} />

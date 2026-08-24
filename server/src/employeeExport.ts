@@ -186,6 +186,37 @@ function applyDropdowns(
   }
 }
 
+/** Same shape as writeRow, but for employee-temporary-template.xlsx's columns
+ *  — no employeeCode/idCardNumber/shiftName, and ค่าจ้าง is deliberately left
+ *  blank (this is a data export of what's already on the employee record, and
+ *  the current wage rate isn't part of that record — see wageAssignmentQueries.ts
+ *  if that ever needs to change). */
+function writeTempWorkerRow(worksheet: ExcelJS.Worksheet, rowNumber: number, employee: Employee): void {
+  const row = worksheet.getRow(rowNumber)
+  row.getCell(TEMP_WORKER_COLUMNS.fingerprintCode).value = employee.fingerprintCode
+  row.getCell(TEMP_WORKER_COLUMNS.title).value = employee.title
+  row.getCell(TEMP_WORKER_COLUMNS.firstNameTh).value = employee.firstNameTh
+  row.getCell(TEMP_WORKER_COLUMNS.lastNameTh).value = employee.lastNameTh
+  row.getCell(TEMP_WORKER_COLUMNS.nickname).value = employee.nickname
+  row.getCell(TEMP_WORKER_COLUMNS.gender).value =
+    employee.gender === null ? null : GENDER_LABELS[employee.gender]
+  row.getCell(TEMP_WORKER_COLUMNS.hireDate).value = parseDateOnlyUtc(employee.employment.hireDate)
+  row.getCell(TEMP_WORKER_COLUMNS.startWorkingDate).value =
+    employee.employment.startWorkingDate === null
+      ? null
+      : parseDateOnlyUtc(employee.employment.startWorkingDate)
+  row.getCell(TEMP_WORKER_COLUMNS.workLocation).value = employee.employment.workLocation
+  row.getCell(TEMP_WORKER_COLUMNS.employmentType).value = employee.employment.employmentType
+  row.getCell(TEMP_WORKER_COLUMNS.supervisorEmployeeCode).value =
+    employee.employment.supervisorEmployeeCode
+  row.getCell(TEMP_WORKER_COLUMNS.departmentName).value = employee.employment.departmentName
+  row.getCell(TEMP_WORKER_COLUMNS.jobTitle).value = employee.employment.jobTitle
+  row.getCell(TEMP_WORKER_COLUMNS.holidayGroupName).value = employee.employment.holidayGroupName
+  row.getCell(TEMP_WORKER_COLUMNS.payrollGroupName).value = employee.employment.payrollGroupName
+  row.getCell(TEMP_WORKER_COLUMNS.overtimeGroupName).value = employee.employment.overtimeGroupName
+  row.commit()
+}
+
 function writeRow(worksheet: ExcelJS.Worksheet, rowNumber: number, employee: Employee): void {
   const row = worksheet.getRow(rowNumber)
   row.getCell(COLUMNS.employeeCode).value = employee.employeeCode
@@ -253,14 +284,12 @@ export async function buildEmployeeWorkbook(employees: Employee[]): Promise<Exce
 }
 
 /**
- * A blank copy of the temp-worker import template — headers, its ค่าจ้าง
- * column, and fresh dropdowns, no data rows. Template-download only: unlike
- * buildEmployeeWorkbook, this never writes employee rows — GET
- * /employees/export (every employee, including temp workers) stays on the
- * one shared standard-template layout; this template exists purely to make
- * *importing* temp workers ergonomic, not to report on them.
+ * The temp-worker template's counterpart to buildEmployeeWorkbook above —
+ * same `employees` empty/non-empty convention, but against
+ * employee-temporary-template.xlsx's columns (no employeeCode/idCardNumber/
+ * shiftName, ค่าจ้าง left blank — see writeTempWorkerRow's comment).
  */
-export async function buildTempWorkerImportTemplateWorkbook(): Promise<ExcelJS.Buffer> {
+export async function buildTempWorkerEmployeeWorkbook(employees: Employee[] = []): Promise<ExcelJS.Buffer> {
   const masterData = await loadEmployeeImportMasterData()
 
   const workbook = new ExcelJS.Workbook()
@@ -270,11 +299,17 @@ export async function buildTempWorkerImportTemplateWorkbook(): Promise<ExcelJS.B
 
   addListsSheet(workbook, masterData)
 
-  // Nothing to clone the sample row into — drop it so the template doesn't
-  // ship its placeholder worker as if it were real data.
-  worksheet.spliceRows(SAMPLE_ROW, 1)
+  if (employees.length === 0) {
+    // Nothing to clone the sample row into — drop it so the template doesn't
+    // ship its placeholder worker as if it were real data.
+    worksheet.spliceRows(SAMPLE_ROW, 1)
+  } else {
+    worksheet.duplicateRow(SAMPLE_ROW, employees.length - 1, true)
+    employees.forEach((employee, i) => writeTempWorkerRow(worksheet, SAMPLE_ROW + i, employee))
+  }
 
-  applyDropdowns(worksheet, MIN_VALIDATION_ROW_COUNT, TEMP_WORKER_LIST_COLUMNS)
+  const validationRowCount = Math.max(MIN_VALIDATION_ROW_COUNT, employees.length + 200)
+  applyDropdowns(worksheet, validationRowCount, TEMP_WORKER_LIST_COLUMNS)
 
   return workbook.xlsx.writeBuffer()
 }
