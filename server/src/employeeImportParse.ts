@@ -1,8 +1,9 @@
 // Reading an uploaded copy of server/templates/employee-template.xlsx (or
 // employee-temporary-template.xlsx, for temporary daily workers) into rows of
 // plain field values. Pure: bytes in, rows out, no database — matching
-// values against departments/jobs/shifts/holiday and payroll groups needs the
-// database and lives in routes/employeeImport.ts instead, same split as
+// values against departments/jobs/shifts/holiday/payroll/OT groups (and the
+// supervisor column against another employee's code) needs the database and
+// lives in routes/employeeImport.ts instead, same split as
 // attendanceImportParse.ts (bytes) vs attendanceImportClassify.ts (needs
 // shift windows) vs the route (needs a connection).
 //
@@ -49,11 +50,13 @@ type Field =
   | 'startWorkingDate'
   | 'workLocation'
   | 'employmentType'
+  | 'supervisorEmployeeCode'
   | 'departmentName'
   | 'jobTitle'
   | 'shiftName'
   | 'holidayGroupName'
   | 'payrollGroupName'
+  | 'overtimeGroupName'
   | 'wageAmount'
 
 /** Header label (asterisk stripped) -> field this column feeds. Mirrors
@@ -72,11 +75,13 @@ const STANDARD_HEADER_FIELDS: Record<string, Field> = {
   วันที่เริ่มงาน: 'startWorkingDate',
   สถานที่ปฏิบัติงาน: 'workLocation',
   ประเภทการจ้าง: 'employmentType',
+  หัวหน้างาน: 'supervisorEmployeeCode',
   แผนก: 'departmentName',
   ตำแหน่ง: 'jobTitle',
   กะงาน: 'shiftName',
   กลุ่มวันหยุด: 'holidayGroupName',
   กลุ่มเงินเดือน: 'payrollGroupName',
+  'กลุ่ม OT': 'overtimeGroupName',
 }
 
 const STANDARD_REQUIRED_FIELDS: readonly Field[] = [
@@ -114,10 +119,12 @@ const TEMP_WORKER_HEADER_FIELDS: Record<string, Field> = {
   วันที่เริ่มงาน: 'startWorkingDate',
   สถานที่ปฏิบัติงาน: 'workLocation',
   ประเภทการจ้าง: 'employmentType',
+  หัวหน้างาน: 'supervisorEmployeeCode',
   แผนก: 'departmentName',
   ตำแหน่ง: 'jobTitle',
   กลุ่มวันหยุด: 'holidayGroupName',
   กลุ่มเงินเดือน: 'payrollGroupName',
+  'กลุ่ม OT': 'overtimeGroupName',
   ค่าจ้าง: 'wageAmount',
 }
 
@@ -168,11 +175,13 @@ const FIELD_LABELS: Record<Field, string> = {
   startWorkingDate: 'วันที่เริ่มงาน',
   workLocation: 'สถานที่ปฏิบัติงาน',
   employmentType: 'ประเภทการจ้าง',
+  supervisorEmployeeCode: 'หัวหน้างาน',
   departmentName: 'แผนก',
   jobTitle: 'ตำแหน่ง',
   shiftName: 'กะงาน',
   holidayGroupName: 'กลุ่มวันหยุด',
   payrollGroupName: 'กลุ่มเงินเดือน',
+  overtimeGroupName: 'กลุ่ม OT',
   wageAmount: 'ค่าจ้าง',
 }
 
@@ -191,6 +200,11 @@ export type ParsedImportRow = {
   startWorkingDate: string | null
   workLocation: WorkLocation | null
   employmentType: EmploymentType | null
+  /** Raw text — an employee_code, not a name, and resolved against the
+   *  employees table by the route (not a master table, so not through
+   *  resolveMasterName) — see routes/employeeImport.ts. No dropdown backs
+   *  this column in the sheet; HR types it in manually. */
+  supervisorEmployeeCode: string | null
   /** Raw text — resolved against master_departments by the route, which is
    *  the only place with a database connection. */
   departmentName: string | null
@@ -198,6 +212,9 @@ export type ParsedImportRow = {
   shiftName: string | null
   holidayGroupName: string | null
   payrollGroupName: string | null
+  /** Raw text — resolved against master_overtime_groups by the route, same
+   *  as departmentName above. */
+  overtimeGroupName: string | null
   /** Daily wage rate — only ever present from the temp-worker template.
    *  Written to employee_wage_assignments by the route, same reasoning as
    *  departmentName above. */
@@ -444,11 +461,13 @@ function parseRow(row: ExcelJS.Row, columns: Map<Field, number>, template: Templ
     }
   }
 
+  const supervisorEmployeeCode = optionalText(get('supervisorEmployeeCode'))
   const departmentName = fieldText(get('departmentName'), 'departmentName', template, errors)
   const jobTitle = fieldText(get('jobTitle'), 'jobTitle', template, errors)
   const shiftName = fieldText(get('shiftName'), 'shiftName', template, errors)
   const holidayGroupName = optionalText(get('holidayGroupName'))
   const payrollGroupName = fieldText(get('payrollGroupName'), 'payrollGroupName', template, errors)
+  const overtimeGroupName = optionalText(get('overtimeGroupName'))
   const wageAmount = optionalWageAmount(get('wageAmount'), errors)
 
   return {
@@ -465,11 +484,13 @@ function parseRow(row: ExcelJS.Row, columns: Map<Field, number>, template: Templ
     startWorkingDate,
     workLocation,
     employmentType,
+    supervisorEmployeeCode,
     departmentName,
     jobTitle,
     shiftName,
     holidayGroupName,
     payrollGroupName,
+    overtimeGroupName,
     wageAmount,
     errors,
   }

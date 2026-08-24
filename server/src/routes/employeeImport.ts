@@ -111,6 +111,12 @@ type ResolvedRow = {
   shiftId: number | null
   holidayGroupId: number | null
   payrollGroupId: number | null
+  overtimeGroupId: number | null
+  /** Resolved from the row's supervisorEmployeeCode text against another
+   *  employees row — see resolveSupervisorEmployeeId. Independent of
+   *  employeeId/existing: it's who this row's employee reports to, not who
+   *  this row itself resolves to. */
+  supervisorEmployeeId: number | null
   /** Only ever present from the temp-worker template's ค่าจ้าง column. */
   wageAmount: number | null
 }
@@ -181,6 +187,33 @@ function resolveMasterName(
   return null
 }
 
+/** `supervisorEmployeeCode` resolved against another employees row by code —
+ *  not a master table, so not through resolveMasterName, but the same
+ *  null-means-"none" and push-a-reason-on-failure shape. `ownEmployeeId` is
+ *  the row's own resolved employeeId (existing.employeeId for an update,
+ *  null for a create — a brand-new row can never already be in
+ *  supervisorsByCode, so self-reference is only reachable on update). No
+ *  dropdown backs this column in the sheet; HR types the code in by hand
+ *  (see employeeExport.ts's LIST_COLUMNS comment for why). */
+function resolveSupervisorEmployeeId(
+  supervisorsByCode: Map<string, EmployeeCodeMatch>,
+  code: string | null,
+  ownEmployeeId: number | null,
+  reasons: string[]
+): number | null {
+  if (code === null) return null
+  const match = supervisorsByCode.get(code)
+  if (match === undefined) {
+    reasons.push(`ไม่พบพนักงานรหัส "${code}" สำหรับหัวหน้างาน`)
+    return null
+  }
+  if (match.employeeId === ownEmployeeId) {
+    reasons.push('ระบุตัวเองเป็นหัวหน้างานไม่ได้')
+    return null
+  }
+  return match.employeeId
+}
+
 /**
  * Everything the import decides, without writing any of it. Runs against
  * whatever `db` is given: the pool for a preview, the transaction's own
@@ -223,6 +256,15 @@ async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult>
   const existingByFingerprint: Map<string, EmployeeFingerprintMatch> = isTempWorkerTemplate
     ? await findEmployeesByFingerprintCodesForImport(fingerprintCodes, db)
     : new Map()
+
+  // หัวหน้างาน — a code naming another employees row, not this template's own
+  // identity column, so it's looked up independently of isTempWorkerTemplate
+  // (both templates carry this column) and independently of existingByCode
+  // above (which is empty for the temp-worker template).
+  const supervisorCodes = [
+    ...new Set(rows.map((r) => r.supervisorEmployeeCode).filter((v): v is string => v !== null)),
+  ]
+  const supervisorsByCode = await findEmployeesByCodes(supervisorCodes, db)
 
   // In-file duplicates: a value on more than one row is a conflict before
   // the database even enters the picture — two rows cannot both become "the"
@@ -280,6 +322,18 @@ async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult>
       masterData.payrollGroups,
       row.payrollGroupName,
       'กลุ่มเงินเดือน',
+      reasons
+    )
+    const overtimeGroupId = resolveMasterName(
+      masterData.overtimeGroups,
+      row.overtimeGroupName,
+      'กลุ่ม OT',
+      reasons
+    )
+    const supervisorEmployeeId = resolveSupervisorEmployeeId(
+      supervisorsByCode,
+      row.supervisorEmployeeCode,
+      existing?.employeeId ?? null,
       reasons
     )
 
@@ -351,6 +405,8 @@ async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult>
       shiftId,
       holidayGroupId,
       payrollGroupId,
+      overtimeGroupId,
+      supervisorEmployeeId,
       wageAmount: row.wageAmount,
     }
 
@@ -473,14 +529,16 @@ async function createEmployeeFromImport(
   )
   const employeeId = Number(created.id)
 
-  // status is always Active and endWorkingDate/terminationReason/
-  // overtimeGroupId stay null — a freshly imported employee is, by
-  // definition, someone about to start, not someone already leaving.
+  // status is always Active and endWorkingDate/terminationReason stay null —
+  // a freshly imported employee is, by definition, someone about to start,
+  // not someone already leaving. overtimeGroupId/supervisorEmployeeId ARE set
+  // here, from the sheet's optional กลุ่ม OT/หัวหน้างาน columns.
   await client.query(
     `INSERT INTO employment_details
        (employee_id, status, hire_date, start_working_date, employment_type, work_location,
-        job_id, department_id, shift_id, holiday_group_id, payroll_group_id)
-     VALUES ($1, 'Active', $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        job_id, department_id, shift_id, holiday_group_id, payroll_group_id, overtime_group_id,
+        supervisor_employee_id)
+     VALUES ($1, 'Active', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       employeeId,
       r.hireDate,
@@ -492,6 +550,8 @@ async function createEmployeeFromImport(
       r.shiftId,
       r.holidayGroupId,
       r.payrollGroupId,
+      r.overtimeGroupId,
+      r.supervisorEmployeeId,
     ]
   )
 
@@ -556,14 +616,17 @@ async function updateEmployeeFromImport(
     [row.employeeId, r.idCardNumber, r.fingerprintCode, r.title, r.firstNameTh, r.lastNameTh, r.nickname, r.gender]
   )
 
-  // status/end_working_date/termination_reason/overtime_group_id are
-  // deliberately absent — import only ever touches the fields the sheet
-  // carries, leaving offboarding and the OT rate schedule to their own
-  // screens.
+  // status/end_working_date/termination_reason are deliberately absent —
+  // import only ever touches the fields the sheet carries, leaving
+  // offboarding to its own screen. overtime_group_id/supervisor_employee_id
+  // ARE touched (like holiday_group_id/payroll_group_id): a plain overwrite,
+  // so a blank กลุ่ม OT/หัวหน้างาน cell on a re-import clears the field rather
+  // than leaving the existing value alone.
   await client.query(
     `UPDATE employment_details SET
        hire_date = $2, start_working_date = $3, employment_type = $4, work_location = $5,
-       job_id = $6, department_id = $7, holiday_group_id = $8, payroll_group_id = $9, updated_at = now()
+       job_id = $6, department_id = $7, holiday_group_id = $8, payroll_group_id = $9,
+       overtime_group_id = $10, supervisor_employee_id = $11, updated_at = now()
      WHERE employee_id = $1`,
     [
       row.employeeId,
@@ -575,6 +638,8 @@ async function updateEmployeeFromImport(
       r.departmentId,
       r.holidayGroupId,
       r.payrollGroupId,
+      r.overtimeGroupId,
+      r.supervisorEmployeeId,
     ]
   )
 

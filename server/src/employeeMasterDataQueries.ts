@@ -59,28 +59,38 @@ export function listActivePayrollGroups(db: Queryable = pool): Promise<NamedMast
   )
 }
 
+export function listActiveOvertimeGroups(db: Queryable = pool): Promise<NamedMasterRow[]> {
+  return listActiveNamed(
+    `SELECT id, group_name AS name FROM master_overtime_groups WHERE is_active = true ORDER BY group_name`,
+    db
+  )
+}
+
 export type EmployeeImportMasterData = {
   departments: NamedMasterRow[]
   jobs: NamedMasterRow[]
   shifts: NamedMasterRow[]
   holidayGroups: NamedMasterRow[]
   payrollGroups: NamedMasterRow[]
+  overtimeGroups: NamedMasterRow[]
 }
 
-/** All five active lists in one round trip of queries — used by both the
+/** All six active lists in one round trip of queries — used by both the
  *  export workbook's dropdown sheet and the import plan's name resolution, so
  *  a value HR picks from the dropdown always resolves on the way back in. */
 export async function loadEmployeeImportMasterData(
   db: Queryable = pool
 ): Promise<EmployeeImportMasterData> {
-  const [departments, jobs, shifts, holidayGroups, payrollGroups] = await Promise.all([
-    listActiveDepartments(db),
-    listActiveJobs(db),
-    listActiveShifts(db),
-    listActiveHolidayGroups(db),
-    listActivePayrollGroups(db),
-  ])
-  return { departments, jobs, shifts, holidayGroups, payrollGroups }
+  const [departments, jobs, shifts, holidayGroups, payrollGroups, overtimeGroups] =
+    await Promise.all([
+      listActiveDepartments(db),
+      listActiveJobs(db),
+      listActiveShifts(db),
+      listActiveHolidayGroups(db),
+      listActivePayrollGroups(db),
+      listActiveOvertimeGroups(db),
+    ])
+  return { departments, jobs, shifts, holidayGroups, payrollGroups, overtimeGroups }
 }
 
 export type NameResolution =

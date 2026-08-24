@@ -90,6 +90,9 @@ const emptyDraft: EmployeeInput = {
     // them". Every new employee starts that way, and joining a payroll group
     // is a deliberate act on the employment tab. See migration 049.
     payrollGroupId: null,
+    // Same reasoning as overtimeGroupId — the supervisor field only exists on
+    // the edit tab (EmployeeEmploymentTab), never at creation.
+    supervisorEmployeeId: null,
   },
 }
 

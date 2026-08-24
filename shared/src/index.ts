@@ -191,6 +191,23 @@ export type EmploymentDetails = {
    *  Derived from payrollGroupId, not writable directly — absent from
    *  EmploymentDetailsInput. Null exactly when payrollGroupId is null. */
   payrollGroupName: string | null
+  /** FK to employees.id — a real reference to another employee row, not a
+   *  free-text label, so the admin form can offer a dropdown of active
+   *  employees and stay in sync if that person's name changes. Nullable:
+   *  HR fills this in manually and most employees won't have one set. Not
+   *  validated against employmentType/department — any active employee can
+   *  be named supervisor of any other. */
+  supervisorEmployeeId: number | null
+  /** employees.employee_code of supervisorEmployeeId as of now, joined in
+   *  for display and for round-tripping through the Excel import template
+   *  (HR types the code back in manually — see employeeImportParse.ts).
+   *  Derived from supervisorEmployeeId, not writable directly — absent from
+   *  EmploymentDetailsInput. Null exactly when supervisorEmployeeId is null. */
+  supervisorEmployeeCode: string | null
+  /** supervisorEmployeeId's Thai name as of now, joined in for display only.
+   *  Derived from supervisorEmployeeId, not writable directly — absent from
+   *  EmploymentDetailsInput. Null exactly when supervisorEmployeeId is null. */
+  supervisorEmployeeName: string | null
   /** master_shifts.shift_start_time/shift_end_time as of now, joined in
    *  purely so liff's leave-request form can prefill a default time range
    *  without needing its own route into master_shifts (which is admin-only).
@@ -204,7 +221,8 @@ export type EmploymentDetails = {
 
 /** Body of the employment half of POST/PUT — jobTitle, departmentName,
  *  shiftName, holidayGroupName, overtimeGroupName, payrollGroupName,
- *  shiftStartTime and shiftEndTime are read-only, so they're the fields on EmploymentDetails
+ *  supervisorEmployeeCode, supervisorEmployeeName, shiftStartTime and
+ *  shiftEndTime are read-only, so they're the fields on EmploymentDetails
  *  that aren't also inputs. */
 export type EmploymentDetailsInput = Omit<
   EmploymentDetails,
@@ -214,6 +232,8 @@ export type EmploymentDetailsInput = Omit<
   | 'holidayGroupName'
   | 'overtimeGroupName'
   | 'payrollGroupName'
+  | 'supervisorEmployeeCode'
+  | 'supervisorEmployeeName'
   | 'shiftStartTime'
   | 'shiftEndTime'
 >
@@ -1581,9 +1601,12 @@ export type AttendanceImportBatchListResponse = { batches: AttendanceImportBatch
  * Both directions share one worksheet layout — server/templates/employee-template.xlsx
  * — one row per employee, columns matching the Thai labels this type's own
  * comments use. Import only ever touches the fields the sheet carries: status,
- * endWorkingDate, terminationReason, overtimeGroupId, the English name fields
- * and the finance tab all stay whatever they already were, changed only
- * through their own dedicated screens.
+ * endWorkingDate, terminationReason, the English name fields and the finance
+ * tab all stay whatever they already were, changed only through their own
+ * dedicated screens. overtimeGroupId and supervisorEmployeeId ARE carried by
+ * the sheet (as กลุ่ม OT / หัวหน้างาน, both optional) and are plain overwrites
+ * on update like holidayGroupId/payrollGroupId — a blank cell clears the
+ * field rather than leaving the existing value alone.
  */
 
 export type EmployeeImportRowAction = 'create' | 'update' | 'blocked' | 'skip'

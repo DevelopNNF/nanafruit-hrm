@@ -20,11 +20,13 @@ const HEADERS = [
   'วันที่เริ่มงาน*',
   'สถานที่ปฏิบัติงาน*',
   'ประเภทการจ้าง*',
+  'หัวหน้างาน',
   'แผนก*',
   'ตำแหน่ง*',
   'กะงาน*',
   'กลุ่มวันหยุด',
   'กลุ่มเงินเดือน*',
+  'กลุ่ม OT',
 ]
 
 const VALID_ROW = [
@@ -40,11 +42,13 @@ const VALID_ROW = [
   '2026-01-01',
   'เชียงใหม่',
   'ประจำ (รายเดือน)',
+  'EMP999',
   'Development',
   'Programmer',
   'Office',
   'Office Holiday',
   'Office',
+  'OT Normal',
 ]
 
 async function buildWorkbook(
@@ -79,10 +83,12 @@ const TEMP_WORKER_HEADERS = [
   'วันที่เริ่มงาน*',
   'สถานที่ปฏิบัติงาน*',
   'ประเภทการจ้าง*',
+  'หัวหน้างาน',
   'แผนก*',
   'ตำแหน่ง*',
   'กลุ่มวันหยุด',
   'กลุ่มเงินเดือน*',
+  'กลุ่ม OT',
   'ค่าจ้าง',
 ]
 
@@ -97,10 +103,12 @@ const TEMP_WORKER_VALID_ROW: (string | number | null)[] = [
   '2026-01-01',
   'เชียงใหม่',
   'ชั่วคราว',
+  'EMP999',
   'Development',
   'Programmer',
   'Office Holiday',
   'Office',
+  'OT Normal',
   350,
 ]
 
@@ -125,6 +133,8 @@ describe('parseEmployeeImport', () => {
     assert.equal(row.hireDate, '2026-01-01')
     assert.equal(row.departmentName, 'Development')
     assert.equal(row.payrollGroupName, 'Office')
+    assert.equal(row.supervisorEmployeeCode, 'EMP999')
+    assert.equal(row.overtimeGroupName, 'OT Normal')
   })
 
   it('reads column order by header label, not position', async () => {
@@ -154,6 +164,19 @@ describe('parseEmployeeImport', () => {
     if (!result.ok) return
     const parsed = result.value.rows[0]!
     assert.equal(parsed.holidayGroupName, null)
+    assert.deepEqual(parsed.errors, [])
+  })
+
+  it('skips blank หัวหน้างาน/กลุ่ม OT columns without an error — both optional', async () => {
+    const row = [...VALID_ROW]
+    row[HEADERS.indexOf('หัวหน้างาน')] = ''
+    row[HEADERS.indexOf('กลุ่ม OT')] = ''
+    const result = await parse([row])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.supervisorEmployeeCode, null)
+    assert.equal(parsed.overtimeGroupName, null)
     assert.deepEqual(parsed.errors, [])
   })
 
@@ -285,6 +308,21 @@ describe('parseEmployeeImport — temp-worker template (TEMP-EMP-IMP)', () => {
     assert.equal(row.shiftName, null)
     assert.equal(row.fingerprintCode, 'FP9999')
     assert.equal(row.wageAmount, 350)
+    assert.equal(row.supervisorEmployeeCode, 'EMP999')
+    assert.equal(row.overtimeGroupName, 'OT Normal')
+  })
+
+  it('skips blank หัวหน้างาน/กลุ่ม OT columns without an error — both optional', async () => {
+    const row = [...TEMP_WORKER_VALID_ROW]
+    row[TEMP_WORKER_HEADERS.indexOf('หัวหน้างาน')] = ''
+    row[TEMP_WORKER_HEADERS.indexOf('กลุ่ม OT')] = ''
+    const result = await parseTempWorker([row])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.supervisorEmployeeCode, null)
+    assert.equal(parsed.overtimeGroupName, null)
+    assert.deepEqual(parsed.errors, [])
   })
 
   it('requires fingerprintCode, unlike the standard template where it is optional', async () => {

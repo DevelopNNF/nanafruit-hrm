@@ -12,7 +12,7 @@ import {
   type OvertimeGroup,
   type PayrollGroup,
 } from '@hrm/shared'
-import { updateEmployeeEmployment } from '../api/employees'
+import { listEmployees, updateEmployeeEmployment } from '../api/employees'
 import { listJobs } from '../api/jobs'
 import { listDepartments } from '../api/departments'
 import { listHolidayGroups } from '../api/holidayGroups'
@@ -61,6 +61,11 @@ type PayrollGroupOptionsState =
   | { phase: 'ok'; payrollGroups: PayrollGroup[] }
   | { phase: 'error'; message: string }
 
+type SupervisorOptionsState =
+  | { phase: 'loading' }
+  | { phase: 'ok'; employees: Employee[] }
+  | { phase: 'error'; message: string }
+
 /** Custom controls (DatePicker/TreeSelect) anchor their `required` check on
  *  a zero-size hidden input, so the browser's native validation bubble can
  *  end up invisible or mispositioned. Checking here and surfacing it as a
@@ -90,6 +95,7 @@ function draftFrom(employee: Employee): EmploymentInput {
     holidayGroupId: employee.employment.holidayGroupId,
     overtimeGroupId: employee.employment.overtimeGroupId,
     payrollGroupId: employee.employment.payrollGroupId,
+    supervisorEmployeeId: employee.employment.supervisorEmployeeId,
   }
 }
 
@@ -135,6 +141,9 @@ export function EmployeeEmploymentTab({
     phase: 'loading',
   })
   const [payrollGroupOptions, setPayrollGroupOptions] = useState<PayrollGroupOptionsState>({
+    phase: 'loading',
+  })
+  const [supervisorOptions, setSupervisorOptions] = useState<SupervisorOptionsState>({
     phase: 'loading',
   })
 
@@ -228,6 +237,29 @@ export function EmployeeEmploymentTab({
     return () => controller.abort()
   }, [])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    listEmployees(controller.signal)
+      .then((employees) =>
+        setSupervisorOptions({
+          phase: 'ok',
+          // status === 'Active' only, same reasoning as every other dropdown
+          // here — and never this employee themselves.
+          employees: employees.filter(
+            (e) => e.employment.status === 'Active' && e.id !== employee.id
+          ),
+        })
+      )
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setSupervisorOptions({
+          phase: 'error',
+          message: err instanceof Error ? err.message : 'request failed',
+        })
+      })
+    return () => controller.abort()
+  }, [employee.id])
+
   function set<K extends keyof EmploymentInput>(key: K, value: EmploymentInput[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }))
   }
@@ -295,6 +327,13 @@ export function EmployeeEmploymentTab({
     payrollGroupOptions.phase === 'ok' ? payrollGroupOptions.payrollGroups.map((g) => g.id) : []
   const currentPayrollGroupMissing =
     draft.payrollGroupId !== null && !activePayrollGroupIds.includes(draft.payrollGroupId)
+
+  const activeSupervisorIds =
+    supervisorOptions.phase === 'ok' ? supervisorOptions.employees.map((e) => e.id) : []
+  // Same "currently selected but no longer offered" fallback as the other
+  // dropdowns — here that covers a supervisor who has since gone inactive.
+  const currentSupervisorMissing =
+    draft.supervisorEmployeeId !== null && !activeSupervisorIds.includes(draft.supervisorEmployeeId)
 
   return (
     <>
@@ -553,6 +592,41 @@ export function EmployeeEmploymentTab({
                 {overtimeGroupOptions.phase === 'error' && (
                   <span className="text-[0.7rem] text-red-700">
                     โหลดรายการกลุ่มการทำงานล่วงเวลาไม่สำเร็จ: {overtimeGroupOptions.message}
+                  </span>
+                )}
+              </label>
+              <label className={fieldLabel}>
+                <span>หัวหน้างาน (Supervisor)</span>
+                <select
+                  className={fieldControl}
+                  disabled={supervisorOptions.phase === 'loading'}
+                  value={draft.supervisorEmployeeId ?? ''}
+                  onChange={(e) =>
+                    set('supervisorEmployeeId', e.target.value ? Number(e.target.value) : null)
+                  }
+                >
+                  <option value="">
+                    {supervisorOptions.phase === 'loading'
+                      ? 'กำลังโหลดรายชื่อพนักงาน…'
+                      : '— ไม่ระบุ —'}
+                  </option>
+                  {currentSupervisorMissing && (
+                    <option value={draft.supervisorEmployeeId ?? ''}>
+                      {employee.employment.supervisorEmployeeName ?? `#${draft.supervisorEmployeeId}`}{' '}
+                      (ไม่พร้อมใช้งาน)
+                    </option>
+                  )}
+                  {supervisorOptions.phase === 'ok' &&
+                    supervisorOptions.employees.map((sup) => (
+                      <option key={sup.id} value={sup.id}>
+                        {sup.employeeCode} — {sup.title}
+                        {sup.firstNameTh} {sup.lastNameTh}
+                      </option>
+                    ))}
+                </select>
+                {supervisorOptions.phase === 'error' && (
+                  <span className="text-[0.7rem] text-red-700">
+                    โหลดรายชื่อพนักงานไม่สำเร็จ: {supervisorOptions.message}
                   </span>
                 )}
               </label>

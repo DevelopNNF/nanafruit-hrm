@@ -6,8 +6,10 @@
 //
 // Unlike that report, this template also carries a dropdown for every column
 // backed by master data (or a fixed enum): a hidden "Lists" sheet holds the
-// current active departments/jobs/shifts/holiday groups/payroll groups, and
-// Sheet1's matching columns get an Excel list validation pointing at it. That
+// current active departments/jobs/shifts/holiday groups/payroll groups/OT
+// groups, and Sheet1's matching columns get an Excel list validation pointing
+// at it (the supervisor column is the one exception — see LIST_COLUMNS'
+// comment). That
 // sheet is rebuilt fresh on every export rather than baked into the template
 // file, because it has to match whatever is active in the database *right
 // now* — a stale copy would offer (or silently accept) a department that no
@@ -46,7 +48,12 @@ const LISTS_SHEET = 'Lists'
  *  row. employeeImportParse.ts reads an uploaded copy of this sheet by
  *  header label instead of position — this module *is* what controls that
  *  layout, so hardcoding the columns it writes is the same trade
- *  attendanceReportExport.ts makes for its own template. */
+ *  attendanceReportExport.ts makes for its own template.
+ *
+ *  supervisorEmployeeCode (หัวหน้างาน, col 13) and overtimeGroupName (กลุ่ม
+ *  OT, col 19) were added straight into the checked-in .xlsx template files
+ *  by hand — this constant mirrors that layout exactly rather than the other
+ *  way around. */
 const COLUMNS = {
   employeeCode: 1,
   fingerprintCode: 2,
@@ -60,17 +67,25 @@ const COLUMNS = {
   startWorkingDate: 10,
   workLocation: 11,
   employmentType: 12,
-  departmentName: 13,
-  jobTitle: 14,
-  shiftName: 15,
-  holidayGroupName: 16,
-  payrollGroupName: 17,
+  supervisorEmployeeCode: 13,
+  departmentName: 14,
+  jobTitle: 15,
+  shiftName: 16,
+  holidayGroupName: 17,
+  payrollGroupName: 18,
+  overtimeGroupName: 19,
 } as const
 
 /** Which Sheet1 column reads its dropdown from which Lists-sheet column.
  *  Only the columns the user actually asked to reduce retyping for — title/
  *  gender/work location are small fixed enums validated directly against the
- *  constant list on import instead, per that conversation. */
+ *  constant list on import instead, per that conversation.
+ *
+ *  supervisorEmployeeCode is deliberately absent: HR types an employee_code
+ *  in by hand with no dropdown backing it, resolved on import the same way
+ *  the row's own employeeCode is (see routes/employeeImport.ts) — a
+ *  datalist of every employee code would be unwieldy and isn't what was
+ *  asked for. */
 const LIST_COLUMNS: { sheet1Column: number; listColumn: number }[] = [
   { sheet1Column: COLUMNS.employmentType, listColumn: 1 },
   { sheet1Column: COLUMNS.departmentName, listColumn: 2 },
@@ -78,13 +93,16 @@ const LIST_COLUMNS: { sheet1Column: number; listColumn: number }[] = [
   { sheet1Column: COLUMNS.shiftName, listColumn: 4 },
   { sheet1Column: COLUMNS.holidayGroupName, listColumn: 5 },
   { sheet1Column: COLUMNS.payrollGroupName, listColumn: 6 },
+  { sheet1Column: COLUMNS.overtimeGroupName, listColumn: 7 },
 ]
 
 /** Column numbers on employee-temporary-template.xlsx's Sheet1 — no
  *  employeeCode/idCardNumber/shiftName columns (temporary daily workers have
  *  neither an employee code nor an ID card, and their shift is assigned
  *  day-by-day through the "มอบหมายกะรายวัน" screen, not this sheet), plus a
- *  ค่าจ้าง column the standard template doesn't have. */
+ *  ค่าจ้าง column the standard template doesn't have. supervisorEmployeeCode
+ *  and overtimeGroupName were added by hand into the checked-in .xlsx the
+ *  same way as the standard template above. */
 const TEMP_WORKER_COLUMNS = {
   fingerprintCode: 1,
   title: 2,
@@ -96,11 +114,13 @@ const TEMP_WORKER_COLUMNS = {
   startWorkingDate: 8,
   workLocation: 9,
   employmentType: 10,
-  departmentName: 11,
-  jobTitle: 12,
-  holidayGroupName: 13,
-  payrollGroupName: 14,
-  wageAmount: 15,
+  supervisorEmployeeCode: 11,
+  departmentName: 12,
+  jobTitle: 13,
+  holidayGroupName: 14,
+  payrollGroupName: 15,
+  overtimeGroupName: 16,
+  wageAmount: 17,
 } as const
 
 /** Same Lists-sheet columns as LIST_COLUMNS, minus shifts (listColumn 4 —
@@ -111,6 +131,7 @@ const TEMP_WORKER_LIST_COLUMNS: { sheet1Column: number; listColumn: number }[] =
   { sheet1Column: TEMP_WORKER_COLUMNS.jobTitle, listColumn: 3 },
   { sheet1Column: TEMP_WORKER_COLUMNS.holidayGroupName, listColumn: 5 },
   { sheet1Column: TEMP_WORKER_COLUMNS.payrollGroupName, listColumn: 6 },
+  { sheet1Column: TEMP_WORKER_COLUMNS.overtimeGroupName, listColumn: 7 },
 ]
 
 function columnLetter(col: number): string {
@@ -137,6 +158,7 @@ function addListsSheet(workbook: ExcelJS.Workbook, masterData: EmployeeImportMas
     masterData.shifts.map((s) => s.name),
     masterData.holidayGroups.map((g) => g.name),
     masterData.payrollGroups.map((g) => g.name),
+    masterData.overtimeGroups.map((g) => g.name),
   ]
   columns.forEach((values, i) => {
     const col = i + 1
@@ -181,11 +203,16 @@ function writeRow(worksheet: ExcelJS.Worksheet, rowNumber: number, employee: Emp
       : parseDateOnlyUtc(employee.employment.startWorkingDate)
   row.getCell(COLUMNS.workLocation).value = employee.employment.workLocation
   row.getCell(COLUMNS.employmentType).value = employee.employment.employmentType
+  // Round-trips as the supervisor's employee_code, not their name — matching
+  // what import resolves it back against (see routes/employeeImport.ts). No
+  // dropdown backs this cell; see LIST_COLUMNS' comment for why.
+  row.getCell(COLUMNS.supervisorEmployeeCode).value = employee.employment.supervisorEmployeeCode
   row.getCell(COLUMNS.departmentName).value = employee.employment.departmentName
   row.getCell(COLUMNS.jobTitle).value = employee.employment.jobTitle
   row.getCell(COLUMNS.shiftName).value = employee.employment.shiftName
   row.getCell(COLUMNS.holidayGroupName).value = employee.employment.holidayGroupName
   row.getCell(COLUMNS.payrollGroupName).value = employee.employment.payrollGroupName
+  row.getCell(COLUMNS.overtimeGroupName).value = employee.employment.overtimeGroupName
   row.commit()
 }
 
