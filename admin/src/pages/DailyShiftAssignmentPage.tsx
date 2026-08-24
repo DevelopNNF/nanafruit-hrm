@@ -3,17 +3,20 @@ import type { DailyShiftAssignmentOutcome, Employee, Shift } from '@hrm/shared'
 import { assignDailyShifts, listEmployees } from '../api/employees'
 import { listShifts } from '../api/shifts'
 import { DatePicker } from '../components/DatePicker'
+import { TransferList } from '../components/TransferList'
 import { notify } from '../notifications/notify'
 import {
   alert,
   alertDetail,
   alertTitle,
+  badge,
   button,
   card,
   eyebrow,
   fieldControl,
   muted,
   pageHead,
+  requiredMark,
   subtitle,
 } from '../styles'
 
@@ -42,8 +45,8 @@ export function DailyShiftAssignmentPage() {
   const [date, setDate] = useState(today())
   const [employeesState, setEmployeesState] = useState<LoadState<Employee[]>>({ phase: 'loading' })
   const [shiftsState, setShiftsState] = useState<LoadState<Shift[]>>({ phase: 'loading' })
-  const [selections, setSelections] = useState<Record<number, number | ''>>({})
-  const [bulkShiftId, setBulkShiftId] = useState<number | ''>('')
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<number[]>([])
+  const [shiftId, setShiftId] = useState<number | ''>('')
   const [submitting, setSubmitting] = useState(false)
   const [outcomes, setOutcomes] = useState<DailyShiftAssignmentOutcome[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -89,27 +92,48 @@ export function DailyShiftAssignmentPage() {
   )
   const employeeById = useMemo(() => new Map(tempWorkers.map((e) => [e.id, e])), [tempWorkers])
 
-  function setRowShift(employeeId: number, shiftId: number | '') {
-    setSelections((prev) => ({ ...prev, [employeeId]: shiftId }))
-  }
+  const transferItems = useMemo(
+    () =>
+      tempWorkers.map((e) => ({
+        id: e.id,
+        label: `${e.employeeCode} — ${e.title}${e.firstNameTh} ${e.lastNameTh}`,
+        sublabel: e.employment.departmentName,
+      })),
+    [tempWorkers]
+  )
 
-  function applyBulkShift() {
-    if (bulkShiftId === '') return
-    const next: Record<number, number | ''> = {}
-    for (const e of tempWorkers) next[e.id] = bulkShiftId
-    setSelections(next)
+  function renderOutcomeBadge(employeeId: number) {
+    const outcome = outcomeByEmployeeId.get(employeeId)
+    if (!outcome) return null
+    if (outcome.kind === 'ok') return <span className={badge('active')}>สำเร็จ</span>
+    if (outcome.kind === 'conflict') {
+      return (
+        <span
+          className={badge('pending')}
+          title={`ทับกับช่วงเดิม (${outcome.existingEffectiveFrom} – ${outcome.existingEffectiveTo ?? 'ปัจจุบัน'})`}
+        >
+          ทับกับกะเดิม
+        </span>
+      )
+    }
+    return (
+      <span className={badge('danger')} title={outcome.message}>
+        ผิดพลาด
+      </span>
+    )
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
-    const assignments = Object.entries(selections)
-      .filter(([, shiftId]) => shiftId !== '')
-      .map(([employeeId, shiftId]) => ({ employeeId: Number(employeeId), shiftId: Number(shiftId) }))
-
-    if (assignments.length === 0) {
-      notify.error('ยังไม่ได้เลือกกะให้ใครเลย', 'เลือกกะอย่างน้อยหนึ่งคนก่อนบันทึก')
+    if (shiftId === '') {
+      notify.error('ยังไม่ได้เลือกกะ', 'เลือกกะที่จะมอบหมายก่อนบันทึก')
       return
     }
+    if (selectedEmployeeIds.length === 0) {
+      notify.error('ยังไม่ได้เลือกพนักงาน', 'ย้ายพนักงานอย่างน้อยหนึ่งคนไปฝั่งขวาก่อนบันทึก')
+      return
+    }
+    const assignments = selectedEmployeeIds.map((employeeId) => ({ employeeId, shiftId: Number(shiftId) }))
 
     setSubmitting(true)
     setError(null)
@@ -121,7 +145,7 @@ export function DailyShiftAssignmentPage() {
       const problemCount = result.length - okCount
       if (problemCount === 0) {
         notify.success(`มอบหมายกะสำเร็จ ${okCount} คน`)
-        setSelections({})
+        setSelectedEmployeeIds([])
       } else {
         notify.error(`มอบหมายสำเร็จ ${okCount} คน — มีปัญหา ${problemCount} คน ดูรายละเอียดด้านล่าง`)
       }
@@ -142,7 +166,7 @@ export function DailyShiftAssignmentPage() {
           <p className={eyebrow}>จัดการเวลา</p>
           <h1>มอบหมายกะรายวัน</h1>
           <p className={subtitle}>
-            สำหรับพนักงานรายวันชั่วคราว (ไม่มีกะตายตัว) — เลือกกะให้แต่ละคนสำหรับวันที่เลือก แล้วบันทึกพร้อมกัน
+            สำหรับพนักงานรายวันชั่วคราว (ไม่มีกะตายตัว) — เลือกกะ แล้วย้ายพนักงานที่จะมอบหมายกะนั้นไปฝั่งขวา บันทึกได้ครั้งละหนึ่งกะ
           </p>
         </div>
       </header>
@@ -174,11 +198,14 @@ export function DailyShiftAssignmentPage() {
             <DatePicker required value={date} onChange={setDate} />
           </label>
           <label className="flex min-w-0 flex-col gap-1.5 text-xs font-medium text-slate-600">
-            <span>ใช้กะนี้กับทุกแถว</span>
+            <span>
+              กะที่จะมอบหมาย<span className={requiredMark}>*</span>
+            </span>
             <select
               className={fieldControl}
-              value={bulkShiftId}
-              onChange={(e) => setBulkShiftId(e.target.value ? Number(e.target.value) : '')}
+              required
+              value={shiftId}
+              onChange={(e) => setShiftId(e.target.value ? Number(e.target.value) : '')}
             >
               <option value="">— เลือกกะ —</option>
               {shifts.map((shift) => (
@@ -188,14 +215,6 @@ export function DailyShiftAssignmentPage() {
               ))}
             </select>
           </label>
-          <button
-            className={button()}
-            type="button"
-            disabled={bulkShiftId === '' || tempWorkers.length === 0}
-            onClick={applyBulkShift}
-          >
-            ใช้กับทุกแถว
-          </button>
         </div>
 
         {loading && <p className={muted}>กำลังโหลด…</p>}
@@ -205,70 +224,15 @@ export function DailyShiftAssignmentPage() {
         )}
 
         {!loading && tempWorkers.length > 0 && (
-          <div className="mb-4 overflow-x-auto rounded-md border border-slate-200">
-            <table className="w-full border-collapse text-[0.775rem] [&_tbody_tr:last-child_td]:border-b-0">
-              <thead>
-                <tr>
-                  {['รหัส', 'ชื่อ', 'แผนก', 'กะ', 'สถานะการมอบหมาย'].map((h) => (
-                    <th
-                      key={h}
-                      className="border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-left text-[0.65rem] font-semibold tracking-wider text-slate-500 uppercase"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {tempWorkers.map((employee) => {
-                  const outcome = outcomeByEmployeeId.get(employee.id)
-                  return (
-                    <tr key={employee.id}>
-                      <td className="border-b border-slate-200 px-3 py-1.5 align-middle whitespace-nowrap text-slate-700">
-                        {employee.employeeCode}
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-1.5 align-middle text-slate-900">
-                        {employee.title}{employee.firstNameTh} {employee.lastNameTh}
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-1.5 align-middle text-slate-600">
-                        {employee.employment.departmentName}
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-1.5 align-middle">
-                        <select
-                          className={fieldControl}
-                          value={selections[employee.id] ?? ''}
-                          onChange={(e) =>
-                            setRowShift(employee.id, e.target.value ? Number(e.target.value) : '')
-                          }
-                        >
-                          <option value="">— ไม่ระบุกะ —</option>
-                          {shifts.map((shift) => (
-                            <option key={shift.id} value={shift.id}>
-                              {shift.shiftName}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-1.5 align-middle whitespace-nowrap">
-                        {!outcome && <span className={muted}>—</span>}
-                        {outcome?.kind === 'ok' && (
-                          <span className="text-green-700">มอบหมายสำเร็จ</span>
-                        )}
-                        {outcome?.kind === 'conflict' && (
-                          <span className="text-amber-700">
-                            ทับกับช่วงเดิม ({outcome.existingEffectiveFrom} –{' '}
-                            {outcome.existingEffectiveTo ?? 'ปัจจุบัน'}) — แก้ไขผ่านประวัติกะของพนักงาน
-                          </span>
-                        )}
-                        {outcome?.kind === 'error' && (
-                          <span className="text-red-700">ผิดพลาด: {outcome.message}</span>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div className="mb-4">
+            <TransferList
+              items={transferItems}
+              value={selectedEmployeeIds}
+              onChange={setSelectedEmployeeIds}
+              leftTitle="พนักงานทั้งหมด"
+              rightTitle="พนักงานที่เลือก"
+              renderStatus={renderOutcomeBadge}
+            />
           </div>
         )}
 
