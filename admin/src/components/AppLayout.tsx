@@ -59,6 +59,7 @@ const NAV: NavItem[] = [
     label: 'จัดการเวลา',
     icon: Clock,
     children: [
+      { to: '/schedule', label: 'ตารางการทำงาน'},
       { to: '/attendance', label: 'รายละเอียดการลงเวลา'},
       { to: '/employees/shift-assignments/daily', label: 'มอบหมายกะรายวัน'},
       { to: '/time-corrections', label: 'คำขอแก้ไขเวลา'},

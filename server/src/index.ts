@@ -30,6 +30,7 @@ import { dayOffSwapRequestsRouter } from './routes/dayOffSwapRequests.js'
 import { overtimeRequestsRouter } from './routes/overtimeRequests.js'
 import { overtimeReportRouter } from './routes/overtimeReport.js'
 import { calendarRouter } from './routes/calendar.js'
+import { scheduleRouter } from './routes/schedule.js'
 import { meRouter } from './routes/me.js'
 import { authRouter } from './routes/auth.js'
 import { cronRouter } from './routes/cron.js'
@@ -118,6 +119,7 @@ app.use('/api', authenticate, dayOffSwapRequestsRouter)
 app.use('/api', authenticate, overtimeRequestsRouter)
 app.use('/api', authenticate, overtimeReportRouter)
 app.use('/api', authenticate, calendarRouter)
+app.use('/api', authenticate, scheduleRouter)
 
 const port = Number(process.env.PORT) || 3000
 const server = app.listen(port, () => {

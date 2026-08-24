@@ -2157,6 +2157,34 @@ export type CalendarDay = {
 /** GET /api/calendar/me?year=YYYY&month=MM — one calendar month, in date order. */
 export type MonthCalendarResponse = { days: CalendarDay[] }
 
+/* Work Schedule (admin) --------------------------------------------------
+ *
+ * The "ตารางการทำงาน" admin grid: every Active employee's month at once,
+ * reusing CalendarDayStatus (the same cascade GET /calendar/me answers with
+ * for one employee) so a cell can never disagree with that employee's own
+ * calendar. shiftCode is the one thing CalendarDay itself doesn't carry
+ * (only shiftName) — a grid cell needs the short code (e.g. "OF1"), not the
+ * full shift name.
+ */
+
+export type WorkScheduleDay = {
+  date: string
+  status: CalendarDayStatus
+  label: string | null
+  shiftCode: string | null
+}
+
+export type EmployeeWorkSchedule = {
+  employeeId: number
+  employeeCode: string
+  fullName: string
+  days: WorkScheduleDay[]
+}
+
+/** GET /api/schedule?year=YYYY&month=MM — every Active employee, in
+ *  employee_code order. */
+export type WorkScheduleResponse = { year: number; month: number; employees: EmployeeWorkSchedule[] }
+
 /* Overtime Requests ------------------------------------------------------
  *
  * The employee-initiated "ขอทำงานล่วงเวลา" request: a time range on one date
