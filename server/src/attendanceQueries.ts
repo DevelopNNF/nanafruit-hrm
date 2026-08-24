@@ -85,17 +85,29 @@ export function rowToAttendanceListItem(row: AttendanceListRow): AttendanceListI
 }
 
 /**
- * The most recent event for one employee, regardless of type — used both to
- * answer "what's my status" and to enforce clock order (no check_in on top of
- * an open check_in) before inserting a new one.
+ * The most recent event for one employee, regardless of type — used to
+ * enforce clock order (no check_in on top of an open check_in) before
+ * inserting a new one.
+ *
+ * `bound`, when given, restricts the search to [from, to] — the caller is
+ * expected to pass the buffered match window around "now" (see
+ * resolveMatchWindow), so a check_in left dangling from days ago can no
+ * longer be mistaken for an open session today. Without it the query looks
+ * across the employee's entire history, which is only safe for callers that
+ * genuinely want the all-time last event.
  */
 export async function findLastAttendanceEvent(
   employeeId: number,
-  db: Queryable = pool
+  db: Queryable = pool,
+  bound?: { from: Date; to: Date }
 ): Promise<AttendanceEvent | null> {
+  const where = bound
+    ? `WHERE a.employee_id = $1 AND a.event_time >= $2 AND a.event_time <= $3`
+    : `WHERE a.employee_id = $1`
+  const params = bound ? [employeeId, bound.from.toISOString(), bound.to.toISOString()] : [employeeId]
   const { rows } = await db.query<AttendanceRow>(
-    `${SELECT_ATTENDANCE_EVENT} WHERE a.employee_id = $1 ORDER BY a.event_time DESC LIMIT 1`,
-    [employeeId]
+    `${SELECT_ATTENDANCE_EVENT} ${where} ORDER BY a.event_time DESC LIMIT 1`,
+    params
   )
   const row = rows[0]
   return row ? rowToAttendanceEvent(row) : null

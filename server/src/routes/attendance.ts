@@ -28,7 +28,7 @@ import {
 } from '../attendanceQueries.js'
 import { listAttendanceDaily } from '../attendanceDailyQueries.js'
 import { buildAttendanceReportWorkbook } from '../attendanceReportExport.js'
-import { chooseAttendanceWindow, matchAttendanceForDates } from '../attendanceMatchingQueries.js'
+import { chooseAttendanceWindow, matchAttendanceForDates, resolveMatchWindow } from '../attendanceMatchingQueries.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 
 export const attendanceRouter = Router()
@@ -136,7 +136,24 @@ attendanceRouter.post('/attendance/clock', async (req: Request, res: Response) =
   const input = parsed.value
 
   try {
-    const last = await findLastAttendanceEvent(employeeId)
+    // Bounded to yesterday's and today's buffered match windows (same
+    // windows /attendance/me uses to decide what the button should say) so a
+    // check_in left dangling from days ago can't masquerade as an open
+    // session today, and an overnight shift's post-midnight check_out is
+    // still found even though it lands on the next calendar date.
+    const now = new Date()
+    const todayDate = toThailandDateString(now)
+    const yesterdayDate = addDays(todayDate, -1)
+    const [yesterdayWindow, todayWindow] = await Promise.all([
+      resolveMatchWindow(employeeId, yesterdayDate),
+      resolveMatchWindow(employeeId, todayDate),
+    ])
+    const bound = {
+      from: yesterdayWindow.startAt < todayWindow.startAt ? yesterdayWindow.startAt : todayWindow.startAt,
+      to: yesterdayWindow.endAt > todayWindow.endAt ? yesterdayWindow.endAt : todayWindow.endAt,
+    }
+
+    const last = await findLastAttendanceEvent(employeeId, pool, bound)
     if (input.eventType === 'check_in' && last?.eventType === 'check_in') {
       return fail(res, 409, 'ลงเวลาเข้างานไปแล้ว กรุณาลงเวลาออกก่อน')
     }
