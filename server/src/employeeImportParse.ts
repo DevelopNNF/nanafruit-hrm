@@ -1,5 +1,6 @@
-// Reading an uploaded copy of server/templates/employee-template.xlsx into
-// rows of plain field values. Pure: bytes in, rows out, no database — matching
+// Reading an uploaded copy of server/templates/employee-template.xlsx (or
+// employee-temporary-template.xlsx, for temporary daily workers) into rows of
+// plain field values. Pure: bytes in, rows out, no database — matching
 // values against departments/jobs/shifts/holiday and payroll groups needs the
 // database and lives in routes/employeeImport.ts instead, same split as
 // attendanceImportParse.ts (bytes) vs attendanceImportClassify.ts (needs
@@ -8,8 +9,12 @@
 // The header row (row 2) is read by name, not position: employeeExport.ts
 // writes the same labels this file's HEADER_FIELDS maps back from, but HR is
 // free to reorder columns in their own copy without breaking the read. Row 1
-// is a title/spacer, data starts at row 3, same layout attendanceReportExport
-// and employeeExport share.
+// is a title/spacer in most workbooks, but both templates now also carry a
+// plain-text "template code" in cell A1 (EMP-IMP / TEMP-EMP-IMP) that
+// detectTemplate reads to pick which set of columns/required-fields applies —
+// a file with no recognizable code there (an older download, predating this
+// marker) falls back to the standard template rather than erroring, so
+// nothing already in HR's hands breaks. Data starts at row 3.
 
 import ExcelJS from 'exceljs'
 import {
@@ -24,13 +29,37 @@ import {
 } from '@hrm/shared'
 import { genderFromLabel } from './employeeGenderLabels.js'
 
+const TEMPLATE_CODE_CELL_ROW = 1
+const TEMPLATE_CODE_CELL_COLUMN = 1
 const HEADER_ROW = 2
 const FIRST_DATA_ROW = 3
+
+export type TemplateCode = 'EMP-IMP' | 'TEMP-EMP-IMP'
+
+type Field =
+  | 'employeeCode'
+  | 'fingerprintCode'
+  | 'title'
+  | 'firstNameTh'
+  | 'lastNameTh'
+  | 'nickname'
+  | 'idCardNumber'
+  | 'gender'
+  | 'hireDate'
+  | 'startWorkingDate'
+  | 'workLocation'
+  | 'employmentType'
+  | 'departmentName'
+  | 'jobTitle'
+  | 'shiftName'
+  | 'holidayGroupName'
+  | 'payrollGroupName'
+  | 'wageAmount'
 
 /** Header label (asterisk stripped) -> field this column feeds. Mirrors
  *  employeeExport.ts's HEADER_LABELS exactly — a label added to one and not
  *  the other is a column either export can't fill or import can't read. */
-const HEADER_FIELDS = {
+const STANDARD_HEADER_FIELDS: Record<string, Field> = {
   รหัสพนักงาน: 'employeeCode',
   รหัสลายนิ้วมือ: 'fingerprintCode',
   คำนำหน้า: 'title',
@@ -48,11 +77,9 @@ const HEADER_FIELDS = {
   กะงาน: 'shiftName',
   กลุ่มวันหยุด: 'holidayGroupName',
   กลุ่มเงินเดือน: 'payrollGroupName',
-} as const
+}
 
-type Field = (typeof HEADER_FIELDS)[keyof typeof HEADER_FIELDS]
-
-const REQUIRED_FIELDS: readonly Field[] = [
+const STANDARD_REQUIRED_FIELDS: readonly Field[] = [
   'employeeCode',
   'title',
   'firstNameTh',
@@ -67,6 +94,64 @@ const REQUIRED_FIELDS: readonly Field[] = [
   'shiftName',
   'payrollGroupName',
 ]
+
+/** No รหัสพนักงาน/เลขบัตรประชาชน/กะงาน columns — temporary daily workers have
+ *  neither an employee code nor an ID card, and their shift is assigned
+ *  day-by-day (see the "มอบหมายกะรายวัน" screen), not through this sheet.
+ *  รหัสลายนิ้วมือ is required here specifically, unlike the standard
+ *  template, because it's this employee type's only real identity — the key
+ *  routes/employeeImport.ts's dedup/update logic matches on for this
+ *  template. ค่าจ้าง (wageAmount) is new and optional: a daily wage rate can
+ *  be set here or, same as any other employee, later via the Finance tab. */
+const TEMP_WORKER_HEADER_FIELDS: Record<string, Field> = {
+  รหัสลายนิ้วมือ: 'fingerprintCode',
+  คำนำหน้า: 'title',
+  ชื่อ: 'firstNameTh',
+  นามสกุล: 'lastNameTh',
+  ชื่อเล่น: 'nickname',
+  เพศ: 'gender',
+  วันที่จ้าง: 'hireDate',
+  วันที่เริ่มงาน: 'startWorkingDate',
+  สถานที่ปฏิบัติงาน: 'workLocation',
+  ประเภทการจ้าง: 'employmentType',
+  แผนก: 'departmentName',
+  ตำแหน่ง: 'jobTitle',
+  กลุ่มวันหยุด: 'holidayGroupName',
+  กลุ่มเงินเดือน: 'payrollGroupName',
+  ค่าจ้าง: 'wageAmount',
+}
+
+const TEMP_WORKER_REQUIRED_FIELDS: readonly Field[] = [
+  'fingerprintCode',
+  'title',
+  'firstNameTh',
+  'lastNameTh',
+  'hireDate',
+  'startWorkingDate',
+  'workLocation',
+  'employmentType',
+  'departmentName',
+  'jobTitle',
+  'payrollGroupName',
+]
+
+type TemplateConfig = {
+  code: TemplateCode
+  headerFields: Record<string, Field>
+  requiredFields: readonly Field[]
+}
+
+const STANDARD_TEMPLATE: TemplateConfig = {
+  code: 'EMP-IMP',
+  headerFields: STANDARD_HEADER_FIELDS,
+  requiredFields: STANDARD_REQUIRED_FIELDS,
+}
+
+const TEMP_WORKER_TEMPLATE: TemplateConfig = {
+  code: 'TEMP-EMP-IMP',
+  headerFields: TEMP_WORKER_HEADER_FIELDS,
+  requiredFields: TEMP_WORKER_REQUIRED_FIELDS,
+}
 
 /** Thai label shown for each field's required-column error, and in the
  *  "missing from the template" structural failure. */
@@ -88,6 +173,7 @@ const FIELD_LABELS: Record<Field, string> = {
   shiftName: 'กะงาน',
   holidayGroupName: 'กลุ่มวันหยุด',
   payrollGroupName: 'กลุ่มเงินเดือน',
+  wageAmount: 'ค่าจ้าง',
 }
 
 export type ParsedImportRow = {
@@ -112,6 +198,10 @@ export type ParsedImportRow = {
   shiftName: string | null
   holidayGroupName: string | null
   payrollGroupName: string | null
+  /** Daily wage rate — only ever present from the temp-worker template.
+   *  Written to employee_wage_assignments by the route, same reasoning as
+   *  departmentName above. */
+  wageAmount: number | null
   /** Format/required-field problems this module alone can already see. A row
    *  with any of these can never become create/update — the route skips
    *  straight past database resolution for it, but still resolves what it
@@ -119,7 +209,7 @@ export type ParsedImportRow = {
   errors: string[]
 }
 
-export type ParsedImportSheet = { rows: ParsedImportRow[] }
+export type ParsedImportSheet = { rows: ParsedImportRow[]; templateCode: TemplateCode }
 
 export type ParseEmployeeImportResult =
   | { ok: true; value: ParsedImportSheet }
@@ -190,21 +280,38 @@ function isRowEmpty(row: ExcelJS.Row): boolean {
   return empty
 }
 
+/** Cell A1's text, trimmed — the plain-text template-code marker. Row 1 is
+ *  otherwise never read (it's a title/spacer everywhere else in this file). */
+function readTemplateCode(worksheet: ExcelJS.Worksheet): string {
+  const cell = worksheet.getRow(TEMPLATE_CODE_CELL_ROW).getCell(TEMPLATE_CODE_CELL_COLUMN)
+  return cellText(cell.value)
+}
+
+/** Picks which template's columns/required-fields apply, by A1. Anything
+ *  other than the temp-worker code — including blank, or an older download
+ *  from before this marker existed — falls back to the standard template
+ *  rather than failing the upload. */
+function detectTemplate(worksheet: ExcelJS.Worksheet): TemplateConfig {
+  const code = readTemplateCode(worksheet)
+  return code === TEMP_WORKER_TEMPLATE.code ? TEMP_WORKER_TEMPLATE : STANDARD_TEMPLATE
+}
+
 /** Builds the column -> field map from the header row, by label rather than
  *  position. Fails only when a *required* column's label can't be found —
  *  an optional column missing entirely just means every row reads null for
  *  it, which is already what a blank cell would mean. */
 function resolveColumns(
-  headerRow: ExcelJS.Row
+  headerRow: ExcelJS.Row,
+  template: TemplateConfig
 ): { ok: true; columns: Map<Field, number> } | { ok: false; message: string } {
   const columns = new Map<Field, number>()
   headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
     const label = cellText(cell.value).replace(/\*\s*$/, '').trim()
-    const field = (HEADER_FIELDS as Record<string, Field | undefined>)[label]
+    const field = template.headerFields[label]
     if (field) columns.set(field, colNumber)
   })
 
-  const missing = REQUIRED_FIELDS.filter((field) => !columns.has(field))
+  const missing = template.requiredFields.filter((field) => !columns.has(field))
   if (missing.length > 0) {
     const labels = missing.map((field) => FIELD_LABELS[field]).join(', ')
     return {
@@ -235,31 +342,59 @@ function optionalText(text: string): string | null {
   return text === '' ? null : text
 }
 
-function parseRow(row: ExcelJS.Row, columns: Map<Field, number>): ParsedImportRow {
+/** `requiredText`/`optionalText`, picked per-field by whether the detected
+ *  template actually requires that column — the one thing that differs
+ *  between templates for most fields (the format-specific checks below stay
+ *  the same either way). */
+function fieldText(
+  text: string,
+  field: Field,
+  template: TemplateConfig,
+  errors: string[]
+): string | null {
+  return template.requiredFields.includes(field)
+    ? requiredText(text, field, errors)
+    : optionalText(text)
+}
+
+/** ค่าจ้าง — a positive number, or null if blank. Never required (see
+ *  TEMP_WORKER_REQUIRED_FIELDS' own comment on why a wage rate can be set
+ *  here or later via the Finance tab). */
+function optionalWageAmount(text: string, errors: string[]): number | null {
+  if (text === '') return null
+  const value = Number(text)
+  if (!Number.isFinite(value) || value <= 0) {
+    errors.push(`ค่าจ้างไม่ถูกต้อง: "${text}" (ต้องเป็นตัวเลขมากกว่า 0)`)
+    return null
+  }
+  return value
+}
+
+function parseRow(row: ExcelJS.Row, columns: Map<Field, number>, template: TemplateConfig): ParsedImportRow {
   const errors: string[] = []
   const get = (field: Field) => textOf(row, columns, field)
 
-  const employeeCode = requiredText(get('employeeCode'), 'employeeCode', errors)
+  const employeeCode = fieldText(get('employeeCode'), 'employeeCode', template, errors)
 
-  const titleText = requiredText(get('title'), 'title', errors)
+  const titleText = fieldText(get('title'), 'title', template, errors)
   let title: Title | null = null
   if (titleText !== null) {
     if ((TITLES as readonly string[]).includes(titleText)) title = titleText as Title
     else errors.push(`คำนำหน้าไม่ถูกต้อง: "${titleText}" (ต้องเป็น ${TITLES.join(' / ')})`)
   }
 
-  const firstNameTh = requiredText(get('firstNameTh'), 'firstNameTh', errors)
-  const lastNameTh = requiredText(get('lastNameTh'), 'lastNameTh', errors)
+  const firstNameTh = fieldText(get('firstNameTh'), 'firstNameTh', template, errors)
+  const lastNameTh = fieldText(get('lastNameTh'), 'lastNameTh', template, errors)
   const nickname = optionalText(get('nickname'))
 
-  const fingerprintText = optionalText(get('fingerprintCode'))
+  const fingerprintText = fieldText(get('fingerprintCode'), 'fingerprintCode', template, errors)
   let fingerprintCode: string | null = fingerprintText
   if (fingerprintText !== null && fingerprintText.length > FINGERPRINT_CODE_MAX_LENGTH) {
     errors.push(`รหัสลายนิ้วมือยาวเกินไป (ไม่เกิน ${FINGERPRINT_CODE_MAX_LENGTH} ตัวอักษร)`)
     fingerprintCode = null
   }
 
-  const idCardText = requiredText(get('idCardNumber'), 'idCardNumber', errors)
+  const idCardText = fieldText(get('idCardNumber'), 'idCardNumber', template, errors)
   let idCardNumber: string | null = null
   if (idCardText !== null) {
     if (isValidThaiIdCardNumber(idCardText)) idCardNumber = idCardText
@@ -273,21 +408,21 @@ function parseRow(row: ExcelJS.Row, columns: Map<Field, number>): ParsedImportRo
     if (gender === null) errors.push(`เพศไม่ถูกต้อง: "${genderText}" (ต้องเป็น ชาย / หญิง)`)
   }
 
-  const hireDateText = requiredText(get('hireDate'), 'hireDate', errors)
+  const hireDateText = fieldText(get('hireDate'), 'hireDate', template, errors)
   let hireDate: string | null = null
   if (hireDateText !== null) {
     if (isCalendarDate(hireDateText)) hireDate = hireDateText
     else errors.push(`วันที่จ้างไม่ถูกต้อง: "${hireDateText}" (ต้องเป็น YYYY-MM-DD)`)
   }
 
-  const startWorkingDateText = requiredText(get('startWorkingDate'), 'startWorkingDate', errors)
+  const startWorkingDateText = fieldText(get('startWorkingDate'), 'startWorkingDate', template, errors)
   let startWorkingDate: string | null = null
   if (startWorkingDateText !== null) {
     if (isCalendarDate(startWorkingDateText)) startWorkingDate = startWorkingDateText
     else errors.push(`วันที่เริ่มงานไม่ถูกต้อง: "${startWorkingDateText}" (ต้องเป็น YYYY-MM-DD)`)
   }
 
-  const workLocationText = requiredText(get('workLocation'), 'workLocation', errors)
+  const workLocationText = fieldText(get('workLocation'), 'workLocation', template, errors)
   let workLocation: WorkLocation | null = null
   if (workLocationText !== null) {
     if ((WORK_LOCATIONS as readonly string[]).includes(workLocationText)) {
@@ -297,7 +432,7 @@ function parseRow(row: ExcelJS.Row, columns: Map<Field, number>): ParsedImportRo
     }
   }
 
-  const employmentTypeText = requiredText(get('employmentType'), 'employmentType', errors)
+  const employmentTypeText = fieldText(get('employmentType'), 'employmentType', template, errors)
   let employmentType: EmploymentType | null = null
   if (employmentTypeText !== null) {
     if ((EMPLOYMENT_TYPES as readonly string[]).includes(employmentTypeText)) {
@@ -309,11 +444,12 @@ function parseRow(row: ExcelJS.Row, columns: Map<Field, number>): ParsedImportRo
     }
   }
 
-  const departmentName = requiredText(get('departmentName'), 'departmentName', errors)
-  const jobTitle = requiredText(get('jobTitle'), 'jobTitle', errors)
-  const shiftName = requiredText(get('shiftName'), 'shiftName', errors)
+  const departmentName = fieldText(get('departmentName'), 'departmentName', template, errors)
+  const jobTitle = fieldText(get('jobTitle'), 'jobTitle', template, errors)
+  const shiftName = fieldText(get('shiftName'), 'shiftName', template, errors)
   const holidayGroupName = optionalText(get('holidayGroupName'))
-  const payrollGroupName = requiredText(get('payrollGroupName'), 'payrollGroupName', errors)
+  const payrollGroupName = fieldText(get('payrollGroupName'), 'payrollGroupName', template, errors)
+  const wageAmount = optionalWageAmount(get('wageAmount'), errors)
 
   return {
     rowNumber: row.number,
@@ -334,6 +470,7 @@ function parseRow(row: ExcelJS.Row, columns: Map<Field, number>): ParsedImportRo
     shiftName,
     holidayGroupName,
     payrollGroupName,
+    wageAmount,
     errors,
   }
 }
@@ -356,20 +493,22 @@ export async function parseEmployeeImport(file: Buffer): Promise<ParseEmployeeIm
   const worksheet = workbook.worksheets[0]
   if (!worksheet) return { ok: false, message: 'ไฟล์ไม่มีชีตข้อมูล' }
 
+  const template = detectTemplate(worksheet)
+
   const headerRow = worksheet.getRow(HEADER_ROW)
-  const columns = resolveColumns(headerRow)
+  const columns = resolveColumns(headerRow, template)
   if (!columns.ok) return { ok: false, message: columns.message }
 
   const rows: ParsedImportRow[] = []
   for (let r = FIRST_DATA_ROW; r <= worksheet.rowCount; r++) {
     const row = worksheet.getRow(r)
     if (isRowEmpty(row)) continue
-    rows.push(parseRow(row, columns.columns))
+    rows.push(parseRow(row, columns.columns, template))
   }
 
   if (rows.length === 0) {
     return { ok: false, message: 'ไม่พบข้อมูลพนักงานในไฟล์ (ไม่มีข้อมูลตั้งแต่แถวที่ 3 เป็นต้นไป)' }
   }
 
-  return { ok: true, value: { rows } }
+  return { ok: true, value: { rows, templateCode: template.code } }
 }

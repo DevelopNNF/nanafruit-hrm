@@ -16,6 +16,9 @@ import {
   type EmployeeInput,
   type EmployeeListResponse,
   type AuthUser,
+  type DailyShiftAssignmentInput,
+  type DailyShiftAssignmentOutcome,
+  type DailyShiftAssignmentResponse,
   type EmployeeBasicInput,
   type EmployeeFinanceInput,
   type EmployeeFinanceResponse,
@@ -52,6 +55,7 @@ import {
   type EmployeeFinanceRow,
 } from '../employeeFinanceQueries.js'
 import {
+  assignSingleDayShift,
   createShiftChange,
   listShiftAssignments,
   toThailandDateString,
@@ -63,6 +67,7 @@ import {
   presignPhotoUpload,
   presignPhotoView,
 } from '../storage/employeePhotos.js'
+import { insertWithGeneratedEmployeeCode, isEmployeeCodeConflict } from '../employeeCodeGenerator.js'
 
 export const employeesRouter = Router()
 
@@ -143,10 +148,26 @@ function isValidThaiIdCardNumber(value: string): boolean {
   return check === digits[12]
 }
 
-/** Shared by parseEmployeeInput (POST) and PATCH /employees/:id/basic. */
-function parseEmployeeBasicFields(raw: Record<string, unknown>): ParseResult<EmployeeBasicInput> {
+/** Shared by parseEmployeeInput (POST) and PATCH /employees/:id/basic.
+ *
+ *  `optionalIdentity` (POST only — PATCH always leaves it off) waives
+ *  employeeCode/idCardNumber from the required check: temporary daily
+ *  workers are onboarded with neither (see employeeCodeGenerator.ts and the
+ *  admin quick-add toggle). A blank employeeCode comes back as `''`, which
+ *  the POST handler below treats as "generate one" — the guardrail against a
+ *  *normal* hire accidentally skipping these fields lives entirely in the
+ *  admin form's own required-fields check, not here; this endpoint is a
+ *  deliberately permissive superset of what the DB itself requires. */
+function parseEmployeeBasicFields(
+  raw: Record<string, unknown>,
+  opts: { optionalIdentity?: boolean } = {}
+): ParseResult<EmployeeBasicInput> {
+  const employeeCode = requiredString(raw, 'employeeCode')
+  if (employeeCode === null && !opts.optionalIdentity) {
+    return { ok: false, message: 'employeeCode is required' }
+  }
+
   const fields = {
-    employeeCode: requiredString(raw, 'employeeCode'),
     firstNameTh: requiredString(raw, 'firstNameTh'),
     lastNameTh: requiredString(raw, 'lastNameTh'),
   }
@@ -154,9 +175,15 @@ function parseEmployeeBasicFields(raw: Record<string, unknown>): ParseResult<Emp
     if (value === null) return { ok: false, message: `${key} is required` }
   }
 
-  const idCardNumber = requiredString(raw, 'idCardNumber')
-  if (idCardNumber === null || !isValidThaiIdCardNumber(idCardNumber)) {
-    return { ok: false, message: 'idCardNumber must be a valid 13-digit Thai national ID number' }
+  const idCardText = requiredString(raw, 'idCardNumber')
+  let idCardNumber: string | null = null
+  if (idCardText !== null) {
+    if (!isValidThaiIdCardNumber(idCardText)) {
+      return { ok: false, message: 'idCardNumber must be a valid 13-digit Thai national ID number' }
+    }
+    idCardNumber = idCardText
+  } else if (!opts.optionalIdentity) {
+    return { ok: false, message: 'idCardNumber is required' }
   }
 
   // Optional, and only ever set for staff enrolled on a fingerprint terminal.
@@ -214,7 +241,7 @@ function parseEmployeeBasicFields(raw: Record<string, unknown>): ParseResult<Emp
   return {
     ok: true,
     value: {
-      employeeCode: fields.employeeCode as string,
+      employeeCode: employeeCode ?? '',
       idCardNumber,
       fingerprintCode,
       title: title as EmployeeBasicInput['title'],
@@ -502,7 +529,9 @@ function parseEmployeeInput(body: unknown): ParseResult<EmployeeInput> {
   }
   const emp = employmentRaw as Record<string, unknown>
 
-  const basic = parseEmployeeBasicFields(raw)
+  // optionalIdentity: temporary daily workers have neither an employee code
+  // nor an ID card at onboarding — see parseEmployeeBasicFields' own comment.
+  const basic = parseEmployeeBasicFields(raw, { optionalIdentity: true })
   if (!basic.ok) return basic
 
   const employment = parseEmploymentFields(emp)
@@ -665,30 +694,44 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
   if (!parsed.ok) return fail(res, 400, parsed.message)
   const input = parsed.value
 
+  // Filled in inside the transaction below — input.employeeCode may be blank
+  // (auto-generate), so this is what actually ended up in the row, for the
+  // audit entry and the response.
+  let insertedEmployeeCode = input.employeeCode
+
   try {
     const employee = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ id: string }>(
-        `INSERT INTO employees
-           (employee_code, id_card_number, fingerprint_code, title,
-            first_name_th, last_name_th,
-            first_name_en, last_name_en, nickname, gender)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id`,
-        [
-          input.employeeCode,
-          input.idCardNumber,
-          input.fingerprintCode,
-          input.title,
-          input.firstNameTh,
-          input.lastNameTh,
-          input.firstNameEn,
-          input.lastNameEn,
-          input.nickname,
-          input.gender,
-        ]
+      const created = await insertWithGeneratedEmployeeCode(
+        client,
+        input.employeeCode,
+        async (employeeCode) => {
+          const { rows } = await client.query<{ id: string }>(
+            `INSERT INTO employees
+               (employee_code, id_card_number, fingerprint_code, title,
+                first_name_th, last_name_th,
+                first_name_en, last_name_en, nickname, gender)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             RETURNING id`,
+            [
+              employeeCode,
+              input.idCardNumber,
+              input.fingerprintCode,
+              input.title,
+              input.firstNameTh,
+              input.lastNameTh,
+              input.firstNameEn,
+              input.lastNameEn,
+              input.nickname,
+              input.gender,
+            ]
+          )
+          const row = rows[0]
+          if (!row) throw new Error('insert into employees returned no id')
+          insertedEmployeeCode = employeeCode
+          return row
+        },
+        isEmployeeCodeConflict
       )
-      const created = rows[0]
-      if (!created) throw new Error('insert into employees returned no id')
 
       await client.query(
         `INSERT INTO employment_details
@@ -738,7 +781,7 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
         actor,
         action: 'employee.create',
         entityId: Number(created.id),
-        detail: { employeeCode: input.employeeCode },
+        detail: { employeeCode: insertedEmployeeCode },
       })
 
       // Re-read through the join rather than assembling the response from
@@ -760,7 +803,7 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
       if (field === 'fingerprintCode') {
         return fail(res, 409, `รหัสลายนิ้วมือ ${input.fingerprintCode} ถูกใช้งานแล้ว`)
       }
-      return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
+      return fail(res, 409, `employee code ${insertedEmployeeCode} is already taken`)
     }
     const fkField = fkViolationField(err)
     if (fkField === 'job') return fail(res, 400, `no job with id ${input.employment.jobId}`)
@@ -1136,6 +1179,108 @@ employeesRouter.post(
       const fkField = fkViolationField(err)
       if (fkField === 'shift') return fail(res, 400, `no shift with id ${input.shiftId}`)
       if (isForeignKeyViolation(err)) return fail(res, 400, 'invalid reference in shift change')
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+/** Body of POST /employees/shift-assignments/daily-bulk. */
+function parseDailyShiftAssignmentInput(body: unknown): ParseResult<DailyShiftAssignmentInput> {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, message: 'body must be a JSON object' }
+  }
+  const raw = body as Record<string, unknown>
+
+  const date = requiredString(raw, 'date')
+  if (date === null || !isCalendarDate(date)) {
+    return { ok: false, message: 'date must be a date as YYYY-MM-DD' }
+  }
+
+  const assignmentsRaw = raw['assignments']
+  if (!Array.isArray(assignmentsRaw) || assignmentsRaw.length === 0) {
+    return { ok: false, message: 'assignments must be a non-empty array' }
+  }
+
+  const assignments: { employeeId: number; shiftId: number }[] = []
+  for (const item of assignmentsRaw) {
+    if (typeof item !== 'object' || item === null) {
+      return { ok: false, message: 'each assignment must be an object' }
+    }
+    const row = item as Record<string, unknown>
+    const employeeId = requiredPositiveInt(row, 'employeeId')
+    const shiftId = requiredPositiveInt(row, 'shiftId')
+    if (employeeId === null || shiftId === null) {
+      return { ok: false, message: 'each assignment needs a positive employeeId and shiftId' }
+    }
+    assignments.push({ employeeId, shiftId })
+  }
+
+  return { ok: true, value: { date, assignments } }
+}
+
+// Assigns a shift to several employees for one calendar date at once — the
+// admin "มอบหมายกะรายวัน" screen for temporary daily workers, who have no
+// fixed shift (see assignSingleDayShift's own comment for why this can't
+// reuse createShiftChange/POST /employees/:id/shift-changes). Each row runs
+// in its own SAVEPOINT so one bad row (or a genuine conflict) can't roll back
+// the rest of an otherwise-successful batch.
+employeesRouter.post(
+  '/employees/shift-assignments/daily-bulk',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+
+    const parsed = parseDailyShiftAssignmentInput(req.body)
+    if (!parsed.ok) return fail(res, 400, parsed.message)
+    const input = parsed.value
+
+    try {
+      const outcomes = await withTransaction(async (client) => {
+        const results: DailyShiftAssignmentOutcome[] = []
+        for (const assignment of input.assignments) {
+          await client.query('SAVEPOINT daily_shift_assignment')
+          try {
+            const outcome = await assignSingleDayShift(client, {
+              employeeId: assignment.employeeId,
+              shiftId: assignment.shiftId,
+              date: input.date,
+              note: 'มอบหมายกะรายวัน',
+              createdByKind: actor.kind,
+              createdById: actor.oid,
+            })
+            if (outcome.kind === 'ok') {
+              await recordAudit(client, {
+                actor,
+                action: 'employee.daily_shift_assign',
+                entityId: assignment.employeeId,
+                detail: { date: input.date, shiftId: outcome.assignment.shiftId },
+              })
+              results.push({ employeeId: assignment.employeeId, kind: 'ok' })
+            } else {
+              results.push({
+                employeeId: assignment.employeeId,
+                kind: 'conflict',
+                existingEffectiveFrom: outcome.existing.effectiveFrom,
+                existingEffectiveTo: outcome.existing.effectiveTo,
+              })
+            }
+            await client.query('RELEASE SAVEPOINT daily_shift_assignment')
+          } catch (err) {
+            await client.query('ROLLBACK TO SAVEPOINT daily_shift_assignment')
+            results.push({
+              employeeId: assignment.employeeId,
+              kind: 'error',
+              message: err instanceof Error ? err.message : 'unexpected error',
+            })
+          }
+        }
+        return results
+      })
+
+      const body: DailyShiftAssignmentResponse = { outcomes }
+      res.status(201).json(body)
+    } catch (err) {
       handleUnexpected(res, err)
     }
   }

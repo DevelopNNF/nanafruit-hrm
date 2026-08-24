@@ -306,6 +306,37 @@ export type ShiftChangeResponse = { assignment: ShiftAssignment }
 export type ShiftHistoryResponse = { assignments: ShiftAssignment[] }
 
 /**
+ * Body of POST /api/employees/shift-assignments/daily-bulk — assigns a shift
+ * to several employees for exactly one calendar date at once. For employees
+ * with no fixed/recurring shift (temporary daily workers), whose shift a
+ * supervisor picks day by day rather than through
+ * POST /api/employees/:id/shift-changes' permanent/temporary-swap model.
+ */
+export type DailyShiftAssignmentInput = {
+  /** 'YYYY-MM-DD'. */
+  date: string
+  assignments: { employeeId: number; shiftId: number }[]
+}
+
+/** One row's result. `conflict` means something wider than a single day
+ *  already covers that employee's date (an open-ended baseline, or a
+ *  multi-day swap) — nothing was written for that employee; resolve it via
+ *  their own shift history instead. `error` is anything unexpected (e.g. a
+ *  stale employeeId) — each row runs in its own savepoint, so one row's
+ *  error never rolls back the rest of the batch. */
+export type DailyShiftAssignmentOutcome =
+  | { employeeId: number; kind: 'ok' }
+  | {
+      employeeId: number
+      kind: 'conflict'
+      existingEffectiveFrom: string
+      existingEffectiveTo: string | null
+    }
+  | { employeeId: number; kind: 'error'; message: string }
+
+export type DailyShiftAssignmentResponse = { outcomes: DailyShiftAssignmentOutcome[] }
+
+/**
  * Machine-readable reason on an ApiError, for the cases where the client has to
  * *do* something different rather than just show the message.
  *
@@ -1557,6 +1588,13 @@ export type AttendanceImportBatchListResponse = { batches: AttendanceImportBatch
 
 export type EmployeeImportRowAction = 'create' | 'update' | 'blocked' | 'skip'
 
+/** Which of the two templates the uploaded file matched, by the plain-text
+ *  code in cell A1 — 'EMP-IMP' (the standard sheet) or 'TEMP-EMP-IMP'
+ *  (temporary daily workers: fingerprint code, no employee code, no ID
+ *  card). See employeeImportParse.ts's own comment for the fallback when A1
+ *  doesn't match either. */
+export type EmployeeImportTemplateCode = 'EMP-IMP' | 'TEMP-EMP-IMP'
+
 /** One data row of the uploaded sheet, after validation and matching against
  *  the database. `reasons` explains why a skip/blocked row didn't go through,
  *  or carries a heads-up for a create/update row — e.g. that it is about to
@@ -1566,6 +1604,11 @@ export type EmployeeImportRowPreview = {
   rowNumber: number
   action: EmployeeImportRowAction
   employeeCode: string | null
+  /** The temp-worker template has no employeeCode column at all — a `create`
+   *  row's code isn't decided until commit (see employeeCodeGenerator.ts), so
+   *  fingerprintCode is what identifies the row on screen instead. Null for
+   *  the standard template. */
+  fingerprintCode: string | null
   /** Set only when the code matched an existing employee (update/blocked). */
   employeeId: number | null
   /** firstNameTh + lastNameTh as read from the sheet, for display. */
@@ -1576,6 +1619,7 @@ export type EmployeeImportRowPreview = {
 /** POST /api/employees/import/preview */
 export type EmployeeImportPreview = {
   fileName: string
+  templateCode: EmployeeImportTemplateCode
   rows: EmployeeImportRowPreview[]
   createCount: number
   updateCount: number

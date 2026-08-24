@@ -7,7 +7,7 @@ import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
 import { SELECT_EMPLOYEE, rowToEmployee, type EmployeeRow } from '../employeeQueries.js'
-import { buildEmployeeWorkbook } from '../employeeExport.js'
+import { buildEmployeeWorkbook, buildTempWorkerImportTemplateWorkbook } from '../employeeExport.js'
 
 export const employeeExportRouter = Router()
 
@@ -78,6 +78,35 @@ employeeExportRouter.get(
       })
 
       sendWorkbook(res, buffer, 'employee-import-template.xlsx')
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// A blank copy of the temp-worker template (fingerprint code, name,
+// department, ค่าจ้าง — no employee code, no ID card, no shift) — see
+// buildTempWorkerImportTemplateWorkbook's own comment for why this is a
+// separate route rather than a query param on the one above: the two
+// templates map to entirely different columns/required fields on the way
+// back in (see employeeImportParse.ts's per-template config).
+employeeExportRouter.get(
+  '/employees/export-template-temp-worker',
+  canRead,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    try {
+      const buffer = await buildTempWorkerImportTemplateWorkbook()
+
+      await recordAudit(pool, {
+        actor,
+        action: 'employee.export_template',
+        entityId: null,
+      })
+
+      sendWorkbook(res, buffer, 'employee-temporary-import-template.xlsx')
     } catch (err) {
       handleUnexpected(res, err)
     }

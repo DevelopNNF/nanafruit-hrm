@@ -229,3 +229,88 @@ export async function createShiftChange(
 
   return { kind: 'ok', assignment: rowToShiftAssignment(inserted), previousShiftId }
 }
+
+export type AssignSingleDayShiftParams = {
+  employeeId: number
+  shiftId: number | null
+  /** 'YYYY-MM-DD'. */
+  date: string
+  note: string | null
+  createdByKind: string
+  createdById: string
+}
+
+export type AssignSingleDayShiftResult =
+  | { kind: 'ok'; assignment: ShiftAssignment }
+  // Something wider than a single day already covers this date — an
+  // open-ended baseline, or a multi-day swap. Refuses to overwrite; the
+  // caller resolves it by hand via the employee's own shift history instead.
+  | { kind: 'conflict'; existing: { effectiveFrom: string; effectiveTo: string | null } }
+
+/**
+ * Assigns a shift to an employee for exactly one calendar date, for
+ * employees with no fixed/recurring shift (temporary daily workers — a
+ * supervisor picks their shift day by day). Deliberately NOT built on
+ * createShiftChange: that function requires an existing open-ended baseline
+ * row whenever effectiveTo is set, and returns `no_baseline` otherwise — but
+ * these employees are never expected to have one. This function neither
+ * requires nor touches any baseline row.
+ *
+ * Idempotent for the exact same date: calling it again for a date already
+ * assigned (by this function) just updates that row's shift, so a supervisor
+ * can change their mind before the shift starts without a separate "undo"
+ * step.
+ */
+export async function assignSingleDayShift(
+  client: pg.PoolClient,
+  params: AssignSingleDayShiftParams
+): Promise<AssignSingleDayShiftResult> {
+  const { employeeId, shiftId, date, note, createdByKind, createdById } = params
+
+  // Locks the employee row itself, not any (possibly nonexistent) assignment
+  // row. employee_shift_assignments has no EXCLUDE constraint of its own —
+  // only a partial unique index guarding "at most one open-ended row", which
+  // a closed single-day row never matches — so without this, two concurrent
+  // "assign a shift for today" calls for the same employee would both read
+  // "nothing covers this date" and both insert, leaving two overlapping rows.
+  await client.query('SELECT id FROM employees WHERE id = $1 FOR UPDATE', [employeeId])
+
+  const { rows: coveringRows } = await client.query<ShiftAssignmentRow>(
+    `SELECT ${SHIFT_ASSIGNMENT_COLUMNS} FROM employee_shift_assignments
+     WHERE employee_id = $1 AND effective_from <= $2
+       AND (effective_to IS NULL OR effective_to >= $2)
+     LIMIT 1`,
+    [employeeId, date]
+  )
+  const covering = coveringRows[0] ?? null
+
+  if (covering && (covering.effective_from !== date || covering.effective_to !== date)) {
+    return {
+      kind: 'conflict',
+      existing: { effectiveFrom: covering.effective_from, effectiveTo: covering.effective_to },
+    }
+  }
+
+  if (covering) {
+    const { rows: updatedRows } = await client.query<ShiftAssignmentRow>(
+      `UPDATE employee_shift_assignments SET shift_id = $2, note = $3
+       WHERE id = $1
+       RETURNING ${SHIFT_ASSIGNMENT_COLUMNS}`,
+      [covering.id, shiftId, note]
+    )
+    const updated = updatedRows[0]
+    if (!updated) throw new Error('update to employee_shift_assignments returned no row')
+    return { kind: 'ok', assignment: rowToShiftAssignment(updated) }
+  }
+
+  const { rows: insertedRows } = await client.query<ShiftAssignmentRow>(
+    `INSERT INTO employee_shift_assignments
+       (employee_id, shift_id, effective_from, effective_to, note, created_by_kind, created_by_id)
+     VALUES ($1, $2, $3, $3, $4, $5, $6)
+     RETURNING ${SHIFT_ASSIGNMENT_COLUMNS}`,
+    [employeeId, shiftId, date, note, createdByKind, createdById]
+  )
+  const inserted = insertedRows[0]
+  if (!inserted) throw new Error('insert into employee_shift_assignments returned no id')
+  return { kind: 'ok', assignment: rowToShiftAssignment(inserted) }
+}

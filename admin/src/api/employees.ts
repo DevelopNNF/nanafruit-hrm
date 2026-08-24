@@ -1,4 +1,7 @@
 import type {
+  DailyShiftAssignmentInput,
+  DailyShiftAssignmentOutcome,
+  DailyShiftAssignmentResponse,
   Employee,
   EmployeeBasicInput,
   EmployeeFinance,
@@ -133,6 +136,20 @@ export async function createShiftChange(
   return body.assignment
 }
 
+/** Assigns a shift to several employees for one date at once — the "มอบหมายกะ
+ *  รายวัน" screen for temporary daily workers who have no fixed shift. */
+export async function assignDailyShifts(
+  input: DailyShiftAssignmentInput
+): Promise<DailyShiftAssignmentOutcome[]> {
+  const res = await apiFetch('/api/employees/shift-assignments/daily-bulk', {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  const body = await unwrap<DailyShiftAssignmentResponse>(res)
+  return body.outcomes
+}
+
 export async function getWageHistory(id: number, signal?: AbortSignal): Promise<WageAssignment[]> {
   const res = await apiFetch(`/api/employees/${id}/wage-assignments`, { signal })
   const body = await unwrap<WageHistoryResponse>(res)
@@ -221,4 +238,11 @@ export function exportEmployees(signal?: AbortSignal): Promise<Blob> {
  *  every call, same as exportEmployees. */
 export function downloadEmployeeImportTemplate(signal?: AbortSignal): Promise<Blob> {
   return fetchWorkbook('/api/employees/export-template', signal)
+}
+
+/** The temp-worker template — fingerprint code, name, department, ค่าจ้าง,
+ *  no employee code/ID card/shift column. See
+ *  buildTempWorkerImportTemplateWorkbook's own comment server-side. */
+export function downloadTempWorkerEmployeeImportTemplate(signal?: AbortSignal): Promise<Blob> {
+  return fetchWorkbook('/api/employees/export-template-temp-worker', signal)
 }

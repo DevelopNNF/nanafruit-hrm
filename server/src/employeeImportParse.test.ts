@@ -47,10 +47,14 @@ const VALID_ROW = [
   'Office',
 ]
 
-async function buildWorkbook(headers: string[], rows: (string | null)[][]): Promise<Buffer> {
+async function buildWorkbook(
+  headers: string[],
+  rows: (string | number | null)[][],
+  templateCodeCell: string | null = null
+): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook()
   const sheet = workbook.addWorksheet('Sheet1')
-  sheet.addRow([]) // row 1: title/spacer, untouched by the parser
+  sheet.addRow([templateCodeCell]) // row 1: title/spacer, or the A1 template-code marker
   sheet.addRow(headers) // row 2: header
   for (const row of rows) sheet.addRow(row)
   const buffer = await workbook.xlsx.writeBuffer()
@@ -59,6 +63,52 @@ async function buildWorkbook(headers: string[], rows: (string | null)[][]): Prom
 
 async function parse(rows: (string | null)[][], headers: string[] = HEADERS) {
   return parseEmployeeImport(await buildWorkbook(headers, rows))
+}
+
+// The temp-worker template's own header row (server/templates/
+// employee-temporary-template.xlsx) — no รหัสพนักงาน/เลขบัตรประชาชน/กะงาน
+// columns, plus ค่าจ้าง which the standard template doesn't have.
+const TEMP_WORKER_HEADERS = [
+  'รหัสลายนิ้วมือ*',
+  'คำนำหน้า*',
+  'ชื่อ*',
+  'นามสกุล*',
+  'ชื่อเล่น',
+  'เพศ',
+  'วันที่จ้าง*',
+  'วันที่เริ่มงาน*',
+  'สถานที่ปฏิบัติงาน*',
+  'ประเภทการจ้าง*',
+  'แผนก*',
+  'ตำแหน่ง*',
+  'กลุ่มวันหยุด',
+  'กลุ่มเงินเดือน*',
+  'ค่าจ้าง',
+]
+
+const TEMP_WORKER_VALID_ROW: (string | number | null)[] = [
+  'FP9999',
+  'นาย',
+  'ทดสอบ',
+  'ระบบ',
+  'ทด',
+  'ชาย',
+  '2026-01-01',
+  '2026-01-01',
+  'เชียงใหม่',
+  'ชั่วคราว',
+  'Development',
+  'Programmer',
+  'Office Holiday',
+  'Office',
+  350,
+]
+
+async function parseTempWorker(
+  rows: (string | number | null)[][],
+  headers: string[] = TEMP_WORKER_HEADERS
+) {
+  return parseEmployeeImport(await buildWorkbook(headers, rows, 'TEMP-EMP-IMP'))
 }
 
 describe('parseEmployeeImport', () => {
@@ -198,5 +248,85 @@ describe('parseEmployeeImport', () => {
   it('fails the whole file when there is no data at all', async () => {
     const result = await parse([])
     assert.equal(result.ok, false)
+  })
+
+  it('tags the sheet with the standard template code when A1 is blank', async () => {
+    const result = await parse([VALID_ROW])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    assert.equal(result.value.templateCode, 'EMP-IMP')
+  })
+
+  it('falls back to the standard template when A1 holds an unrecognized code', async () => {
+    const buffer = await buildWorkbook(HEADERS, [VALID_ROW], 'SOME-OLD-CODE')
+    const result = await parseEmployeeImport(buffer)
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    assert.equal(result.value.templateCode, 'EMP-IMP')
+  })
+})
+
+describe('parseEmployeeImport — temp-worker template (TEMP-EMP-IMP)', () => {
+  it('tags the sheet with the temp-worker template code from A1', async () => {
+    const result = await parseTempWorker([TEMP_WORKER_VALID_ROW])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    assert.equal(result.value.templateCode, 'TEMP-EMP-IMP')
+  })
+
+  it('reads a fully valid row — no employeeCode/idCardNumber/shiftName, with wageAmount', async () => {
+    const result = await parseTempWorker([TEMP_WORKER_VALID_ROW])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const row = result.value.rows[0]!
+    assert.deepEqual(row.errors, [])
+    assert.equal(row.employeeCode, null)
+    assert.equal(row.idCardNumber, null)
+    assert.equal(row.shiftName, null)
+    assert.equal(row.fingerprintCode, 'FP9999')
+    assert.equal(row.wageAmount, 350)
+  })
+
+  it('requires fingerprintCode, unlike the standard template where it is optional', async () => {
+    const row = [...TEMP_WORKER_VALID_ROW]
+    row[TEMP_WORKER_HEADERS.indexOf('รหัสลายนิ้วมือ*')] = ''
+    const result = await parseTempWorker([row])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.fingerprintCode, null)
+    assert.ok(parsed.errors.some((e) => e.includes('รหัสลายนิ้วมือ')))
+  })
+
+  it('treats ค่าจ้าง as optional — blank parses to null with no error', async () => {
+    const row = [...TEMP_WORKER_VALID_ROW]
+    row[TEMP_WORKER_HEADERS.indexOf('ค่าจ้าง')] = ''
+    const result = await parseTempWorker([row])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.wageAmount, null)
+    assert.deepEqual(parsed.errors, [])
+  })
+
+  it('rejects a ค่าจ้าง that is not a positive number', async () => {
+    const row = [...TEMP_WORKER_VALID_ROW]
+    row[TEMP_WORKER_HEADERS.indexOf('ค่าจ้าง')] = '-50'
+    const result = await parseTempWorker([row])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.wageAmount, null)
+    assert.ok(parsed.errors.some((e) => e.includes('ค่าจ้าง')))
+  })
+
+  it('fails the whole file when a temp-worker-required column is missing from the header', async () => {
+    const headers = TEMP_WORKER_HEADERS.filter((h) => h !== 'แผนก*')
+    const row = TEMP_WORKER_VALID_ROW.filter((_, i) => TEMP_WORKER_HEADERS[i] !== 'แผนก*')
+    const buffer = await buildWorkbook(headers, [row], 'TEMP-EMP-IMP')
+    const result = await parseEmployeeImport(buffer)
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.ok(result.message.includes('แผนก'))
   })
 })

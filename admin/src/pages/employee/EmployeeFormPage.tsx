@@ -97,13 +97,21 @@ const emptyDraft: EmployeeInput = {
  *  anchor their `required` check on a zero-size hidden input or an option
  *  that's technically "selected", so the browser's native validation bubble
  *  can end up invisible or simply not fire. Checking here and surfacing it
- *  as a toast is the reliable path. */
-function missingEmployeeFields(draft: EmployeeInput): string[] {
+ *  as a toast is the reliable path.
+ *
+ *  `isMinimalProfile` waives employeeCode/idCardNumber — temporary daily
+ *  workers (fingerprint-only, no employee code, no ID card) created via the
+ *  quick-add toggle below. Everything else stays required exactly as for a
+ *  normal hire. */
+function missingEmployeeFields(draft: EmployeeInput, isMinimalProfile: boolean): string[] {
   const missing: string[] = []
-  if (!draft.employeeCode.trim()) missing.push('รหัสพนักงาน')
+  if (!isMinimalProfile && !draft.employeeCode.trim()) missing.push('รหัสพนักงาน')
   if (!draft.firstNameTh.trim()) missing.push('ชื่อ (ไทย)')
   if (!draft.lastNameTh.trim()) missing.push('นามสกุล (ไทย)')
-  if (!draft.idCardNumber || !/^\d{13}$/.test(draft.idCardNumber)) {
+  if (
+    !isMinimalProfile &&
+    (!draft.idCardNumber || !/^\d{13}$/.test(draft.idCardNumber))
+  ) {
     missing.push('เลขบัตรประชาชน (13 หลัก)')
   }
   if (!draft.employment.hireDate) missing.push('วันที่จ้าง')
@@ -160,6 +168,26 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
   const [draft, setDraft] = useState<EmployeeInput>(emptyDraft)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Temporary daily workers (fingerprint-only — no employee code, no ID
+  // card, no fixed shift assigned here). Toggling this on relaxes
+  // missingEmployeeFields below rather than a separate page/form, since
+  // everything else about creating one of these is identical to a normal
+  // hire. Server-side, POST /api/employees already treats a blank
+  // employeeCode as "generate a TEMP-XXXX code" — see employeeCodeGenerator.ts.
+  const [isMinimalProfile, setIsMinimalProfile] = useState(false)
+
+  function toggleMinimalProfile(checked: boolean) {
+    setIsMinimalProfile(checked)
+    setDraft((prev) => ({
+      ...prev,
+      employment: {
+        ...prev.employment,
+        employmentType: checked
+          ? ('ชั่วคราว' as EmployeeInput['employment']['employmentType'])
+          : prev.employment.employmentType,
+      },
+    }))
+  }
 
   type JobOptionsState =
     | { phase: 'loading' }
@@ -270,7 +298,7 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
-    const missing = missingEmployeeFields(draft)
+    const missing = missingEmployeeFields(draft, isMinimalProfile)
     if (missing.length > 0) {
       notify.error('กรอกข้อมูลไม่ครบ', `กรุณากรอก: ${missing.join(', ')}`)
       return
@@ -337,6 +365,24 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
         </div>
       )}
 
+      <label className={`${card} mb-4 flex cursor-pointer items-start gap-2.5`}>
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={isMinimalProfile}
+          onChange={(e) => toggleMinimalProfile(e.target.checked)}
+        />
+        <span>
+          <span className="block font-semibold text-navy">
+            พนักงานรายวันชั่วคราว (ข้อมูลขั้นต่ำ)
+          </span>
+          <span className={`${muted} block`}>
+            สำหรับพนักงานที่มีแค่รหัสลายนิ้วมือ/ชื่อ/แผนก (เช่น แรงงานต่างชาติ) — ไม่ต้องกรอกรหัสพนักงาน
+            (ระบบสร้างให้อัตโนมัติ) และเลขบัตรประชาชน กะการทำงานไปกำหนดทีหลังผ่านหน้า &quot;มอบหมายกะรายวัน&quot;
+          </span>
+        </span>
+      </label>
+
       {/* noValidate: native constraint validation blocks the submit event
           before handleSubmit ever runs, and for the custom controls here
           (DatePicker's zero-size hidden `required` input, the Job/Department
@@ -353,10 +399,11 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
             <div className={fieldGrid}>
               <label className={fieldLabel}>
                 <span>
-                  รหัสพนักงาน <span className={requiredMark}>*</span>
+                  รหัสพนักงาน {!isMinimalProfile && <span className={requiredMark}>*</span>}
                 </span>
                 <input
-                  required
+                  required={!isMinimalProfile}
+                  placeholder={isMinimalProfile ? 'ปล่อยว่าง = สร้างอัตโนมัติ (TEMP-XXXX)' : undefined}
                   className={fieldControl}
                   value={draft.employeeCode}
                   onChange={(e) => setBasic('employeeCode', e.target.value)}
@@ -420,10 +467,10 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
               </label>
               <label className={fieldLabel}>
                 <span>
-                  เลขบัตรประชาชน <span className={requiredMark}>*</span>
+                  เลขบัตรประชาชน {!isMinimalProfile && <span className={requiredMark}>*</span>}
                 </span>
                 <input
-                  required
+                  required={!isMinimalProfile}
                   maxLength={13}
                   inputMode="numeric"
                   pattern="\d{13}"

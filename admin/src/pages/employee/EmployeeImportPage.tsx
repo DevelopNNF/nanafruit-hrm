@@ -3,7 +3,10 @@ import { Link, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Download } from 'lucide-react'
 import type { EmployeeImportPreview, EmployeeImportRowAction, EmployeeImportRowPreview } from '@hrm/shared'
 import { commitEmployeeImport, previewEmployeeImport } from '../../api/employeeImport'
-import { downloadEmployeeImportTemplate } from '../../api/employees'
+import {
+  downloadEmployeeImportTemplate,
+  downloadTempWorkerEmployeeImportTemplate,
+} from '../../api/employees'
 import { useCanWrite } from '../../auth/meContext'
 import { notify } from '../../notifications/notify'
 import {
@@ -58,14 +61,18 @@ function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url)
 }
 
-function ImportRow({ row }: { row: EmployeeImportRowPreview }) {
+function ImportRow({ row, isTempWorkerTemplate }: { row: EmployeeImportRowPreview; isTempWorkerTemplate: boolean }) {
+  // The temp-worker template has no employeeCode column at all — a `create`
+  // row's code isn't decided until commit (see employeeCodeGenerator.ts on
+  // the server), so fingerprintCode is what identifies the row here instead.
+  const identity = isTempWorkerTemplate ? row.fingerprintCode : row.employeeCode
   return (
     <tr className="hover:bg-slate-50">
       <td className={`${td} tabular-nums text-slate-400`}>{row.rowNumber}</td>
       <td className={`${td} whitespace-nowrap`}>
         <span className={badge(actionBadgeTone(row.action))}>{ACTION_LABEL[row.action]}</span>
       </td>
-      <td className={`${td} font-mono whitespace-nowrap text-slate-900`}>{row.employeeCode ?? '—'}</td>
+      <td className={`${td} font-mono whitespace-nowrap text-slate-900`}>{identity ?? '—'}</td>
       <td className={`${td} whitespace-nowrap`}>{row.name ?? '—'}</td>
       <td className={td}>
         {row.reasons.length === 0 ? (
@@ -99,7 +106,9 @@ export function EmployeeImportPage() {
   const [file, setFile] = useState<File | null>(null)
   const [phase, setPhase] = useState<Phase>({ name: 'idle' })
   const [error, setError] = useState<string | null>(null)
-  const [downloadingTemplate, setDownloadingTemplate] = useState(false)
+  const [downloadingTemplate, setDownloadingTemplate] = useState<'standard' | 'temp_worker' | null>(
+    null
+  )
 
   function chooseFile(chosen: File | null) {
     setFile(chosen)
@@ -107,15 +116,21 @@ export function EmployeeImportPage() {
     setError(null)
   }
 
-  async function handleDownloadTemplate() {
-    setDownloadingTemplate(true)
+  async function handleDownloadTemplate(kind: 'standard' | 'temp_worker') {
+    setDownloadingTemplate(kind)
     try {
-      const blob = await downloadEmployeeImportTemplate()
-      downloadBlob(blob, 'employee-import-template.xlsx')
+      const blob =
+        kind === 'standard'
+          ? await downloadEmployeeImportTemplate()
+          : await downloadTempWorkerEmployeeImportTemplate()
+      downloadBlob(
+        blob,
+        kind === 'standard' ? 'employee-import-template.xlsx' : 'employee-temporary-import-template.xlsx'
+      )
     } catch (err) {
       notify.error('ดาวน์โหลดเทมเพลตไม่สำเร็จ', err instanceof Error ? err.message : undefined)
     } finally {
-      setDownloadingTemplate(false)
+      setDownloadingTemplate(null)
     }
   }
 
@@ -216,23 +231,41 @@ export function EmployeeImportPage() {
           <button
             type="button"
             className={button()}
-            disabled={downloadingTemplate}
-            onClick={() => void handleDownloadTemplate()}
+            disabled={downloadingTemplate !== null}
+            onClick={() => void handleDownloadTemplate('standard')}
           >
             <Download size={16} />
-            {downloadingTemplate ? 'กำลังดาวน์โหลด…' : 'ดาวน์โหลดเทมเพลตเปล่า'}
+            {downloadingTemplate === 'standard' ? 'กำลังดาวน์โหลด…' : 'ดาวน์โหลดเทมเพลตเปล่า'}
+          </button>
+          <button
+            type="button"
+            className={button()}
+            disabled={downloadingTemplate !== null}
+            onClick={() => void handleDownloadTemplate('temp_worker')}
+          >
+            <Download size={16} />
+            {downloadingTemplate === 'temp_worker'
+              ? 'กำลังดาวน์โหลด…'
+              : 'ดาวน์โหลดเทมเพลตพนักงานรายวันชั่วคราว'}
           </button>
         </div>
         <p className={`${muted} mt-3`}>
-          รหัสพนักงานที่มีอยู่แล้วในระบบจะถูกอัปเดตข้อมูล รหัสที่ยังไม่เคยมีจะถูกเพิ่มเป็นพนักงานใหม่ —
-          รหัสที่ซ้ำกับพนักงานที่ลาออกไปแล้วจะถูกบล็อกและแจ้งเตือน แผนก/ตำแหน่ง/กะงาน/กลุ่มวันหยุด/กลุ่มเงินเดือน
-          ต้องตรงกับชื่อในระบบเป๊ะ (เลือกจาก dropdown ในไฟล์ได้เลย) ไม่เช่นนั้นแถวนั้นจะถูกข้าม
+          ระบบจะรู้เองว่าไฟล์ที่อัปโหลดเป็นเทมเพลตแบบไหน — รหัสพนักงานที่มีอยู่แล้วในระบบจะถูกอัปเดตข้อมูล
+          รหัสที่ยังไม่เคยมีจะถูกเพิ่มเป็นพนักงานใหม่ (เทมเพลตพนักงานรายวันชั่วคราวใช้รหัสลายนิ้วมือแทน
+          เพราะไม่มีรหัสพนักงาน — ระบบจะสร้างรหัสรูปแบบ TEMP-XXXX ให้เอง) รหัสที่ซ้ำกับพนักงานที่ลาออกไปแล้วจะถูกบล็อก
+          และแจ้งเตือน แผนก/ตำแหน่ง/กะงาน/กลุ่มวันหยุด/กลุ่มเงินเดือน ต้องตรงกับชื่อในระบบเป๊ะ (เลือกจาก dropdown ในไฟล์ได้เลย)
+          ไม่เช่นนั้นแถวนั้นจะถูกข้าม
         </p>
       </section>
 
       {preview && (
         <>
           <section className={`${card} mb-4`}>
+            <p className={`${eyebrow} mb-2`}>
+              {preview.templateCode === 'TEMP-EMP-IMP'
+                ? 'ตรวจพบ: เทมเพลตพนักงานรายวันชั่วคราว'
+                : 'ตรวจพบ: เทมเพลตพนักงานทั่วไป'}
+            </p>
             <div className="flex flex-wrap gap-x-10 gap-y-3 text-[0.825rem]">
               <div>
                 <p className={eyebrow}>พนักงานใหม่</p>
@@ -258,7 +291,13 @@ export function EmployeeImportPage() {
               <table className="w-full border-collapse [&_tbody_tr:last-child_td]:border-b-0">
                 <thead>
                   <tr>
-                    {['แถว', 'การกระทำ', 'รหัสพนักงาน', 'ชื่อ', 'หมายเหตุ'].map((h) => (
+                    {[
+                      'แถว',
+                      'การกระทำ',
+                      preview.templateCode === 'TEMP-EMP-IMP' ? 'รหัสลายนิ้วมือ' : 'รหัสพนักงาน',
+                      'ชื่อ',
+                      'หมายเหตุ',
+                    ].map((h) => (
                       <th key={h} className={th}>
                         {h}
                       </th>
@@ -267,7 +306,11 @@ export function EmployeeImportPage() {
                 </thead>
                 <tbody>
                   {preview.rows.map((row) => (
-                    <ImportRow key={row.rowNumber} row={row} />
+                    <ImportRow
+                      key={row.rowNumber}
+                      row={row}
+                      isTempWorkerTemplate={preview.templateCode === 'TEMP-EMP-IMP'}
+                    />
                   ))}
                 </tbody>
               </table>

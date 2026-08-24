@@ -60,6 +60,7 @@ const NAV: NavItem[] = [
     icon: Clock,
     children: [
       { to: '/attendance', label: 'รายละเอียดการลงเวลา'},
+      { to: '/employees/shift-assignments/daily', label: 'มอบหมายกะรายวัน'},
       { to: '/time-corrections', label: 'คำขอแก้ไขเวลา'},
       { to: '/shift-change-requests', label: 'คำขอเปลี่ยนกะ'},
       { to: '/day-off-swap-requests', label: 'คำขอสลับวันหยุด'},

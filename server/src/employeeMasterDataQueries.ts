@@ -201,3 +201,76 @@ export async function findEmployeeCodesByFingerprintCodes(
   for (const row of rows) result.set(row.fingerprint_code, row.employee_code)
   return result
 }
+
+export type EmployeeFingerprintMatch = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  endWorkingDate: string | null
+  currentShiftId: number | null
+  currentWageAmount: number | null
+}
+
+/**
+ * Every employee whose fingerprint code is in `values`, regardless of
+ * status — same reasoning as findEmployeesByCodes: an import has to see a
+ * leaver's row to report the "recycled terminal ID" blocked case usefully
+ * (see routes/employeeImport.ts), not just silently fail to match.
+ *
+ * NOT the same function as attendanceImportQueries.ts's
+ * findEmployeesByFingerprintCodes, deliberately named differently — that one
+ * only matches Active employees and returns a different shape for a
+ * different caller (punch matching, not employee onboarding). Named
+ * "…ForImport" so the two never get grabbed for each other by mistake.
+ */
+export async function findEmployeesByFingerprintCodesForImport(
+  values: string[],
+  db: Queryable = pool
+): Promise<Map<string, EmployeeFingerprintMatch>> {
+  const result = new Map<string, EmployeeFingerprintMatch>()
+  if (values.length === 0) return result
+
+  const { rows } = await db.query<{
+    id: string
+    employee_code: string
+    employee_name: string
+    fingerprint_code: string
+    end_working_date: string | null
+    current_shift_id: string | null
+    current_wage_amount: string | null
+  }>(
+    `SELECT e.id, e.employee_code, e.fingerprint_code,
+            (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name,
+            d.end_working_date,
+            current_shift.shift_id AS current_shift_id,
+            current_wage.wage_amount AS current_wage_amount
+     FROM employees e
+     LEFT JOIN employment_details d ON d.employee_id = e.id
+     LEFT JOIN LATERAL (
+       SELECT shift_id FROM employee_shift_assignments esa
+       WHERE esa.employee_id = e.id
+         AND esa.effective_from <= (now() AT TIME ZONE 'Asia/Bangkok')::date
+         AND (esa.effective_to IS NULL OR esa.effective_to >= (now() AT TIME ZONE 'Asia/Bangkok')::date)
+     ) current_shift ON true
+     LEFT JOIN LATERAL (
+       SELECT wage_amount FROM employee_wage_assignments ewa
+       WHERE ewa.employee_id = e.id
+         AND ewa.effective_from <= (now() AT TIME ZONE 'Asia/Bangkok')::date
+         AND (ewa.effective_to IS NULL OR ewa.effective_to >= (now() AT TIME ZONE 'Asia/Bangkok')::date)
+     ) current_wage ON true
+     WHERE e.fingerprint_code = ANY($1::text[])`,
+    [values]
+  )
+
+  for (const row of rows) {
+    result.set(row.fingerprint_code, {
+      employeeId: Number(row.id),
+      employeeCode: row.employee_code,
+      employeeName: row.employee_name,
+      endWorkingDate: row.end_working_date,
+      currentShiftId: row.current_shift_id === null ? null : Number(row.current_shift_id),
+      currentWageAmount: row.current_wage_amount === null ? null : Number(row.current_wage_amount),
+    })
+  }
+  return result
+}

@@ -21,6 +21,9 @@ import { GENDER_LABELS } from './employeeGenderLabels.js'
 import { loadEmployeeImportMasterData, type EmployeeImportMasterData } from './employeeMasterDataQueries.js'
 
 const TEMPLATE_PATH = fileURLToPath(new URL('../templates/employee-template.xlsx', import.meta.url))
+const TEMP_WORKER_TEMPLATE_PATH = fileURLToPath(
+  new URL('../templates/employee-temporary-template.xlsx', import.meta.url)
+)
 
 // Row 1 is a title/spacer, row 2 the header — both untouched here except for
 // splicing/duplicating around row 3, same layout attendanceReportExport uses.
@@ -77,6 +80,39 @@ const LIST_COLUMNS: { sheet1Column: number; listColumn: number }[] = [
   { sheet1Column: COLUMNS.payrollGroupName, listColumn: 6 },
 ]
 
+/** Column numbers on employee-temporary-template.xlsx's Sheet1 — no
+ *  employeeCode/idCardNumber/shiftName columns (temporary daily workers have
+ *  neither an employee code nor an ID card, and their shift is assigned
+ *  day-by-day through the "มอบหมายกะรายวัน" screen, not this sheet), plus a
+ *  ค่าจ้าง column the standard template doesn't have. */
+const TEMP_WORKER_COLUMNS = {
+  fingerprintCode: 1,
+  title: 2,
+  firstNameTh: 3,
+  lastNameTh: 4,
+  nickname: 5,
+  gender: 6,
+  hireDate: 7,
+  startWorkingDate: 8,
+  workLocation: 9,
+  employmentType: 10,
+  departmentName: 11,
+  jobTitle: 12,
+  holidayGroupName: 13,
+  payrollGroupName: 14,
+  wageAmount: 15,
+} as const
+
+/** Same Lists-sheet columns as LIST_COLUMNS, minus shifts (listColumn 4 —
+ *  this template has no shiftName column to point it at). */
+const TEMP_WORKER_LIST_COLUMNS: { sheet1Column: number; listColumn: number }[] = [
+  { sheet1Column: TEMP_WORKER_COLUMNS.employmentType, listColumn: 1 },
+  { sheet1Column: TEMP_WORKER_COLUMNS.departmentName, listColumn: 2 },
+  { sheet1Column: TEMP_WORKER_COLUMNS.jobTitle, listColumn: 3 },
+  { sheet1Column: TEMP_WORKER_COLUMNS.holidayGroupName, listColumn: 5 },
+  { sheet1Column: TEMP_WORKER_COLUMNS.payrollGroupName, listColumn: 6 },
+]
+
 function columnLetter(col: number): string {
   let letter = ''
   let n = col
@@ -110,8 +146,12 @@ function addListsSheet(workbook: ExcelJS.Workbook, masterData: EmployeeImportMas
   })
 }
 
-function applyDropdowns(worksheet: ExcelJS.Worksheet, validationRowCount: number): void {
-  for (const { sheet1Column, listColumn } of LIST_COLUMNS) {
+function applyDropdowns(
+  worksheet: ExcelJS.Worksheet,
+  validationRowCount: number,
+  listColumns: { sheet1Column: number; listColumn: number }[] = LIST_COLUMNS
+): void {
+  for (const { sheet1Column, listColumn } of listColumns) {
     const letter = columnLetter(listColumn)
     const ref = `'${LISTS_SHEET}'!$${letter}$1:$${letter}$${LIST_ROW_COUNT}`
     for (let r = SAMPLE_ROW; r < SAMPLE_ROW + validationRowCount; r++) {
@@ -181,6 +221,33 @@ export async function buildEmployeeWorkbook(employees: Employee[]): Promise<Exce
 
   const validationRowCount = Math.max(MIN_VALIDATION_ROW_COUNT, employees.length + 200)
   applyDropdowns(worksheet, validationRowCount)
+
+  return workbook.xlsx.writeBuffer()
+}
+
+/**
+ * A blank copy of the temp-worker import template — headers, its ค่าจ้าง
+ * column, and fresh dropdowns, no data rows. Template-download only: unlike
+ * buildEmployeeWorkbook, this never writes employee rows — GET
+ * /employees/export (every employee, including temp workers) stays on the
+ * one shared standard-template layout; this template exists purely to make
+ * *importing* temp workers ergonomic, not to report on them.
+ */
+export async function buildTempWorkerImportTemplateWorkbook(): Promise<ExcelJS.Buffer> {
+  const masterData = await loadEmployeeImportMasterData()
+
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.readFile(TEMP_WORKER_TEMPLATE_PATH)
+  const worksheet = workbook.worksheets[0]
+  if (!worksheet) throw new Error('temp-worker employee template has no worksheet')
+
+  addListsSheet(workbook, masterData)
+
+  // Nothing to clone the sample row into — drop it so the template doesn't
+  // ship its placeholder worker as if it were real data.
+  worksheet.spliceRows(SAMPLE_ROW, 1)
+
+  applyDropdowns(worksheet, MIN_VALIDATION_ROW_COUNT, TEMP_WORKER_LIST_COLUMNS)
 
   return workbook.xlsx.writeBuffer()
 }

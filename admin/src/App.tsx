@@ -31,6 +31,7 @@ import { PayrollEntryDetailPage } from './pages/payroll/PayrollEntryDetailPage'
 import { FinanceItemListPage } from './pages/masters/finance_item/FinanceItemListPage'
 import { FinanceItemFormPage } from './pages/masters/finance_item/FinanceItemFormPage'
 import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
+import { DailyShiftAssignmentPage } from './pages/DailyShiftAssignmentPage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
 import { AttendanceImportPage } from './pages/AttendanceImportPage'
 import { AttendanceImportHistoryPage } from './pages/AttendanceImportHistoryPage'
@@ -124,6 +125,7 @@ const router = createBrowserRouter([
       { path: 'employees', element: <EmployeeListPage /> },
       { path: 'employees/import', element: <EmployeeImportPage /> },
       { path: 'employees/new', element: <KeyedEmployeeForm /> },
+      { path: 'employees/shift-assignments/daily', element: <DailyShiftAssignmentPage /> },
       { path: 'employees/:id', element: <KeyedEmployeeForm /> },
       { path: 'attendance', element: <AttendanceListPage /> },
       // Both before nothing in particular — 'import'/'imports' are literal
