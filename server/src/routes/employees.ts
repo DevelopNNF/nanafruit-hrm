@@ -16,6 +16,7 @@ import {
   type EmployeeInput,
   type EmployeeListResponse,
   type AuthUser,
+  type DailyShiftAssignmentEligibleResponse,
   type DailyShiftAssignmentInput,
   type DailyShiftAssignmentOutcome,
   type DailyShiftAssignmentResponse,
@@ -68,6 +69,7 @@ import {
   presignPhotoView,
 } from '../storage/employeePhotos.js'
 import { insertWithGeneratedEmployeeCode, isEmployeeCodeConflict } from '../employeeCodeGenerator.js'
+import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 
 export const employeesRouter = Router()
 
@@ -1271,15 +1273,53 @@ function parseDailyShiftAssignmentInput(body: unknown): ParseResult<DailyShiftAs
   return { ok: true, value: { date, assignments } }
 }
 
+// Employees a supervisor/HR/Admin may assign a daily shift to — same scope
+// as Bulk OT Request (resolveSupervisorScope in supervisorScope.ts): every
+// active employee for HR/Admin, only the caller's own active direct reports
+// for a resolved supervisor. Not gated by canRead/canWrite — those are
+// role-based, and a supervisor reaching this page typically holds neither HR
+// nor Admin, only enough of an Entra role to get past MeProvider's "no role"
+// gate in admin/ (see supervisorScope.ts's comment for why that is a
+// separate, unrelated requirement).
+employeesRouter.get(
+  '/employees/shift-assignments/daily-bulk/eligible-employees',
+  async (req: Request, res: Response) => {
+    const auth = actorOf(req)
+    if (!auth) return fail(res, 500, 'server misconfigured')
+
+    try {
+      const scope = await resolveSupervisorScope(auth)
+      if (scope.kind === 'none') {
+        return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์มอบหมายกะ', 'FORBIDDEN')
+      }
+
+      const { rows } = await pool.query<EmployeeRow>(
+        scope.kind === 'all'
+          ? `${SELECT_EMPLOYEE} ORDER BY e.employee_code`
+          : `${SELECT_EMPLOYEE} WHERE e.id = ANY($1::bigint[]) ORDER BY e.employee_code`,
+        scope.kind === 'all' ? [] : [scope.employeeIds]
+      )
+
+      const body: DailyShiftAssignmentEligibleResponse = {
+        scope: scope.kind === 'all' ? 'all' : 'team',
+        employees: rows.map(rowToEmployee),
+      }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
 // Assigns a shift to several employees for one calendar date at once — the
 // admin "มอบหมายกะรายวัน" screen for temporary daily workers, who have no
 // fixed shift (see assignSingleDayShift's own comment for why this can't
 // reuse createShiftChange/POST /employees/:id/shift-changes). Each row runs
 // in its own SAVEPOINT so one bad row (or a genuine conflict) can't roll back
-// the rest of an otherwise-successful batch.
+// the rest of an otherwise-successful batch. Guarded by resolveSupervisorScope
+// rather than canWrite for the same reason the GET above is — see its comment.
 employeesRouter.post(
   '/employees/shift-assignments/daily-bulk',
-  canWrite,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
     if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -1289,9 +1329,25 @@ employeesRouter.post(
     const input = parsed.value
 
     try {
+      const scope = await resolveSupervisorScope(actor)
+      if (scope.kind === 'none') {
+        return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์มอบหมายกะ', 'FORBIDDEN')
+      }
+
       const outcomes = await withTransaction(async (client) => {
         const results: DailyShiftAssignmentOutcome[] = []
         for (const assignment of input.assignments) {
+          // Re-checked against the server-resolved scope, not the client's
+          // say-so — same reasoning as the Bulk OT Request create endpoint.
+          if (!scopeAllows(scope, assignment.employeeId)) {
+            results.push({
+              employeeId: assignment.employeeId,
+              kind: 'error',
+              message: 'พนักงานคนนี้ไม่อยู่ในสิทธิ์ของผู้ขอ',
+            })
+            continue
+          }
+
           await client.query('SAVEPOINT daily_shift_assignment')
           try {
             const outcome = await assignSingleDayShift(client, {

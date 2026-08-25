@@ -365,6 +365,15 @@ export type DailyShiftAssignmentOutcome =
 
 export type DailyShiftAssignmentResponse = { outcomes: DailyShiftAssignmentOutcome[] }
 
+/** GET /api/employees/shift-assignments/daily-bulk/eligible-employees
+ *
+ *  The employee picker's pool for "มอบหมายกะรายวัน", scoped the same way
+ *  Bulk OT Request's eligible-employees endpoint is (see
+ *  server/src/supervisorScope.ts): 'all' for HR/Admin, 'team' for a
+ *  supervisor resolved from their Entra UPN. A caller in neither gets 403,
+ *  not an empty 'team' list. */
+export type DailyShiftAssignmentEligibleResponse = { scope: 'all' | 'team'; employees: Employee[] }
+
 /**
  * Machine-readable reason on an ApiError, for the cases where the client has to
  * *do* something different rather than just show the message.

@@ -34,12 +34,8 @@ import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import {
-  findEmployeeById,
-  findEmployeeIdByEntraUpn,
-  listActiveDirectReportIds,
-  listActiveEmployeesForBulkOt,
-} from '../employeeQueries.js'
+import { findEmployeeById, listActiveEmployeesForBulkOt } from '../employeeQueries.js'
+import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
 import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
@@ -207,50 +203,6 @@ function parseOvertimeBulkRequestInput(body: unknown): ParseResult<OvertimeBulkR
   }
 
   return { ok: true, value: { otDate: otDateRaw, startTime, endTime, reason, employeeIds } }
-}
-
-/**
- * Who may file a Bulk OT Request, and for whom.
- *
- * HR/Admin may act on any active employee — the same pair that already
- * decides every OT request. Anyone else is in scope only if their Entra
- * session resolves, via employees.entra_upn (060's migration), to an
- * employee record that is itself somebody's supervisor
- * (employment_details.supervisor_employee_id) — there is no dedicated Entra
- * App Role for "supervisor": HR did not want to manage Entra role
- * assignments in the Entra portal for a handful of line supervisors, and
- * "has direct reports" is already the real-world definition of the job.
- *
- * A caller with neither is 'none' — no access at all, not an empty 'team':
- * the eligible-employees endpoint uses this to tell "you cannot file bulk OT
- * requests" apart from "you can, but nobody reports to you yet".
- */
-type BulkOtScope =
-  | { kind: 'all' }
-  | { kind: 'team'; supervisorEmployeeId: number; employeeIds: number[] }
-  | { kind: 'none' }
-
-async function resolveBulkOtScope(auth: AuthUser, db: Queryable = pool): Promise<BulkOtScope> {
-  if (auth.kind !== 'admin') return { kind: 'none' }
-  if (auth.roles.includes('HRM.HR') || auth.roles.includes('HRM.Admin')) return { kind: 'all' }
-
-  const supervisorEmployeeId = await findEmployeeIdByEntraUpn(auth.upn, db)
-  if (supervisorEmployeeId === null) return { kind: 'none' }
-
-  const employeeIds = await listActiveDirectReportIds(supervisorEmployeeId, db)
-  if (employeeIds.length === 0) return { kind: 'none' }
-
-  return { kind: 'team', supervisorEmployeeId, employeeIds }
-}
-
-/** Never trust the client's own idea of who it may act on — every employeeId
- *  in a bulk create/eligible-employees request is checked against the
- *  server-resolved scope again here, the same way canWrite alone is never
- *  enough and every route re-derives what it needs from req.auth. */
-function scopeAllows(scope: BulkOtScope, employeeId: number): boolean {
-  if (scope.kind === 'all') return true
-  if (scope.kind === 'team') return scope.employeeIds.includes(employeeId)
-  return false
 }
 
 function parseStatusFilter(
@@ -702,7 +654,7 @@ overtimeRequestsRouter.post('/overtime-requests/:id/cancel', async (req: Request
 // validateOvertimeRequestInput — it can differ per employee on the same
 // calendar date), tagged with a shared batch_id purely so the admin list/
 // detail screens can show and act on the group as one unit. See
-// resolveBulkOtScope above for who may reach these two routes and for whom.
+// resolveSupervisorScope above for who may reach these two routes and for whom.
 
 overtimeRequestsRouter.get(
   '/overtime-requests/bulk/eligible-employees',
@@ -716,7 +668,7 @@ overtimeRequestsRouter.get(
     }
 
     try {
-      const scope = await resolveBulkOtScope(auth)
+      const scope = await resolveSupervisorScope(auth)
       if (scope.kind === 'none') {
         return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ขอ OT แบบกลุ่ม', 'FORBIDDEN')
       }
@@ -763,7 +715,7 @@ overtimeRequestsRouter.post('/overtime-requests/bulk', async (req: Request, res:
   const input = parsed.value
 
   try {
-    const scope = await resolveBulkOtScope(actor)
+    const scope = await resolveSupervisorScope(actor)
     if (scope.kind === 'none') {
       return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ขอ OT แบบกลุ่ม', 'FORBIDDEN')
     }

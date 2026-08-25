@@ -1,4 +1,5 @@
 import type {
+  DailyShiftAssignmentEligibleResponse,
   DailyShiftAssignmentInput,
   DailyShiftAssignmentOutcome,
   DailyShiftAssignmentResponse,
@@ -148,6 +149,18 @@ export async function assignDailyShifts(
   })
   const body = await unwrap<DailyShiftAssignmentResponse>(res)
   return body.outcomes
+}
+
+/** The "มอบหมายกะรายวัน" picker's employee pool — 'all' active employees for
+ *  HR/Admin, or the caller's own active direct reports for a supervisor.
+ *  Throws (ApiRequestError, 403) if the signed-in account has neither. */
+export async function fetchDailyShiftAssignmentEligibleEmployees(
+  signal?: AbortSignal
+): Promise<DailyShiftAssignmentEligibleResponse> {
+  const res = await apiFetch('/api/employees/shift-assignments/daily-bulk/eligible-employees', {
+    signal,
+  })
+  return unwrap<DailyShiftAssignmentEligibleResponse>(res)
 }
 
 export async function getWageHistory(id: number, signal?: AbortSignal): Promise<WageAssignment[]> {
