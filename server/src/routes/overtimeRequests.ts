@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
+import { randomUUID } from 'node:crypto'
 import {
   OVERTIME_BACKDATE_LIMIT_DAYS,
   OVERTIME_MAX_MINUTES,
@@ -12,6 +13,13 @@ import {
   parseWallClockMinutes,
   type AuthUser,
   type CalendarDay,
+  type OvertimeBatchActionResponse,
+  type OvertimeBatchDecisionOutcome,
+  type OvertimeBatchResponse,
+  type OvertimeBulkCreateOutcome,
+  type OvertimeBulkCreateResponse,
+  type OvertimeBulkRequestInput,
+  type OvertimeEligibleEmployeesResponse,
   type OvertimeRequestDetailResponse,
   type OvertimeRequestInput,
   type OvertimeRequestListResponse,
@@ -26,16 +34,25 @@ import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById } from '../employeeQueries.js'
+import {
+  findEmployeeById,
+  findEmployeeIdByEntraUpn,
+  listActiveDirectReportIds,
+  listActiveEmployeesForBulkOt,
+} from '../employeeQueries.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
 import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
-import { approvedOvertimeMinutesInWeek } from '../overtimeReportQueries.js'
+import {
+  approvedOvertimeMinutesInWeek,
+  approvedOvertimeMinutesInWeekBulk,
+} from '../overtimeReportQueries.js'
 import {
   SELECT_OVERTIME_REQUEST,
   findOvertimeRequestById,
   hasOverlappingOvertimeRequest,
   listOvertimeRequests,
+  listOvertimeRequestsByBatchId,
   listOvertimeRequestsForEmployee,
   rowToOvertimeRequest,
   type OvertimeRequestRow,
@@ -139,6 +156,101 @@ function parseOvertimeRequestInput(body: unknown): ParseResult<OvertimeRequestIn
   }
 
   return { ok: true, value: { otDate: otDateRaw, startTime, endTime, reason } }
+}
+
+/** Same fields as parseOvertimeRequestInput plus employeeIds — POST
+ *  /overtime-requests/bulk applies one otDate/startTime/endTime/reason to
+ *  every id in the array. Duplicate ids are silently collapsed rather than
+ *  rejected: a picker built on a Set (TransferList's selection) cannot
+ *  produce them, but a hand-built request could, and there is nothing wrong
+ *  with the caller meaning to file the same request for the same person once. */
+function parseOvertimeBulkRequestInput(body: unknown): ParseResult<OvertimeBulkRequestInput> {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, message: 'body must be a JSON object' }
+  }
+  const raw = body as Record<string, unknown>
+
+  const otDateRaw = raw['otDate']
+  if (typeof otDateRaw !== 'string' || !isCalendarDate(otDateRaw)) {
+    return { ok: false, message: 'otDate is required and must be a date as YYYY-MM-DD' }
+  }
+
+  const startTime = normaliseTime(raw['startTime'])
+  if (startTime === null) {
+    return { ok: false, message: 'startTime is required and must be a time as HH:MM' }
+  }
+
+  const endTime = normaliseTime(raw['endTime'])
+  if (endTime === null) {
+    return { ok: false, message: 'endTime is required and must be a time as HH:MM' }
+  }
+
+  const reason = requiredString(raw, 'reason', 1000)
+  if (reason === null) {
+    return { ok: false, message: 'reason is required and must be 1000 characters or fewer' }
+  }
+
+  const employeeIdsRaw = raw['employeeIds']
+  if (!Array.isArray(employeeIdsRaw) || employeeIdsRaw.length === 0) {
+    return { ok: false, message: 'employeeIds must be a non-empty array' }
+  }
+  const employeeIds: number[] = []
+  const seenEmployeeIds = new Set<number>()
+  for (const item of employeeIdsRaw) {
+    if (typeof item !== 'number' || !Number.isInteger(item) || item <= 0) {
+      return { ok: false, message: 'employeeIds must contain only positive integers' }
+    }
+    if (!seenEmployeeIds.has(item)) {
+      seenEmployeeIds.add(item)
+      employeeIds.push(item)
+    }
+  }
+
+  return { ok: true, value: { otDate: otDateRaw, startTime, endTime, reason, employeeIds } }
+}
+
+/**
+ * Who may file a Bulk OT Request, and for whom.
+ *
+ * HR/Admin may act on any active employee — the same pair that already
+ * decides every OT request. Anyone else is in scope only if their Entra
+ * session resolves, via employees.entra_upn (060's migration), to an
+ * employee record that is itself somebody's supervisor
+ * (employment_details.supervisor_employee_id) — there is no dedicated Entra
+ * App Role for "supervisor": HR did not want to manage Entra role
+ * assignments in the Entra portal for a handful of line supervisors, and
+ * "has direct reports" is already the real-world definition of the job.
+ *
+ * A caller with neither is 'none' — no access at all, not an empty 'team':
+ * the eligible-employees endpoint uses this to tell "you cannot file bulk OT
+ * requests" apart from "you can, but nobody reports to you yet".
+ */
+type BulkOtScope =
+  | { kind: 'all' }
+  | { kind: 'team'; supervisorEmployeeId: number; employeeIds: number[] }
+  | { kind: 'none' }
+
+async function resolveBulkOtScope(auth: AuthUser, db: Queryable = pool): Promise<BulkOtScope> {
+  if (auth.kind !== 'admin') return { kind: 'none' }
+  if (auth.roles.includes('HRM.HR') || auth.roles.includes('HRM.Admin')) return { kind: 'all' }
+
+  const supervisorEmployeeId = await findEmployeeIdByEntraUpn(auth.upn, db)
+  if (supervisorEmployeeId === null) return { kind: 'none' }
+
+  const employeeIds = await listActiveDirectReportIds(supervisorEmployeeId, db)
+  if (employeeIds.length === 0) return { kind: 'none' }
+
+  return { kind: 'team', supervisorEmployeeId, employeeIds }
+}
+
+/** Never trust the client's own idea of who it may act on — every employeeId
+ *  in a bulk create/eligible-employees request is checked against the
+ *  server-resolved scope again here, the same way canWrite alone is never
+ *  enough and every route re-derives what it needs from req.auth. */
+function scopeAllows(scope: BulkOtScope, employeeId: number): boolean {
+  if (scope.kind === 'all') return true
+  if (scope.kind === 'team') return scope.employeeIds.includes(employeeId)
+  return false
 }
 
 function parseStatusFilter(
@@ -264,47 +376,56 @@ async function validateOvertimeRequestInput(
   }
 }
 
-function validationFail(res: Response, outcome: Exclude<ValidationOutcome, { kind: 'ok' }>): void {
-  if (outcome.kind === 'employee-not-found') return fail(res, 404, 'employee not found')
+/** The message half of validationFail, pulled out so the bulk-create endpoint
+ *  can reuse the same wording for a per-employee 'skipped' outcome without
+ *  writing an HTTP response for it — a bulk submission has no single status
+ *  code to fail with when some employees pass and some don't. */
+function describeValidationOutcome(outcome: Exclude<ValidationOutcome, { kind: 'ok' }>): {
+  status: number
+  message: string
+} {
+  if (outcome.kind === 'employee-not-found') return { status: 404, message: 'employee not found' }
   if (outcome.kind === 'no-overtime-group') {
-    return fail(
-      res,
-      400,
-      'ยังไม่ได้กำหนดกลุ่มการทำงานล่วงเวลาให้พนักงานคนนี้ จึงยังคำนวณค่า OT ไม่ได้ กรุณาติดต่อ HR'
-    )
+    return {
+      status: 400,
+      message: 'ยังไม่ได้กำหนดกลุ่มการทำงานล่วงเวลาให้พนักงานคนนี้ จึงยังคำนวณค่า OT ไม่ได้ กรุณาติดต่อ HR',
+    }
   }
   if (outcome.kind === 'too-short') {
-    return fail(res, 400, `ช่วงเวลาที่ขอต้องยาวอย่างน้อย ${OVERTIME_MIN_MINUTES} นาที`)
+    return { status: 400, message: `ช่วงเวลาที่ขอต้องยาวอย่างน้อย ${OVERTIME_MIN_MINUTES} นาที` }
   }
   if (outcome.kind === 'too-long') {
-    return fail(
-      res,
-      400,
-      `ช่วงเวลาที่ขอต้องไม่เกิน ${OVERTIME_MAX_MINUTES / 60} ชั่วโมงต่อหนึ่งคำขอ กรุณาตรวจสอบเวลาเริ่มและเวลาสิ้นสุดอีกครั้ง`
-    )
+    return {
+      status: 400,
+      message: `ช่วงเวลาที่ขอต้องไม่เกิน ${OVERTIME_MAX_MINUTES / 60} ชั่วโมงต่อหนึ่งคำขอ กรุณาตรวจสอบเวลาเริ่มและเวลาสิ้นสุดอีกครั้ง`,
+    }
   }
   if (outcome.kind === 'backdated') {
-    return fail(
-      res,
-      400,
-      `ขอ OT ย้อนหลังได้ไม่เกิน ${OVERTIME_BACKDATE_LIMIT_DAYS} วัน หากเลยกำหนดแล้วกรุณาติดต่อ HR`
-    )
+    return {
+      status: 400,
+      message: `ขอ OT ย้อนหลังได้ไม่เกิน ${OVERTIME_BACKDATE_LIMIT_DAYS} วัน หากเลยกำหนดแล้วกรุณาติดต่อ HR`,
+    }
   }
-  if (outcome.kind === 'before-hire') return fail(res, 400, 'otDate ต้องไม่ก่อนวันที่เริ่มงาน')
+  if (outcome.kind === 'before-hire') {
+    return { status: 400, message: 'otDate ต้องไม่ก่อนวันที่เริ่มงาน' }
+  }
   if (outcome.kind === 'on-leave') {
-    return fail(res, 400, 'วันที่เลือกเป็นวันลาที่อนุมัติแล้ว ไม่สามารถขอ OT ได้')
+    return { status: 400, message: 'วันที่เลือกเป็นวันลาที่อนุมัติแล้ว ไม่สามารถขอ OT ได้' }
   }
   if (outcome.kind === 'shift-conflict') {
     const { day } = outcome
-    return fail(
-      res,
-      400,
-      `ช่วงเวลาที่ขอทับกับเวลาทำงานปกติ (${day.shiftName ?? 'กะ'} ${hhmm(day.shiftStartTime ?? '')}-${hhmm(day.shiftEndTime ?? '')} ของวันที่ ${formatThaiDate(day.date)}) กรุณาเลือกช่วงเวลานอกเวลาทำงาน`
-    )
+    return {
+      status: 400,
+      message: `ช่วงเวลาที่ขอทับกับเวลาทำงานปกติ (${day.shiftName ?? 'กะ'} ${hhmm(day.shiftStartTime ?? '')}-${hhmm(day.shiftEndTime ?? '')} ของวันที่ ${formatThaiDate(day.date)}) กรุณาเลือกช่วงเวลานอกเวลาทำงาน`,
+    }
   }
-  if (outcome.kind === 'overlap') {
-    return fail(res, 409, 'ช่วงเวลาที่ขอทับกับคำขอ OT อื่นที่ยังรออนุมัติหรืออนุมัติแล้ว')
-  }
+  // outcome.kind === 'overlap'
+  return { status: 409, message: 'ช่วงเวลาที่ขอทับกับคำขอ OT อื่นที่ยังรออนุมัติหรืออนุมัติแล้ว' }
+}
+
+function validationFail(res: Response, outcome: Exclude<ValidationOutcome, { kind: 'ok' }>): void {
+  const { status, message } = describeValidationOutcome(outcome)
+  fail(res, status, message)
 }
 
 /**
@@ -574,6 +695,183 @@ overtimeRequestsRouter.post('/overtime-requests/:id/cancel', async (req: Request
   }
 })
 
+// --- Bulk OT Request ("การขอล่วงเวลาแบบกลุ่ม") ----------------------------
+// A supervisor/HR/Admin filing the same OT window for several employees at
+// once from admin/. Every employee still gets an independent
+// overtime_requests row with its own day/shift snapshot (see
+// validateOvertimeRequestInput — it can differ per employee on the same
+// calendar date), tagged with a shared batch_id purely so the admin list/
+// detail screens can show and act on the group as one unit. See
+// resolveBulkOtScope above for who may reach these two routes and for whom.
+
+overtimeRequestsRouter.get(
+  '/overtime-requests/bulk/eligible-employees',
+  async (req: Request, res: Response) => {
+    const auth = actorOf(req)
+    if (!auth) return fail(res, 500, 'server misconfigured')
+
+    const dateRaw = req.query['date']
+    if (typeof dateRaw !== 'string' || !isCalendarDate(dateRaw)) {
+      return fail(res, 400, 'date is required and must be a date as YYYY-MM-DD')
+    }
+
+    try {
+      const scope = await resolveBulkOtScope(auth)
+      if (scope.kind === 'none') {
+        return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ขอ OT แบบกลุ่ม', 'FORBIDDEN')
+      }
+
+      const candidates = await listActiveEmployeesForBulkOt(
+        scope.kind === 'all' ? null : scope.employeeIds
+      )
+      const { weekStart, weekEnd, minutesByEmployeeId } = await approvedOvertimeMinutesInWeekBulk(
+        candidates.map((c) => c.id),
+        dateRaw
+      )
+
+      const body: OvertimeEligibleEmployeesResponse = {
+        scope: scope.kind === 'all' ? 'all' : 'team',
+        employees: candidates.map((c) => ({
+          employeeId: c.id,
+          employeeCode: c.employeeCode,
+          employeeName: c.employeeName,
+          departmentName: c.departmentName,
+          approvedMinutesThisWeek: minutesByEmployeeId.get(c.id) ?? 0,
+        })),
+        weekStart,
+        weekEnd,
+        capMinutes: OVERTIME_WEEKLY_CAP_MINUTES,
+      }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// One row inserted per employeeId, each in its own SAVEPOINT so a shift
+// conflict or stale scope on one employee can't roll back an otherwise-
+// successful batch — same pattern as
+// POST /employees/shift-assignments/daily-bulk. Every accepted employee
+// shares one batch_id.
+overtimeRequestsRouter.post('/overtime-requests/bulk', async (req: Request, res: Response) => {
+  const actor = actorOf(req)
+  if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+
+  const parsed = parseOvertimeBulkRequestInput(req.body)
+  if (!parsed.ok) return fail(res, 400, parsed.message)
+  const input = parsed.value
+
+  try {
+    const scope = await resolveBulkOtScope(actor)
+    if (scope.kind === 'none') {
+      return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ขอ OT แบบกลุ่ม', 'FORBIDDEN')
+    }
+
+    const batchId = randomUUID()
+
+    const outcomes = await withTransaction(async (client) => {
+      const results: OvertimeBulkCreateOutcome[] = []
+      for (const employeeId of input.employeeIds) {
+        await client.query('SAVEPOINT bulk_overtime_request')
+        try {
+          // Re-checked against the server-resolved scope, not the client's
+          // say-so: a supervisor's picker is pre-filtered to their own team,
+          // but nothing stops a hand-built request naming someone else's.
+          if (!scopeAllows(scope, employeeId)) {
+            results.push({
+              employeeId,
+              kind: 'skipped',
+              message: 'พนักงานคนนี้ไม่อยู่ในสิทธิ์ของผู้ขอ',
+            })
+            await client.query('RELEASE SAVEPOINT bulk_overtime_request')
+            continue
+          }
+
+          const outcome = await validateOvertimeRequestInput(
+            employeeId,
+            {
+              otDate: input.otDate,
+              startTime: input.startTime,
+              endTime: input.endTime,
+              reason: input.reason,
+            },
+            null,
+            client
+          )
+          if (outcome.kind !== 'ok') {
+            results.push({
+              employeeId,
+              kind: 'skipped',
+              message: describeValidationOutcome(outcome).message,
+            })
+            await client.query('RELEASE SAVEPOINT bulk_overtime_request')
+            continue
+          }
+          const snapshot = outcome.snapshot
+
+          const { rows } = await client.query<{ id: string }>(
+            `INSERT INTO overtime_requests
+               (employee_id, ot_date, start_time, end_time, requested_minutes,
+                day_status, day_label, shift_id, shift_start_time, shift_end_time,
+                overtime_group_id, reason, batch_id, created_by_oid, created_by_name)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             RETURNING id`,
+            [
+              employeeId,
+              input.otDate,
+              input.startTime,
+              input.endTime,
+              snapshot.requestedMinutes,
+              snapshot.dayStatus,
+              snapshot.dayLabel,
+              snapshot.shiftId,
+              snapshot.shiftStartTime,
+              snapshot.shiftEndTime,
+              snapshot.overtimeGroupId,
+              input.reason,
+              batchId,
+              actor.oid,
+              actor.name,
+            ]
+          )
+          const created = rows[0]
+          if (!created) throw new Error('insert into overtime_requests returned no row')
+
+          await recordAudit(client, {
+            actor,
+            action: 'overtime_request.bulk_create',
+            entityId: Number(created.id),
+            detail: {
+              employeeId,
+              otDate: input.otDate,
+              startTime: input.startTime,
+              endTime: input.endTime,
+              batchId,
+            },
+          })
+
+          results.push({ employeeId, kind: 'ok', requestId: Number(created.id) })
+          await client.query('RELEASE SAVEPOINT bulk_overtime_request')
+        } catch (err) {
+          await client.query('ROLLBACK TO SAVEPOINT bulk_overtime_request')
+          results.push({
+            employeeId,
+            kind: 'skipped',
+            message: err instanceof Error ? err.message : 'unexpected error',
+          })
+        }
+      }
+      return results
+    })
+
+    const body: OvertimeBulkCreateResponse = { batchId, outcomes }
+    res.status(201).json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
+
 overtimeRequestsRouter.get(
   '/overtime-requests',
   canReadAdmin,
@@ -793,6 +1091,256 @@ overtimeRequestsRouter.post(
       if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
 
       const responseBody: OvertimeRequestDetailResponse = { request: result.request }
+      res.json(responseBody)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Every row one Bulk OT Request submission created, for the batch detail
+// screen. canReadAdmin, same as GET /overtime-requests/:id: viewing is open
+// to all four roles, deciding is not.
+overtimeRequestsRouter.get(
+  '/overtime-requests/batch/:batchId',
+  canReadAdmin,
+  async (req: Request, res: Response) => {
+    const batchId = req.params['batchId']
+    if (typeof batchId !== 'string' || batchId === '') {
+      return fail(res, 400, 'batchId is required')
+    }
+
+    try {
+      const requests = await listOvertimeRequestsByBatchId(batchId)
+      if (requests.length === 0) return fail(res, 404, `no batch with id ${batchId}`)
+
+      const body: OvertimeBatchResponse = { requests }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Approves every still-pending row of a batch with one click, so a reviewer
+// is not clicking "approve" once per employee for a submission that was
+// really one decision. Each row still goes through its own SAVEPOINT and its
+// own live re-validation (validateOvertimeRequestInput, same as single
+// approve) — one employee's shift having changed since filing does not block
+// the rest of the group, it just leaves that one row pending, 'stale', for
+// the reviewer to look at individually afterwards through the ordinary
+// single-request detail page.
+overtimeRequestsRouter.post(
+  '/overtime-requests/batch/:batchId/approve',
+  canDecide,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+
+    const batchId = req.params['batchId']
+    if (typeof batchId !== 'string' || batchId === '') {
+      return fail(res, 400, 'batchId is required')
+    }
+
+    try {
+      const pendingRows = await pool.query<{ id: string; employee_id: string }>(
+        `SELECT id, employee_id FROM overtime_requests WHERE batch_id = $1 AND status = 'pending'`,
+        [batchId]
+      )
+      if (pendingRows.rows.length === 0) {
+        return fail(res, 404, `no pending requests in batch ${batchId}`)
+      }
+
+      const outcomes = await withTransaction(async (client) => {
+        const results: OvertimeBatchDecisionOutcome[] = []
+        for (const { id: idText, employee_id: employeeIdText } of pendingRows.rows) {
+          const id = Number(idText)
+          const employeeId = Number(employeeIdText)
+          await client.query('SAVEPOINT batch_overtime_approve')
+          try {
+            const { rows } = await client.query<{
+              ot_date: string
+              start_time: string
+              end_time: string
+              reason: string
+              status: string
+            }>(
+              `SELECT ot_date, start_time, end_time, reason, status
+               FROM overtime_requests WHERE id = $1 FOR UPDATE`,
+              [id]
+            )
+            const row = rows[0]
+            if (!row) throw new Error(`overtime request ${id} vanished mid-batch`)
+            if (row.status !== 'pending') {
+              results.push({
+                requestId: id,
+                employeeId,
+                kind: 'stale',
+                message: 'คำขอนี้ถูกดำเนินการไปแล้ว',
+              })
+              await client.query('RELEASE SAVEPOINT batch_overtime_approve')
+              continue
+            }
+
+            // Same live re-validation as the single-request approve route —
+            // see its own comment for why the row's own snapshot isn't enough.
+            const outcome = await validateOvertimeRequestInput(
+              employeeId,
+              {
+                otDate: row.ot_date,
+                startTime: row.start_time,
+                endTime: row.end_time,
+                reason: row.reason,
+              },
+              id,
+              client
+            )
+            if (outcome.kind !== 'ok') {
+              results.push({
+                requestId: id,
+                employeeId,
+                kind: 'stale',
+                message: describeValidationOutcome(outcome).message,
+              })
+              await client.query('RELEASE SAVEPOINT batch_overtime_approve')
+              continue
+            }
+
+            await client.query(
+              `UPDATE overtime_requests
+               SET status = 'approved', decided_by_oid = $2, decided_by_name = $3,
+                   decided_at = now(), updated_at = now()
+               WHERE id = $1`,
+              [id, actor.oid, actor.name]
+            )
+
+            await recordAudit(client, {
+              actor,
+              action: 'overtime_request.approve',
+              entityId: id,
+              detail: {
+                employeeId,
+                otDate: row.ot_date,
+                startTime: row.start_time,
+                endTime: row.end_time,
+                batchId,
+              },
+            })
+
+            await recomputeAttendanceDaily(
+              employeeId,
+              row.ot_date,
+              addDays(row.ot_date, 1),
+              client
+            )
+
+            results.push({ requestId: id, employeeId, kind: 'ok' })
+            await client.query('RELEASE SAVEPOINT batch_overtime_approve')
+          } catch (err) {
+            await client.query('ROLLBACK TO SAVEPOINT batch_overtime_approve')
+            results.push({
+              requestId: id,
+              employeeId,
+              kind: 'stale',
+              message: err instanceof Error ? err.message : 'unexpected error',
+            })
+          }
+        }
+        return results
+      })
+
+      const body: OvertimeBatchActionResponse = { outcomes }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Rejects every still-pending row of a batch with one click and one shared
+// reason — the batch-detail mirror of POST /overtime-requests/:id/reject.
+overtimeRequestsRouter.post(
+  '/overtime-requests/batch/:batchId/reject',
+  canDecide,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+
+    const batchId = req.params['batchId']
+    if (typeof batchId !== 'string' || batchId === '') {
+      return fail(res, 400, 'batchId is required')
+    }
+
+    const body = req.body as Partial<OvertimeRequestRejectRequest> | null
+    const reason = requiredString((body ?? {}) as Record<string, unknown>, 'reason', 1000)
+    if (reason === null) {
+      return fail(res, 400, 'reason is required and must be 1000 characters or fewer')
+    }
+
+    try {
+      const pendingRows = await pool.query<{ id: string; employee_id: string }>(
+        `SELECT id, employee_id FROM overtime_requests WHERE batch_id = $1 AND status = 'pending'`,
+        [batchId]
+      )
+      if (pendingRows.rows.length === 0) {
+        return fail(res, 404, `no pending requests in batch ${batchId}`)
+      }
+
+      const outcomes = await withTransaction(async (client) => {
+        const results: OvertimeBatchDecisionOutcome[] = []
+        for (const { id: idText, employee_id: employeeIdText } of pendingRows.rows) {
+          const id = Number(idText)
+          const employeeId = Number(employeeIdText)
+          await client.query('SAVEPOINT batch_overtime_reject')
+          try {
+            const { rows } = await client.query<{ status: string }>(
+              `SELECT status FROM overtime_requests WHERE id = $1 FOR UPDATE`,
+              [id]
+            )
+            const row = rows[0]
+            if (!row) throw new Error(`overtime request ${id} vanished mid-batch`)
+            if (row.status !== 'pending') {
+              results.push({
+                requestId: id,
+                employeeId,
+                kind: 'stale',
+                message: 'คำขอนี้ถูกดำเนินการไปแล้ว',
+              })
+              await client.query('RELEASE SAVEPOINT batch_overtime_reject')
+              continue
+            }
+
+            await client.query(
+              `UPDATE overtime_requests
+               SET status = 'rejected', decided_by_oid = $2, decided_by_name = $3,
+                   decided_at = now(), decision_reason = $4, updated_at = now()
+               WHERE id = $1`,
+              [id, actor.oid, actor.name, reason]
+            )
+
+            await recordAudit(client, {
+              actor,
+              action: 'overtime_request.reject',
+              entityId: id,
+              detail: { reason, batchId },
+            })
+
+            results.push({ requestId: id, employeeId, kind: 'ok' })
+            await client.query('RELEASE SAVEPOINT batch_overtime_reject')
+          } catch (err) {
+            await client.query('ROLLBACK TO SAVEPOINT batch_overtime_reject')
+            results.push({
+              requestId: id,
+              employeeId,
+              kind: 'stale',
+              message: err instanceof Error ? err.message : 'unexpected error',
+            })
+          }
+        }
+        return results
+      })
+
+      const responseBody: OvertimeBatchActionResponse = { outcomes }
       res.json(responseBody)
     } catch (err) {
       handleUnexpected(res, err)

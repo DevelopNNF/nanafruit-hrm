@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import type { OvertimeRequestListItem, OvertimeRequestStatus } from '@hrm/shared'
 import { listOvertimeRequests } from '../../api/overtimeRequests'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
@@ -14,6 +14,7 @@ import {
   alertDetail,
   alertTitle,
   badge,
+  button,
   cardEmpty,
   eyebrow,
   muted,
@@ -27,6 +28,35 @@ type State =
   | { phase: 'error'; message: string }
 
 type TabValue = OvertimeRequestStatus | 'all'
+
+/** One row of the table — either a normal self-filed request, or every
+ *  member of one Bulk OT Request submission collapsed into a single row
+ *  (batchId is shared, see migration 061's comment for why there is no
+ *  batch table to query this from directly). Grouped client-side rather
+ *  than by the list endpoint: the endpoint's shape and sorting stay useful
+ *  for every other caller (the employee-facing history, exports, ...). */
+type DisplayRow =
+  | { kind: 'single'; request: OvertimeRequestListItem }
+  | { kind: 'batch'; batchId: string; requests: OvertimeRequestListItem[] }
+
+function groupByBatch(requests: OvertimeRequestListItem[]): DisplayRow[] {
+  const seenBatchIds = new Set<string>()
+  const rows: DisplayRow[] = []
+  for (const request of requests) {
+    if (request.batchId === null) {
+      rows.push({ kind: 'single', request })
+      continue
+    }
+    if (seenBatchIds.has(request.batchId)) continue
+    seenBatchIds.add(request.batchId)
+    rows.push({
+      kind: 'batch',
+      batchId: request.batchId,
+      requests: requests.filter((r) => r.batchId === request.batchId),
+    })
+  }
+  return rows
+}
 
 const TABS: { value: TabValue; label: string }[] = [
   { value: 'pending', label: 'รอดำเนินการ' },
@@ -76,6 +106,11 @@ export function OvertimeRequestListPage() {
     return () => controller.abort()
   }, [tab])
 
+  const displayRows = useMemo(
+    () => (state.phase === 'ok' ? groupByBatch(state.requests) : []),
+    [state]
+  )
+
   return (
     <>
       <header className={pageHead}>
@@ -84,6 +119,9 @@ export function OvertimeRequestListPage() {
           <h1>คำขอทำงานล่วงเวลา</h1>
           <p className={subtitle}>คำขอ OT จากพนักงาน รออนุมัติหรือปฏิเสธ</p>
         </div>
+        <Link className={button('primary')} to="/overtime-requests/bulk-request">
+          ขอ OT แบบกลุ่ม
+        </Link>
       </header>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
@@ -146,46 +184,105 @@ export function OvertimeRequestListPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {state.requests.map((request, index) => (
-                      <tr
-                        key={request.id}
-                        onClick={() => void navigate(`/overtime-requests/${request.id}`)}
-                        className="cursor-pointer hover:bg-slate-50"
-                      >
-                        <td className="w-12 border-b border-slate-200 px-4 py-2.5 align-middle text-slate-500">
-                          {index + 1}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-medium text-slate-900">
-                          {request.employeeCode}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                          {request.employeeName}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
-                          {formatOvertimeDate(request.otDate)}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
-                          {hhmm(request.startTime)}-{hhmm(request.endTime)}
-                          {request.crossesMidnight && (
-                            <span className="ml-1 text-[0.7rem] text-slate-400">(+1)</span>
-                          )}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
-                          {formatOvertimeHours(request.requestedMinutes)}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
-                          {DAY_STATUS_LABEL[request.dayStatus]}
-                        </td>
-                        <td className="max-w-64 truncate border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                          {request.reason}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
-                          <span className={badge(statusBadgeTone(request.status))}>
-                            {STATUS_LABEL[request.status]}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {displayRows.map((row, index) => {
+                      if (row.kind === 'single') {
+                        const { request } = row
+                        return (
+                          <tr
+                            key={request.id}
+                            onClick={() => void navigate(`/overtime-requests/${request.id}`)}
+                            className="cursor-pointer hover:bg-slate-50"
+                          >
+                            <td className="w-12 border-b border-slate-200 px-4 py-2.5 align-middle text-slate-500">
+                              {index + 1}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-medium text-slate-900">
+                              {request.employeeCode}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                              {request.employeeName}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
+                              {formatOvertimeDate(request.otDate)}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
+                              {hhmm(request.startTime)}-{hhmm(request.endTime)}
+                              {request.crossesMidnight && (
+                                <span className="ml-1 text-[0.7rem] text-slate-400">(+1)</span>
+                              )}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
+                              {formatOvertimeHours(request.requestedMinutes)}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                              {DAY_STATUS_LABEL[request.dayStatus]}
+                            </td>
+                            <td className="max-w-64 truncate border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                              {request.reason}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
+                              <span className={badge(statusBadgeTone(request.status))}>
+                                {STATUS_LABEL[request.status]}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      }
+
+                      // A batch row: every member shares otDate/startTime/
+                      // endTime/reason (one bulk submission, one set of
+                      // details), so the first member stands in for them.
+                      // Status can differ per member once a batch decision
+                      // leaves some rows 'stale' — every distinct status
+                      // present gets its own badge rather than picking one.
+                      const first = row.requests[0]
+                      if (!first) return null
+                      const statusesPresent = [...new Set(row.requests.map((r) => r.status))]
+                      return (
+                        <tr
+                          key={row.batchId}
+                          onClick={() => void navigate(`/overtime-requests/batch/${row.batchId}`)}
+                          className="cursor-pointer bg-slate-50/60 hover:bg-slate-100"
+                        >
+                          <td className="w-12 border-b border-slate-200 px-4 py-2.5 align-middle text-slate-500">
+                            {index + 1}
+                          </td>
+                          <td
+                            colSpan={2}
+                            className="border-b border-slate-200 px-4 py-2.5 align-middle font-medium text-slate-900"
+                          >
+                            คำขอกลุ่ม ({row.requests.length} คน)
+                          </td>
+                          <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
+                            {formatOvertimeDate(first.otDate)}
+                          </td>
+                          <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
+                            {hhmm(first.startTime)}-{hhmm(first.endTime)}
+                            {first.crossesMidnight && (
+                              <span className="ml-1 text-[0.7rem] text-slate-400">(+1)</span>
+                            )}
+                          </td>
+                          <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
+                            {formatOvertimeHours(first.requestedMinutes)}
+                          </td>
+                          <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                            —
+                          </td>
+                          <td className="max-w-64 truncate border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                            {first.reason}
+                          </td>
+                          <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
+                            <div className="flex flex-wrap gap-1">
+                              {statusesPresent.map((status) => (
+                                <span key={status} className={badge(statusBadgeTone(status))}>
+                                  {STATUS_LABEL[status]}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

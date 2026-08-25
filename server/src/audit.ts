@@ -77,6 +77,7 @@ export type AuditAction =
   | 'overtime_request.create'
   | 'overtime_request.update'
   | 'overtime_request.cancel'
+  | 'overtime_request.bulk_create'
   | 'overtime_request.approve'
   | 'overtime_request.reject'
   | 'payroll_group.create'

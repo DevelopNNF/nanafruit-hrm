@@ -42,6 +42,8 @@ export type OvertimeRequestRow = {
   overtime_group_name: string
   reason: string
   status: string
+  batch_id: string | null
+  created_by_name: string | null
   decided_by_name: string | null
   decided_at: string | null
   decision_reason: string | null
@@ -59,7 +61,7 @@ export const SELECT_OVERTIME_REQUEST = `
          otr.requested_minutes, otr.day_status, otr.day_label,
          otr.shift_id, ms.shift_name, otr.shift_start_time, otr.shift_end_time,
          otr.overtime_group_id, mog.group_name AS overtime_group_name,
-         otr.reason, otr.status,
+         otr.reason, otr.status, otr.batch_id, otr.created_by_name,
          otr.decided_by_name, otr.decided_at, otr.decision_reason,
          otr.created_at, otr.updated_at
   FROM overtime_requests otr
@@ -72,7 +74,7 @@ export const SELECT_OVERTIME_REQUEST_LIST = `
          otr.requested_minutes, otr.day_status, otr.day_label,
          otr.shift_id, ms.shift_name, otr.shift_start_time, otr.shift_end_time,
          otr.overtime_group_id, mog.group_name AS overtime_group_name,
-         otr.reason, otr.status,
+         otr.reason, otr.status, otr.batch_id, otr.created_by_name,
          otr.decided_by_name, otr.decided_at, otr.decision_reason,
          otr.created_at, otr.updated_at,
          e.employee_code, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
@@ -101,6 +103,8 @@ export function rowToOvertimeRequest(row: OvertimeRequestRow): OvertimeRequest {
     overtimeGroupName: row.overtime_group_name,
     reason: row.reason,
     status: row.status as OvertimeRequestStatus,
+    batchId: row.batch_id,
+    createdByName: row.created_by_name,
     decidedByName: row.decided_by_name,
     decidedAt: row.decided_at === null ? null : new Date(row.decided_at).toISOString(),
     decisionReason: row.decision_reason,
@@ -152,6 +156,19 @@ export async function listOvertimeRequests(
   const { rows } = await db.query<OvertimeRequestListRow>(
     `${SELECT_OVERTIME_REQUEST_LIST} ${where} ORDER BY otr.created_at DESC LIMIT 500`,
     params
+  )
+  return rows.map(rowToOvertimeRequestListItem)
+}
+
+/** Every row one Bulk OT Request submission created, employee code order —
+ *  the batch detail screen's member table. */
+export async function listOvertimeRequestsByBatchId(
+  batchId: string,
+  db: Queryable = pool
+): Promise<OvertimeRequestListItem[]> {
+  const { rows } = await db.query<OvertimeRequestListRow>(
+    `${SELECT_OVERTIME_REQUEST_LIST} WHERE otr.batch_id = $1 ORDER BY e.employee_code`,
+    [batchId]
   )
   return rows.map(rowToOvertimeRequestListItem)
 }

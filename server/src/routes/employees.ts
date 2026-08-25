@@ -203,6 +203,17 @@ function parseEmployeeBasicFields(
     }
   }
 
+  // Optional, and only ever set for the handful of employees who also sign
+  // into admin/ (see 060_add_entra_upn_to_employees.sql). Lower-cased and
+  // trimmed on the way in so the case-insensitive lookup in
+  // findEmployeeIdByEntraUpn never has to reconcile "Someone@x.com" against
+  // "someone@x.com" saved on a different day.
+  const entraUpnRaw = raw['entraUpn']
+  const entraUpn =
+    typeof entraUpnRaw === 'string' && entraUpnRaw.trim() !== ''
+      ? entraUpnRaw.trim().toLowerCase()
+      : null
+
   const title = requiredString(raw, 'title')
   if (title === null || !(TITLES as readonly string[]).includes(title)) {
     return { ok: false, message: `title must be one of: ${TITLES.join(', ')}` }
@@ -244,6 +255,7 @@ function parseEmployeeBasicFields(
       employeeCode: employeeCode ?? '',
       idCardNumber,
       fingerprintCode,
+      entraUpn,
       title: title as EmployeeBasicInput['title'],
       firstNameTh: fields.firstNameTh as string,
       lastNameTh: fields.lastNameTh as string,
@@ -592,16 +604,17 @@ function isUniqueViolation(err: unknown): boolean {
   )
 }
 
-/** employees has three unique columns now — the constraint name says which one
+/** employees has four unique columns now — the constraint name says which one
  *  actually failed rather than assuming it's always employee_code. */
 function uniqueViolationField(
   err: unknown
-): 'employeeCode' | 'idCardNumber' | 'fingerprintCode' | null {
+): 'employeeCode' | 'idCardNumber' | 'fingerprintCode' | 'entraUpn' | null {
   const constraint =
     typeof err === 'object' && err !== null ? (err as { constraint?: unknown }).constraint : null
   if (constraint === 'employees_employee_code_key') return 'employeeCode'
   if (constraint === 'employees_id_card_number_key') return 'idCardNumber'
   if (constraint === 'employees_fingerprint_code_key') return 'fingerprintCode'
+  if (constraint === 'employees_entra_upn_key') return 'entraUpn'
   return null
 }
 
@@ -725,15 +738,16 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
         async (employeeCode) => {
           const { rows } = await client.query<{ id: string }>(
             `INSERT INTO employees
-               (employee_code, id_card_number, fingerprint_code, title,
+               (employee_code, id_card_number, fingerprint_code, entra_upn, title,
                 first_name_th, last_name_th,
                 first_name_en, last_name_en, nickname, gender)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              RETURNING id`,
             [
               employeeCode,
               input.idCardNumber,
               input.fingerprintCode,
+              input.entraUpn,
               input.title,
               input.firstNameTh,
               input.lastNameTh,
@@ -822,6 +836,9 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
       if (field === 'fingerprintCode') {
         return fail(res, 409, `รหัสลายนิ้วมือ ${input.fingerprintCode} ถูกใช้งานแล้ว`)
       }
+      if (field === 'entraUpn') {
+        return fail(res, 409, `Entra UPN ${input.entraUpn} ถูกใช้งานกับพนักงานคนอื่นแล้ว`)
+      }
       return fail(res, 409, `employee code ${insertedEmployeeCode} is already taken`)
     }
     const fkField = fkViolationField(err)
@@ -869,17 +886,18 @@ employeesRouter.patch('/employees/:id/basic', canWrite, async (req: Request, res
     const result = await withTransaction(async (client) => {
       const { rowCount } = await client.query(
         `UPDATE employees SET
-           employee_code = $2, id_card_number = $3, fingerprint_code = $4,
-           title = $5,
-           first_name_th = $6, last_name_th = $7,
-           first_name_en = $8, last_name_en = $9,
-           nickname = $10, gender = $11, updated_at = now()
+           employee_code = $2, id_card_number = $3, fingerprint_code = $4, entra_upn = $5,
+           title = $6,
+           first_name_th = $7, last_name_th = $8,
+           first_name_en = $9, last_name_en = $10,
+           nickname = $11, gender = $12, updated_at = now()
          WHERE id = $1`,
         [
           id,
           input.employeeCode,
           input.idCardNumber,
           input.fingerprintCode,
+          input.entraUpn,
           input.title,
           input.firstNameTh,
           input.lastNameTh,
@@ -917,6 +935,9 @@ employeesRouter.patch('/employees/:id/basic', canWrite, async (req: Request, res
       }
       if (field === 'fingerprintCode') {
         return fail(res, 409, `รหัสลายนิ้วมือ ${input.fingerprintCode} ถูกใช้งานแล้ว`)
+      }
+      if (field === 'entraUpn') {
+        return fail(res, 409, `Entra UPN ${input.entraUpn} ถูกใช้งานกับพนักงานคนอื่นแล้ว`)
       }
       return fail(res, 409, `employee code ${input.employeeCode} is already taken`)
     }

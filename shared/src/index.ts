@@ -107,6 +107,15 @@ export type Employee = {
    *  people differently. Null for anyone not enrolled on a terminal, which is
    *  most staff, since the usual channel is clocking in through LINE. */
   fingerprintCode: string | null
+  /** The Entra userPrincipalName this employee signs into admin/ with, e.g.
+   *  someone@nanafruit.com. Null for the vast majority of employees, who
+   *  never get an admin/ account at all. HR fills this in by hand (no Entra
+   *  Graph sync) for the minority who do — today, that's supervisors who
+   *  need to file bulk OT requests for their own direct reports; see
+   *  resolveBulkOtScope in routes/overtimeRequests.ts, which resolves an
+   *  Entra session back to this column to find out whose supervisor they
+   *  are. Compared case-insensitively at lookup time. */
+  entraUpn: string | null
   title: Title
   firstNameTh: string
   lastNameTh: string
@@ -2305,6 +2314,17 @@ export type OvertimeRequest = {
   overtimeGroupName: string
   reason: string
   status: OvertimeRequestStatus
+  /** Ties this row to the other per-employee rows one "Bulk OT Request"
+   *  submission created, purely for the admin UI to group and act on them
+   *  as one unit — there is no batch table, and every other field on this
+   *  row (including the day/shift snapshot) is independent per employee.
+   *  Null for a request an employee filed for themselves, one at a time,
+   *  which is every request before bulk creation existed and most after. */
+  batchId: string | null
+  /** Display name of whoever filed this on the employee's behalf (a
+   *  supervisor, HR or Admin, via Bulk OT Request) — null when the employee
+   *  filed it themselves, which is the ordinary case. */
+  createdByName: string | null
   /** The admin's display name at decision time. Null while pending/cancelled. */
   decidedByName: string | null
   /** ISO 8601. Null while pending/cancelled. */
@@ -2354,6 +2374,83 @@ export type OvertimeRequestDetailResponse = { request: OvertimeRequestListItem }
 /** Body of POST /api/overtime-requests/:id/reject — a reason is required
  *  every time, never optional. */
 export type OvertimeRequestRejectRequest = { reason: string }
+
+/* Bulk OT Request ----------------------------------------------------------
+ * A supervisor/HR/Admin filing the same OT window for several employees at
+ * once from admin/ — "การขอล่วงเวลาแบบกลุ่ม". Every employee still gets a
+ * normal, independent overtime_requests row (see migration 061's comment for
+ * why there is no batch table); these types exist to create and act on that
+ * group of rows as one unit.
+ */
+
+/** One row of the picker on the "ขอ OT แบบกลุ่ม" screen. approvedMinutesThisWeek
+ *  is what GET's otDate query param resolves to — shown next to the name so
+ *  the statutory 36-hour/week cap is visible before submission, not only
+ *  after, on the single-request detail page's own weekly-cap check. */
+export type OvertimeEligibleEmployee = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  departmentName: string | null
+  approvedMinutesThisWeek: number
+}
+
+/** GET /api/overtime-requests/bulk/eligible-employees?date=YYYY-MM-DD
+ *
+ *  `scope` says why this list is what it is: 'all' for HR/Admin (every
+ *  active employee), 'team' for a supervisor (their own active direct
+ *  reports only, resolved server-side from entraUpn — never trust a client
+ *  to say who their reports are). The caller has no bulk-OT access at all
+ *  when neither applies; the server answers that with 403, not an empty
+ *  'team' list, so the page can tell "no reports yet" apart from "not
+ *  allowed here". */
+export type OvertimeEligibleEmployeesResponse = {
+  scope: 'all' | 'team'
+  employees: OvertimeEligibleEmployee[]
+  weekStart: string
+  weekEnd: string
+  capMinutes: number
+}
+
+/** Body of POST /api/overtime-requests/bulk. Same otDate/startTime/endTime/
+ *  reason shape as OvertimeRequestInput, applied to every id in employeeIds —
+ *  the "one set of details, many employees" the feature asked for. */
+export type OvertimeBulkRequestInput = {
+  otDate: string
+  startTime: string
+  endTime: string
+  reason: string
+  employeeIds: number[]
+}
+
+/** One employee's result from a bulk create. 'skipped' covers every reason
+ *  validateOvertimeRequestInput could reject that employee (shift conflict,
+ *  already on leave, no overtime group, ...) as well as being outside the
+ *  caller's scope — the rest of the batch is created regardless, per employee,
+ *  same reasoning as DailyShiftAssignmentOutcome. */
+export type OvertimeBulkCreateOutcome =
+  | { employeeId: number; kind: 'ok'; requestId: number }
+  | { employeeId: number; kind: 'skipped'; message: string }
+
+/** POST /api/overtime-requests/bulk */
+export type OvertimeBulkCreateResponse = { batchId: string; outcomes: OvertimeBulkCreateOutcome[] }
+
+/** GET /api/overtime-requests/batch/:batchId — every row created by one bulk
+ *  submission, for the batch detail screen. Same list-item shape the queue
+ *  already uses. */
+export type OvertimeBatchResponse = { requests: OvertimeRequestListItem[] }
+
+/** One request's result from a batch-wide approve/reject. 'stale' mirrors
+ *  approvalStaleFail on the single-request endpoint — the request was valid
+ *  when filed and no longer is (a shift changed, the backdate window closed,
+ *  ...), so it is left pending for a reviewer to look at individually rather
+ *  than silently decided either way. */
+export type OvertimeBatchDecisionOutcome =
+  | { requestId: number; employeeId: number; kind: 'ok' }
+  | { requestId: number; employeeId: number; kind: 'stale'; message: string }
+
+/** POST /api/overtime-requests/batch/:batchId/approve, .../reject */
+export type OvertimeBatchActionResponse = { outcomes: OvertimeBatchDecisionOutcome[] }
 
 /* Overtime time arithmetic ------------------------------------------------
  * Lives in shared/ rather than server/ because liff/ has to show the

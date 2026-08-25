@@ -45,6 +45,7 @@ function draftFrom(employee: Employee): EmployeeBasicInput {
     employeeCode: employee.employeeCode,
     idCardNumber: employee.idCardNumber,
     fingerprintCode: employee.fingerprintCode,
+    entraUpn: employee.entraUpn,
     title: employee.title,
     firstNameTh: employee.firstNameTh,
     lastNameTh: employee.lastNameTh,
@@ -205,6 +206,16 @@ export function EmployeeBasicTab({
                   className={fieldControl}
                   value={draft.fingerprintCode ?? ''}
                   onChange={(e) => set('fingerprintCode', e.target.value.trim() || null)}
+                />
+              </label>
+              <label className={fieldLabel}>
+                <span>Entra UPN (สำหรับหัวหน้างานที่ต้องเข้า Admin)</span>
+                <input
+                  type="email"
+                  className={fieldControl}
+                  placeholder="someone@nanafruit.com"
+                  value={draft.entraUpn ?? ''}
+                  onChange={(e) => set('entraUpn', e.target.value.trim() || null)}
                 />
               </label>
               <label className={fieldLabel}>

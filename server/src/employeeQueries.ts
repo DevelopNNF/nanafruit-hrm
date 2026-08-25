@@ -19,6 +19,7 @@ export type EmployeeRow = {
   employee_code: string
   id_card_number: string | null
   fingerprint_code: string | null
+  entra_upn: string | null
   title: string
   first_name_th: string
   last_name_th: string
@@ -58,7 +59,7 @@ export type EmployeeRow = {
 // column stopped being a safe "current shift" source the moment a change
 // could be scheduled for a future date with no job to flip it on arrival.
 export const SELECT_EMPLOYEE = `
-  SELECT e.id, e.employee_code, e.id_card_number, e.fingerprint_code, e.title,
+  SELECT e.id, e.employee_code, e.id_card_number, e.fingerprint_code, e.entra_upn, e.title,
          e.first_name_th, e.last_name_th, e.first_name_en, e.last_name_en,
          e.nickname, e.gender,
          d.status, d.hire_date, d.start_working_date, d.end_working_date,
@@ -108,6 +109,7 @@ export function rowToEmployee(row: EmployeeRow): Employee {
     employeeCode: row.employee_code,
     idCardNumber: row.id_card_number,
     fingerprintCode: row.fingerprint_code,
+    entraUpn: row.entra_upn,
     title: row.title as Employee['title'],
     firstNameTh: row.first_name_th,
     lastNameTh: row.last_name_th,
@@ -164,4 +166,82 @@ export async function findEmployeeByLineUserId(
   )
   const row = rows[0]
   return row ? rowToEmployee(row) : null
+}
+
+/** Resolves an Entra session back to the employee record it belongs to, for
+ *  features that need to know "which employee is this admin/ user" rather
+ *  than just what role they hold — currently only resolveBulkOtScope in
+ *  routes/overtimeRequests.ts. Case-insensitive: see 060's comment on why the
+ *  column itself stays a plain unique index instead of a lower() one. */
+export async function findEmployeeIdByEntraUpn(
+  upn: string,
+  db: Queryable = pool
+): Promise<number | null> {
+  const { rows } = await db.query<{ id: string }>(
+    `SELECT id FROM employees WHERE lower(entra_upn) = lower($1)`,
+    [upn]
+  )
+  const row = rows[0]
+  return row ? Number(row.id) : null
+}
+
+/** Active employees this employee supervises, for the Bulk OT Request
+ *  picker's 'team' scope. Inactive direct reports are excluded for the same
+ *  reason every other employee dropdown in this codebase filters to Active —
+ *  there is nothing left to request OT for once someone has left. */
+export async function listActiveDirectReportIds(
+  supervisorEmployeeId: number,
+  db: Queryable = pool
+): Promise<number[]> {
+  const { rows } = await db.query<{ id: string }>(
+    `SELECT e.id
+     FROM employees e
+     JOIN employment_details d ON d.employee_id = e.id
+     WHERE d.supervisor_employee_id = $1 AND d.status = 'Active'
+     ORDER BY e.employee_code`,
+    [supervisorEmployeeId]
+  )
+  return rows.map((row) => Number(row.id))
+}
+
+export type EmployeeBulkOtCandidate = {
+  id: number
+  employeeCode: string
+  employeeName: string
+  departmentName: string | null
+}
+
+/** Active employees for the Bulk OT Request picker — just enough to render
+ *  and search a TransferList row, not the full Employee join (jobTitle,
+ *  shift, ... are never shown there). `employeeIds` narrows to a specific
+ *  set — a supervisor's own direct reports; null means every active
+ *  employee, HR/Admin's 'all' scope. */
+export async function listActiveEmployeesForBulkOt(
+  employeeIds: number[] | null,
+  db: Queryable = pool
+): Promise<EmployeeBulkOtCandidate[]> {
+  const where = employeeIds === null ? '' : 'AND e.id = ANY($1::bigint[])'
+  const params = employeeIds === null ? [] : [employeeIds]
+  const { rows } = await db.query<{
+    id: string
+    employee_code: string
+    employee_name: string
+    department_name: string | null
+  }>(
+    `SELECT e.id, e.employee_code,
+            (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name,
+            md.dept_name AS department_name
+     FROM employees e
+     JOIN employment_details d ON d.employee_id = e.id
+     LEFT JOIN master_departments md ON md.id = d.department_id
+     WHERE d.status = 'Active' ${where}
+     ORDER BY e.employee_code`,
+    params
+  )
+  return rows.map((row) => ({
+    id: Number(row.id),
+    employeeCode: row.employee_code,
+    employeeName: row.employee_name,
+    departmentName: row.department_name,
+  }))
 }

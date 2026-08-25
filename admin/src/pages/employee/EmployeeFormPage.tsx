@@ -55,6 +55,7 @@ const emptyDraft: EmployeeInput = {
   employeeCode: '',
   idCardNumber: null,
   fingerprintCode: null,
+  entraUpn: null,
   title: TITLES[0],
   firstNameTh: '',
   lastNameTh: '',
@@ -491,6 +492,16 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
                   className={fieldControl}
                   value={draft.fingerprintCode ?? ''}
                   onChange={(e) => setBasic('fingerprintCode', e.target.value.trim() || null)}
+                />
+              </label>
+              <label className={fieldLabel}>
+                <span>Entra UPN (สำหรับหัวหน้างานที่ต้องเข้า Admin)</span>
+                <input
+                  type="email"
+                  className={fieldControl}
+                  placeholder="someone@nanafruit.com"
+                  value={draft.entraUpn ?? ''}
+                  onChange={(e) => setBasic('entraUpn', e.target.value.trim() || null)}
                 />
               </label>
               <label className={fieldLabel}>

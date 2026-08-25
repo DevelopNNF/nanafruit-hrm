@@ -369,3 +369,33 @@ export async function approvedOvertimeMinutesInWeek(
   )
   return { weekStart, weekEnd, minutes: Number(rows[0]?.minutes ?? 0) }
 }
+
+/**
+ * Same figure as approvedOvertimeMinutesInWeek, for several employees at
+ * once — the Bulk OT Request picker shows every eligible employee's current
+ * weekly total next to their name, and doing that with one query per
+ * employee would be an N+1 across a pane that can list the whole company.
+ * No excludeId: unlike the single-request weekly-cap check, this runs before
+ * any request exists to exclude.
+ */
+export async function approvedOvertimeMinutesInWeekBulk(
+  employeeIds: number[],
+  date: string,
+  db: Queryable = pool
+): Promise<{ weekStart: string; weekEnd: string; minutesByEmployeeId: Map<number, number> }> {
+  const weekStart = weekStartOf(date)
+  const weekEnd = addDaysUtc(weekStart, 6)
+
+  if (employeeIds.length === 0) return { weekStart, weekEnd, minutesByEmployeeId: new Map() }
+
+  const { rows } = await db.query<{ employee_id: string; minutes: string }>(
+    `SELECT employee_id, sum(requested_minutes) AS minutes
+     FROM overtime_requests
+     WHERE employee_id = ANY($1::bigint[]) AND status = 'approved'
+       AND ot_date BETWEEN $2::date AND $3::date
+     GROUP BY employee_id`,
+    [employeeIds, weekStart, weekEnd]
+  )
+  const minutesByEmployeeId = new Map(rows.map((row) => [Number(row.employee_id), Number(row.minutes)]))
+  return { weekStart, weekEnd, minutesByEmployeeId }
+}
