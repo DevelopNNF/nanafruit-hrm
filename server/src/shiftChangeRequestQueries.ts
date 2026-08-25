@@ -176,6 +176,28 @@ export async function listShiftChangeRequestsPendingApproval(
   return rows.map(rowToShiftChangeRequestListItem)
 }
 
+/** Requests this specific supervisor has already decided themselves, via
+ *  LIFF — scoped by the synthetic `employee:<id>` oid (see describeActor in
+ *  employeeQueries.ts) rather than just supervisor_employee_id, so a
+ *  request HR/Admin overrode without this supervisor ever acting, or one
+ *  this same person decided through admin/ under their real Entra oid,
+ *  does not show up here with no attributable reason. Used by the LIFF
+ *  approval inbox's "ตัดสินใจแล้ว" tab. */
+export async function listShiftChangeRequestsDecidedBySupervisor(
+  supervisorEmployeeId: number,
+  db: Queryable = pool
+): Promise<ShiftChangeRequestListItem[]> {
+  const { rows } = await db.query<ShiftChangeRequestListRow>(
+    `${SELECT_SHIFT_CHANGE_REQUEST_LIST}
+     WHERE scr.supervisor_employee_id = $1 AND scr.status <> 'pending'
+       AND (scr.supervisor_approved_by_oid = $2 OR scr.decided_by_oid = $2)
+     ORDER BY scr.decided_at DESC NULLS LAST, scr.created_at DESC
+     LIMIT 200`,
+    [supervisorEmployeeId, `employee:${supervisorEmployeeId}`]
+  )
+  return rows.map(rowToShiftChangeRequestListItem)
+}
+
 /** Does this employee already have another pending/approved request for the
  *  same date? Cancelled/rejected requests never block — they never held a
  *  real claim on that day. excludeId lets an edit check against every *other*

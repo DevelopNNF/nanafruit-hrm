@@ -106,3 +106,18 @@ export function requireRole(...allowed: Role[]): RequestHandler {
     next()
   }
 }
+
+/**
+ * Like requireRole, but an employee-kind caller always passes this gate —
+ * real authorization for what they may act on happens per-request inside
+ * each route's resolveXApprover, once the row (and its current_stage) is
+ * loaded, the same way an admin's role alone is not sufficient there either.
+ * Mount only on the approve/reject routes that resolveXApprover guards.
+ */
+export function requireRoleOrEmployee(...allowed: Role[]): RequestHandler {
+  const requireAdminRole = requireRole(...allowed)
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.auth?.kind === 'employee') return next()
+    return requireAdminRole(req, res, next)
+  }
+}

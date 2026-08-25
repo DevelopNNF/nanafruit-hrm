@@ -15,10 +15,10 @@ import {
   type DayOffSwapRequestStatus,
 } from '@hrm/shared'
 import { pool, withTransaction } from '../db.js'
-import { requireRole } from '../auth/middleware.js'
+import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
+import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
 import { resolveSupervisorScope } from '../supervisorScope.js'
@@ -42,6 +42,10 @@ type Queryable = Pick<pg.Pool, 'query'>
 // fixed role check — see resolveDayOffSwapApprover, checked per-request once
 // current_stage is loaded, same pattern as leaveRequests.ts.
 const canReadAdmin = requireRole(...ROLES)
+// Approve/reject only: an employee-kind caller (a LIFF supervisor) always
+// passes this gate too — resolveDayOffSwapApprover still gates what they may
+// actually do once the row is loaded, same as an admin with the wrong role.
+const canDecideAsAdminOrEmployee = requireRoleOrEmployee(...ROLES)
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
@@ -50,12 +54,19 @@ function actorOf(req: Request): AuthUser | null {
 type DayOffSwapApproverKind = 'hr' | 'supervisor'
 
 /** Same rule as leaveRequests.ts's resolveLeaveApprover. */
-async function resolveDayOffSwapApprover(
+export async function resolveDayOffSwapApprover(
   actor: AuthUser,
   row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
   db: Queryable
 ): Promise<DayOffSwapApproverKind | null> {
-  if (actor.kind !== 'admin') return null
+  if (actor.kind === 'employee') {
+    // No UPN lookup needed — actor.employeeId is already the identity. Never
+    // the 'hr' override: that stays an admin-only privilege by design.
+    if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+      return null
+    }
+    return actor.employeeId === row.supervisorEmployeeId ? 'supervisor' : null
+  }
   if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
   if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
     return null
@@ -536,10 +547,10 @@ dayOffSwapRequestsRouter.get('/day-off-swap-requests/:id', canReadAdmin, async (
 
 dayOffSwapRequestsRouter.post(
   '/day-off-swap-requests/:id/approve',
-  canReadAdmin,
+  canDecideAsAdminOrEmployee,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
-    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+    if (!actor) return fail(res, 500, 'server misconfigured')
 
     const id = parseId(req.params['id'])
     if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -572,6 +583,9 @@ dayOffSwapRequestsRouter.post(
           client
         )
         if (approverKind === null) return { kind: 'forbidden' as const }
+
+        const actorInfo = await describeActor(actor, client)
+        if (!actorInfo) return { kind: 'forbidden' as const }
 
         // Re-checked here, not just at submission, for BOTH a forwarding
         // approval and a final one — same reasoning as
@@ -609,7 +623,7 @@ dayOffSwapRequestsRouter.post(
              SET current_stage = 'hr', supervisor_approved_by_oid = $2,
                  supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
              WHERE id = $1`,
-            [id, actor.oid, actor.name]
+            [id, actorInfo.oid, actorInfo.name]
           )
 
           await recordAudit(client, {
@@ -630,7 +644,7 @@ dayOffSwapRequestsRouter.post(
            SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), updated_at = now()
            WHERE id = $1`,
-          [id, actor.oid, actor.name]
+          [id, actorInfo.oid, actorInfo.name]
         )
 
         await recordAudit(client, {
@@ -661,10 +675,10 @@ dayOffSwapRequestsRouter.post(
 
 dayOffSwapRequestsRouter.post(
   '/day-off-swap-requests/:id/reject',
-  canReadAdmin,
+  canDecideAsAdminOrEmployee,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
-    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+    if (!actor) return fail(res, 500, 'server misconfigured')
 
     const id = parseId(req.params['id'])
     if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -698,12 +712,15 @@ dayOffSwapRequestsRouter.post(
         )
         if (approverKind === null) return { kind: 'forbidden' as const }
 
+        const actorInfo = await describeActor(actor, client)
+        if (!actorInfo) return { kind: 'forbidden' as const }
+
         await client.query(
           `UPDATE day_off_swap_requests
            SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), decision_reason = $4, updated_at = now()
            WHERE id = $1`,
-          [id, actor.oid, actor.name, reason]
+          [id, actorInfo.oid, actorInfo.name, reason]
         )
 
         await recordAudit(client, {

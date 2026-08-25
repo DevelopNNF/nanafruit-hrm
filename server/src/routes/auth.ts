@@ -3,7 +3,11 @@ import type { Request, Response } from 'express'
 import type { Employee, LineLinkResponse, LineSessionResponse } from '@hrm/shared'
 import { recordAudit } from '../audit.js'
 import { withTransaction } from '../db.js'
-import { findEmployeeById, findEmployeeByLineUserId } from '../employeeQueries.js'
+import {
+  findEmployeeById,
+  findEmployeeByLineUserId,
+  listActiveDirectReportIds,
+} from '../employeeQueries.js'
 import { TokenError } from '../auth/errors.js'
 import { hashLinkCode } from '../auth/linkCode.js'
 import { verifyLineIdToken } from '../auth/line.js'
@@ -26,8 +30,13 @@ function readString(body: unknown, key: string): string | null {
   return trimmed === '' ? null : trimmed
 }
 
-function sessionBody(token: string, expiresAt: Date, employee: Employee): LineSessionResponse {
-  return { token, expiresAt: expiresAt.toISOString(), employee }
+async function sessionBody(
+  token: string,
+  expiresAt: Date,
+  employee: Employee
+): Promise<LineSessionResponse> {
+  const directReports = await listActiveDirectReportIds(employee.id)
+  return { token, expiresAt: expiresAt.toISOString(), employee, isSupervisor: directReports.length > 0 }
 }
 
 /** Turns a TokenError into a 401 and anything else into a 500, as everywhere else. */
@@ -54,7 +63,7 @@ authRouter.post('/auth/line/session', sessionLimiter, async (req: Request, res: 
     }
 
     const { token, expiresAt } = await issueSession(employee.id)
-    res.json(sessionBody(token, expiresAt, employee))
+    res.json(await sessionBody(token, expiresAt, employee))
   } catch (err) {
     failVerify(res, err)
   }
@@ -128,7 +137,7 @@ authRouter.post('/auth/line/link', linkLimiter, async (req: Request, res: Respon
     const { token, expiresAt } = await issueSession(employee.id)
     // Straight into a session: someone who just proved who they are should not
     // then be asked to prove it again.
-    const body: LineLinkResponse = sessionBody(token, expiresAt, employee)
+    const body: LineLinkResponse = await sessionBody(token, expiresAt, employee)
     res.status(201).json(body)
   } catch (err) {
     failVerify(res, err)

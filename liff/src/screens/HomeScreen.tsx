@@ -3,6 +3,7 @@ import liff from '@line/liff'
 import type { Employee } from '@hrm/shared'
 import { AttendanceCard } from '../components/AttendanceCard'
 import { HomeLeaveBalances } from '../components/HomeLeaveBalances'
+import { ApprovalInboxTile } from '../components/ApprovalInboxTile'
 
 type Profile = {
   displayName: string
@@ -17,6 +18,7 @@ export type SubScreen =
   | 'overtime'
   | 'profile'
   | 'calendar'
+  | 'approvals'
 
 type Tile = {
   screen: SubScreen
@@ -35,10 +37,11 @@ const TILES: Tile[] = [
 
 type Props = {
   employee: Employee
+  isSupervisor: boolean
   onNavigate: (screen: SubScreen) => void
 }
 
-export function HomeScreen({ employee, onNavigate }: Props) {
+export function HomeScreen({ employee, isSupervisor, onNavigate }: Props) {
   const [profile, setProfile] = useState<Profile | null>(null)
 
   useEffect(() => {
@@ -82,6 +85,8 @@ export function HomeScreen({ employee, onNavigate }: Props) {
       <AttendanceCard />
 
       <HomeLeaveBalances employee={employee} onViewAll={() => onNavigate('leave')} />
+
+      <ApprovalInboxTile isSupervisor={isSupervisor} onNavigate={() => onNavigate('approvals')} />
 
       <nav className="home-tiles">
         <button

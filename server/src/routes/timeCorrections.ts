@@ -17,10 +17,10 @@ import {
   type TimeCorrectionStatus,
 } from '@hrm/shared'
 import { pool, withTransaction } from '../db.js'
-import { requireRole } from '../auth/middleware.js'
+import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
+import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { addDays, getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { resolveMatchWindow } from '../attendanceMatchingQueries.js'
 import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
@@ -45,6 +45,10 @@ type Queryable = Pick<pg.Pool, 'query'>
 // fixed role check — see resolveTimeCorrectionApprover, checked per-request
 // once current_stage is loaded, same pattern as leaveRequests.ts.
 const canReadAdmin = requireRole(...ROLES)
+// Approve/reject only: an employee-kind caller (a LIFF supervisor) always
+// passes this gate too — resolveTimeCorrectionApprover still gates what they
+// may actually do once the row is loaded, same as an admin with the wrong role.
+const canDecideAsAdminOrEmployee = requireRoleOrEmployee(...ROLES)
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
@@ -53,12 +57,19 @@ function actorOf(req: Request): AuthUser | null {
 type TimeCorrectionApproverKind = 'hr' | 'supervisor'
 
 /** Same rule as leaveRequests.ts's resolveLeaveApprover. */
-async function resolveTimeCorrectionApprover(
+export async function resolveTimeCorrectionApprover(
   actor: AuthUser,
   row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
   db: Queryable
 ): Promise<TimeCorrectionApproverKind | null> {
-  if (actor.kind !== 'admin') return null
+  if (actor.kind === 'employee') {
+    // No UPN lookup needed — actor.employeeId is already the identity. Never
+    // the 'hr' override: that stays an admin-only privilege by design.
+    if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+      return null
+    }
+    return actor.employeeId === row.supervisorEmployeeId ? 'supervisor' : null
+  }
   if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
   if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
     return null
@@ -333,9 +344,9 @@ function scopeFor(window: { startAt: Date; endAt: Date }, eventTime: Date): { st
   }
 }
 
-timeCorrectionsRouter.post('/time-corrections/:id/approve', canReadAdmin, async (req: Request, res: Response) => {
+timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecideAsAdminOrEmployee, async (req: Request, res: Response) => {
   const actor = actorOf(req)
-  if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+  if (!actor) return fail(res, 500, 'server misconfigured')
 
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -365,6 +376,9 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canReadAdmin, async 
         client
       )
       if (approverKind === null) return { kind: 'forbidden' as const }
+
+      const actorInfo = await describeActor(actor, client)
+      if (!actorInfo) return { kind: 'forbidden' as const }
 
       const employeeId = Number(row.employee_id)
       const eventType = row.event_type as AttendanceEventType
@@ -415,7 +429,7 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canReadAdmin, async 
            SET current_stage = 'hr', supervisor_approved_by_oid = $2,
                supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
            WHERE id = $1`,
-          [id, actor.oid, actor.name]
+          [id, actorInfo.oid, actorInfo.name]
         )
 
         await recordAudit(client, {
@@ -454,7 +468,7 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canReadAdmin, async 
          SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
              decided_at = now(), resulting_event_id = $4, updated_at = now()
          WHERE id = $1`,
-        [id, actor.oid, actor.name, resultingEventId]
+        [id, actorInfo.oid, actorInfo.name, resultingEventId]
       )
 
       await recordAudit(client, {
@@ -492,9 +506,9 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canReadAdmin, async 
   }
 })
 
-timeCorrectionsRouter.post('/time-corrections/:id/reject', canReadAdmin, async (req: Request, res: Response) => {
+timeCorrectionsRouter.post('/time-corrections/:id/reject', canDecideAsAdminOrEmployee, async (req: Request, res: Response) => {
   const actor = actorOf(req)
-  if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+  if (!actor) return fail(res, 500, 'server misconfigured')
 
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -528,12 +542,15 @@ timeCorrectionsRouter.post('/time-corrections/:id/reject', canReadAdmin, async (
       )
       if (approverKind === null) return { kind: 'forbidden' as const }
 
+      const actorInfo = await describeActor(actor, client)
+      if (!actorInfo) return { kind: 'forbidden' as const }
+
       await client.query(
         `UPDATE time_correction_requests
          SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
              decided_at = now(), decision_reason = $4, updated_at = now()
          WHERE id = $1`,
-        [id, actor.oid, actor.name, reason]
+        [id, actorInfo.oid, actorInfo.name, reason]
       )
 
       await recordAudit(client, {

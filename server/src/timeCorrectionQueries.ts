@@ -151,3 +151,25 @@ export async function listTimeCorrectionsPendingApproval(
   )
   return rows.map(rowToTimeCorrectionListItem)
 }
+
+/** Requests this specific supervisor has already decided themselves, via
+ *  LIFF — scoped by the synthetic `employee:<id>` oid (see describeActor in
+ *  employeeQueries.ts) rather than just supervisor_employee_id, so a request
+ *  HR/Admin overrode without this supervisor ever acting, or one this same
+ *  person decided through admin/ under their real Entra oid, does not show
+ *  up here with no attributable reason. Used by the LIFF approval inbox's
+ *  "ตัดสินใจแล้ว" tab. */
+export async function listTimeCorrectionsDecidedBySupervisor(
+  supervisorEmployeeId: number,
+  db: Queryable = pool
+): Promise<TimeCorrectionListItem[]> {
+  const { rows } = await db.query<TimeCorrectionListRow>(
+    `${SELECT_TIME_CORRECTION_LIST}
+     WHERE t.supervisor_employee_id = $1 AND t.status <> 'pending'
+       AND (t.supervisor_approved_by_oid = $2 OR t.decided_by_oid = $2)
+     ORDER BY t.decided_at DESC NULLS LAST, t.created_at DESC
+     LIMIT 200`,
+    [supervisorEmployeeId, `employee:${supervisorEmployeeId}`]
+  )
+  return rows.map(rowToTimeCorrectionListItem)
+}

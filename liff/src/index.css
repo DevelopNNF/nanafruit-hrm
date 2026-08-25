@@ -69,6 +69,20 @@
      calendar day cells) that should barely register against a white card. */
   --border-subtle: #f0f3ef;
 
+  /* Approval inbox's per-request-type pill — a third, distinct palette from
+     both the status pills and the calendar day-types above: this axis is
+     "what kind of request is this", independent of the other two. */
+  --approval-leave-fg: #3b82c4;
+  --approval-leave-bg: #e6f0fa;
+  --approval-overtime-fg: #9a6b00;
+  --approval-overtime-bg: #fff3d6;
+  --approval-shiftchange-fg: #7c4dd6;
+  --approval-shiftchange-bg: #f0eafc;
+  --approval-dayoffswap-fg: #b8730b;
+  --approval-dayoffswap-bg: #fbf0da;
+  --approval-timecorrection-fg: #4b7f6b;
+  --approval-timecorrection-bg: #e4f0eb;
+
   --sans: 'Sarabun', 'Noto Sans Thai', system-ui, sans-serif;
   --display: 'Kanit', 'Noto Sans Thai', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;

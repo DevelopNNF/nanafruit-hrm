@@ -17,10 +17,10 @@ import {
   type ShiftChangeRequestStatus,
 } from '@hrm/shared'
 import { pool, withTransaction } from '../db.js'
-import { requireRole } from '../auth/middleware.js'
+import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
+import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { findShiftById } from '../shiftQueries.js'
 import { resolveSupervisorScope } from '../supervisorScope.js'
 import {
@@ -53,6 +53,10 @@ type Queryable = Pick<pg.Pool, 'query'>
 // fixed role check — see resolveShiftChangeApprover, checked per-request once
 // current_stage is loaded, same pattern as leaveRequests.ts/overtimeRequests.ts.
 const canReadAdmin = requireRole(...ROLES)
+// Approve/reject only: an employee-kind caller (a LIFF supervisor) always
+// passes this gate too — resolveShiftChangeApprover still gates what they may
+// actually do once the row is loaded, same as an admin with the wrong role.
+const canDecideAsAdminOrEmployee = requireRoleOrEmployee(...ROLES)
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
@@ -61,12 +65,19 @@ function actorOf(req: Request): AuthUser | null {
 type ShiftChangeApproverKind = 'hr' | 'supervisor'
 
 /** Same rule as leaveRequests.ts's resolveLeaveApprover. */
-async function resolveShiftChangeApprover(
+export async function resolveShiftChangeApprover(
   actor: AuthUser,
   row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
   db: Queryable
 ): Promise<ShiftChangeApproverKind | null> {
-  if (actor.kind !== 'admin') return null
+  if (actor.kind === 'employee') {
+    // No UPN lookup needed — actor.employeeId is already the identity. Never
+    // the 'hr' override: that stays an admin-only privilege by design.
+    if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+      return null
+    }
+    return actor.employeeId === row.supervisorEmployeeId ? 'supervisor' : null
+  }
   if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
   if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
     return null
@@ -508,10 +519,10 @@ shiftChangeRequestsRouter.get('/shift-change-requests/:id', canReadAdmin, async 
 
 shiftChangeRequestsRouter.post(
   '/shift-change-requests/:id/approve',
-  canReadAdmin,
+  canDecideAsAdminOrEmployee,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
-    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+    if (!actor) return fail(res, 500, 'server misconfigured')
 
     const id = parseId(req.params['id'])
     if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -545,6 +556,9 @@ shiftChangeRequestsRouter.post(
         )
         if (approverKind === null) return { kind: 'forbidden' as const }
 
+        const actorInfo = await describeActor(actor, client)
+        if (!actorInfo) return { kind: 'forbidden' as const }
+
         // Re-checked here, not just at submission, for BOTH a forwarding
         // approval and a final one — same reasoning as overtimeRequests.ts's
         // approve route.
@@ -567,7 +581,7 @@ shiftChangeRequestsRouter.post(
              SET current_stage = 'hr', supervisor_approved_by_oid = $2,
                  supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
              WHERE id = $1`,
-            [id, actor.oid, actor.name]
+            [id, actorInfo.oid, actorInfo.name]
           )
 
           await recordAudit(client, {
@@ -590,7 +604,7 @@ shiftChangeRequestsRouter.post(
           effectiveTo: row.requested_date,
           note: `shift change request #${id}`,
           createdByKind: actor.kind,
-          createdById: actor.oid,
+          createdById: actorInfo.oid,
         })
         if (outcome.kind !== 'ok') return outcome
 
@@ -599,7 +613,7 @@ shiftChangeRequestsRouter.post(
            SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), resulting_assignment_id = $4, updated_at = now()
            WHERE id = $1`,
-          [id, actor.oid, actor.name, outcome.assignment.id]
+          [id, actorInfo.oid, actorInfo.name, outcome.assignment.id]
         )
 
         await recordAudit(client, {
@@ -647,10 +661,10 @@ shiftChangeRequestsRouter.post(
 
 shiftChangeRequestsRouter.post(
   '/shift-change-requests/:id/reject',
-  canReadAdmin,
+  canDecideAsAdminOrEmployee,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
-    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+    if (!actor) return fail(res, 500, 'server misconfigured')
 
     const id = parseId(req.params['id'])
     if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -684,12 +698,15 @@ shiftChangeRequestsRouter.post(
         )
         if (approverKind === null) return { kind: 'forbidden' as const }
 
+        const actorInfo = await describeActor(actor, client)
+        if (!actorInfo) return { kind: 'forbidden' as const }
+
         await client.query(
           `UPDATE shift_change_requests
            SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), decision_reason = $4, updated_at = now()
            WHERE id = $1`,
-          [id, actor.oid, actor.name, reason]
+          [id, actorInfo.oid, actorInfo.name, reason]
         )
 
         await recordAudit(client, {
@@ -859,14 +876,22 @@ shiftChangeRequestsRouter.get(
     if (id === null) return fail(res, 400, 'id must be a positive integer')
 
     try {
-      const { rows } = await pool.query<{ employee_id: string; attachment_key: string | null }>(
-        `SELECT employee_id, attachment_key FROM shift_change_requests WHERE id = $1`,
+      const { rows } = await pool.query<{
+        employee_id: string
+        supervisor_employee_id: string | null
+        attachment_key: string | null
+      }>(
+        `SELECT employee_id, supervisor_employee_id, attachment_key FROM shift_change_requests WHERE id = $1`,
         [id]
       )
       const row = rows[0]
       if (!row) return fail(res, 404, `no shift change request with id ${id}`)
 
-      if (auth.kind === 'employee' && auth.employeeId !== Number(row.employee_id)) {
+      if (
+        auth.kind === 'employee' &&
+        auth.employeeId !== Number(row.employee_id) &&
+        auth.employeeId !== Number(row.supervisor_employee_id ?? -1)
+      ) {
         return fail(res, 404, `no shift change request with id ${id}`)
       }
       if (auth.kind === 'admin' && auth.roles.length === 0) {

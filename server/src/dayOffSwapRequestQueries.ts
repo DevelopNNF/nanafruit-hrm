@@ -190,6 +190,28 @@ export async function listDayOffSwapRequestsPendingApproval(
   return rows.map(rowToDayOffSwapRequestListItem)
 }
 
+/** Requests this specific supervisor has already decided themselves, via
+ *  LIFF — scoped by the synthetic `employee:<id>` oid (see describeActor in
+ *  employeeQueries.ts) rather than just supervisor_employee_id, so a request
+ *  HR/Admin overrode without this supervisor ever acting, or one this same
+ *  person decided through admin/ under their real Entra oid, does not show
+ *  up here with no attributable reason. Used by the LIFF approval inbox's
+ *  "ตัดสินใจแล้ว" tab. */
+export async function listDayOffSwapRequestsDecidedBySupervisor(
+  supervisorEmployeeId: number,
+  db: Queryable = pool
+): Promise<DayOffSwapRequestListItem[]> {
+  const { rows } = await db.query<DayOffSwapRequestListRow>(
+    `${SELECT_DAY_OFF_SWAP_REQUEST_LIST}
+     WHERE dosr.supervisor_employee_id = $1 AND dosr.status <> 'pending'
+       AND (dosr.supervisor_approved_by_oid = $2 OR dosr.decided_by_oid = $2)
+     ORDER BY dosr.decided_at DESC NULLS LAST, dosr.created_at DESC
+     LIMIT 200`,
+    [supervisorEmployeeId, `employee:${supervisorEmployeeId}`]
+  )
+  return rows.map(rowToDayOffSwapRequestListItem)
+}
+
 /** Does this employee already have another pending/approved swap request
  *  touching either date, in either role? Cancelled/rejected never block —
  *  they never held a real claim on that day. excludeId lets an edit check

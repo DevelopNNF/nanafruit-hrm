@@ -25,6 +25,7 @@ import { payrollEntriesRouter } from './routes/payrollEntries.js'
 import { employeeFinanceItemsRouter } from './routes/employeeFinanceItems.js'
 import { leaveBalancesRouter } from './routes/leaveBalances.js'
 import { leaveRequestsRouter } from './routes/leaveRequests.js'
+import { approvalsRouter } from './routes/approvals.js'
 import { shiftChangeRequestsRouter } from './routes/shiftChangeRequests.js'
 import { dayOffSwapRequestsRouter } from './routes/dayOffSwapRequests.js'
 import { overtimeRequestsRouter } from './routes/overtimeRequests.js'
@@ -114,6 +115,7 @@ app.use('/api', authenticate, financeItemsRouter)
 app.use('/api', authenticate, employeeFinanceItemsRouter)
 app.use('/api', authenticate, leaveBalancesRouter)
 app.use('/api', authenticate, leaveRequestsRouter)
+app.use('/api', authenticate, approvalsRouter)
 app.use('/api', authenticate, shiftChangeRequestsRouter)
 app.use('/api', authenticate, dayOffSwapRequestsRouter)
 app.use('/api', authenticate, overtimeRequestsRouter)

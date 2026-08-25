@@ -415,6 +415,10 @@ export type LineSessionResponse = {
   /** ISO 8601. When the token stops working and liff/ must exchange again. */
   expiresAt: string
   employee: Employee
+  /** True if this employee is employment_details.supervisor_employee_id for
+   *  at least one active direct report — gates whether liff/ shows the
+   *  "รออนุมัติจากฉัน" home tile at all. Computed once at session issuance. */
+  isSupervisor: boolean
 }
 
 /**
@@ -2569,6 +2573,41 @@ export type OvertimeBatchDecisionOutcome =
 
 /** POST /api/overtime-requests/batch/:batchId/approve, .../reject */
 export type OvertimeBatchActionResponse = { outcomes: OvertimeBatchDecisionOutcome[] }
+
+/* Approval inbox (liff/) ---------------------------------------------------
+ * A LIFF-side supervisor's combined view across all 5 request types, distinct
+ * from admin/'s per-resource review queues. See routes/approvals.ts.
+ */
+
+export const APPROVAL_RESOURCE_TYPES = [
+  'leave',
+  'overtime',
+  'shiftChange',
+  'dayOffSwap',
+  'timeCorrection',
+] as const
+export type ApprovalResourceType = (typeof APPROVAL_RESOURCE_TYPES)[number]
+
+/** One item in a supervisor's aggregated LIFF inbox — a discriminated union
+ *  over the 5 existing *ListItem shapes rather than a flattened generic
+ *  shape, so the client keeps every resource-specific field (dates,
+ *  attachmentKey, ...) it needs to render the card and route a decision to
+ *  the correct one of the 5 real per-resource endpoints. */
+export type PendingApprovalItem =
+  | { resourceType: 'leave'; request: LeaveRequestListItem }
+  | { resourceType: 'overtime'; request: OvertimeRequestListItem }
+  | { resourceType: 'shiftChange'; request: ShiftChangeRequestListItem }
+  | { resourceType: 'dayOffSwap'; request: DayOffSwapRequestListItem }
+  | { resourceType: 'timeCorrection'; request: TimeCorrectionListItem }
+
+/** GET /api/approvals/pending-for-me — both tabs of the inbox screen in one
+ *  call, since it shows both tabs' counts on a segmented control at once.
+ *  `done` is scoped to decisions this supervisor made themselves via LIFF —
+ *  see listXRequestsDecidedBySupervisor in each *RequestQueries.ts file. */
+export type PendingApprovalsResponse = {
+  pending: PendingApprovalItem[]
+  done: PendingApprovalItem[]
+}
 
 /* Overtime time arithmetic ------------------------------------------------
  * Lives in shared/ rather than server/ because liff/ has to show the

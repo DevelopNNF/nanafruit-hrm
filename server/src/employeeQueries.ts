@@ -2,7 +2,7 @@
 // and the auth routes that need to know whose record a LINE account claims.
 
 import type pg from 'pg'
-import type { Employee } from '@hrm/shared'
+import type { AuthUser, Employee } from '@hrm/shared'
 import { pool } from './db.js'
 import { currentShiftJoinSql } from './shiftAssignmentQueries.js'
 
@@ -202,6 +202,23 @@ export async function listActiveDirectReportIds(
     [supervisorEmployeeId]
   )
   return rows.map((row) => Number(row.id))
+}
+
+/** The {oid, name} pair every request table's decided_by_* / supervisor_approved_by_*
+ *  columns expect. Those columns are free text with no FK, so an admin's real
+ *  Entra oid and a LIFF supervisor's synthetic id can share them safely — the
+ *  'employee:' prefix can never collide with a real Entra oid (always a GUID),
+ *  so the two are still distinguishable later if that's ever needed. Returns
+ *  null only if an employee-kind actor's own employee row has gone missing,
+ *  which should never happen for an authenticated session. */
+export async function describeActor(
+  actor: AuthUser,
+  db: Queryable = pool
+): Promise<{ oid: string; name: string } | null> {
+  if (actor.kind === 'admin') return { oid: actor.oid, name: actor.name }
+  const employee = await findEmployeeById(actor.employeeId, db)
+  if (!employee) return null
+  return { oid: `employee:${actor.employeeId}`, name: `${employee.title}${employee.firstNameTh} ${employee.lastNameTh}` }
 }
 
 export type EmployeeBulkOtCandidate = {

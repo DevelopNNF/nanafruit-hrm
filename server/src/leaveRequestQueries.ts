@@ -173,6 +173,28 @@ export async function listLeaveRequestsPendingApproval(
   return rows.map(rowToLeaveRequestListItem)
 }
 
+/** Requests this specific supervisor has already decided themselves, via
+ *  LIFF — scoped by the synthetic `employee:<id>` oid (see describeActor in
+ *  employeeQueries.ts) rather than just supervisor_employee_id, so a request
+ *  HR/Admin overrode without this supervisor ever acting, or one this same
+ *  person decided through admin/ under their real Entra oid, does not show
+ *  up here with no attributable reason. Used by the LIFF approval inbox's
+ *  "ตัดสินใจแล้ว" tab. */
+export async function listLeaveRequestsDecidedBySupervisor(
+  supervisorEmployeeId: number,
+  db: Queryable = pool
+): Promise<LeaveRequestListItem[]> {
+  const { rows } = await db.query<LeaveRequestListRow>(
+    `${SELECT_LEAVE_REQUEST_LIST}
+     WHERE lr.supervisor_employee_id = $1 AND lr.status <> 'pending'
+       AND (lr.supervisor_approved_by_oid = $2 OR lr.decided_by_oid = $2)
+     ORDER BY lr.decided_at DESC NULLS LAST, lr.created_at DESC
+     LIMIT 200`,
+    [supervisorEmployeeId, `employee:${supervisorEmployeeId}`]
+  )
+  return rows.map(rowToLeaveRequestListItem)
+}
+
 /** Does this employee already have a pending/approved request whose date
  *  range intersects [startDate, endDate]? Cancelled/rejected requests never
  *  block — they never held a real claim on the calendar. */

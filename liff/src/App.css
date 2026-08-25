@@ -1495,3 +1495,298 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* Approval inbox ------------------------------------------------------------
+   Home tile is styled like .home-tile-calendar (full-width dark row) rather
+   than the square .home-tile grid, since it's the one card competing for
+   attention with pending work, not another request-type shortcut. */
+
+.home-tile-approvals {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 4.25rem;
+  padding: 0 1rem;
+  margin-bottom: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card-bg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-tile-approvals-count {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--border);
+  color: var(--text-faint);
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.home-tile-approvals-count.has-pending {
+  background: var(--status-pending-bg);
+  color: var(--status-pending-fg);
+}
+
+.home-tile-approvals-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-tile-approvals-label {
+  display: block;
+  font-family: var(--display);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.home-tile-approvals-hint {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.7rem;
+  color: var(--text-faint);
+}
+
+.home-tile-approvals-arrow {
+  color: var(--text-faint);
+}
+
+.approval-banner {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--border);
+  border-radius: 12px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.approval-tabs {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  margin-bottom: 1rem;
+  background: var(--border);
+  border-radius: 12px;
+}
+
+.approval-tabs button {
+  flex: 1;
+  min-height: 2.5rem;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--display);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.approval-tabs button.active {
+  background: var(--card-bg);
+  color: var(--text-h);
+  box-shadow: 0 2px 6px -3px rgba(15, 31, 22, 0.35);
+}
+
+.approval-item-head {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.approval-item-head .avatar {
+  width: 2.375rem;
+  height: 2.375rem;
+  font-size: 0.9rem;
+}
+
+.approval-item-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.approval-item-name {
+  font-family: var(--display);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.approval-item-code {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--text-faint);
+}
+
+.approval-type-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  white-space: nowrap;
+}
+
+.approval-type-pill.leave {
+  color: var(--approval-leave-fg);
+  background: var(--approval-leave-bg);
+}
+
+.approval-type-pill.overtime {
+  color: var(--approval-overtime-fg);
+  background: var(--approval-overtime-bg);
+}
+
+.approval-type-pill.shiftChange {
+  color: var(--approval-shiftchange-fg);
+  background: var(--approval-shiftchange-bg);
+}
+
+.approval-type-pill.dayOffSwap {
+  color: var(--approval-dayoffswap-fg);
+  background: var(--approval-dayoffswap-bg);
+}
+
+.approval-type-pill.timeCorrection {
+  color: var(--approval-timecorrection-fg);
+  background: var(--approval-timecorrection-bg);
+}
+
+.approval-item-detail {
+  background: var(--bg);
+  border-radius: 12px;
+  padding: 0.65rem 0.8rem;
+}
+
+.approval-item-detail .request-item-title {
+  font-size: 0.85rem;
+}
+
+.approval-approve-button {
+  flex: 1.4;
+  min-height: 2.75rem;
+  padding: 0 0.9rem;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 16px -9px rgba(6, 199, 85, 0.9);
+}
+
+.approval-approve-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.approval-item-done {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.approval-item-done-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Reject modal ---------------------------------------------------------- */
+
+.approval-reject-title {
+  color: var(--status-rejected-fg);
+}
+
+.approval-reject-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.9rem;
+}
+
+.approval-reject-chip {
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.approval-reject-chip.selected {
+  border-color: var(--text-h);
+  background: var(--text-h);
+  color: #fff;
+}
+
+.approval-reject-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.9rem;
+}
+
+.approval-reject-field span {
+  font-family: var(--display);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.approval-reject-field textarea {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  /* 1rem, not smaller: iOS Safari zooms the page on focus below 16px. */
+  font-size: 1rem;
+  resize: vertical;
+}
+
+.approval-reject-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--card-bg);
+}
+
+.approval-reject-confirm-button {
+  flex: 1.3;
+  min-height: 2.75rem;
+  border: none;
+  border-radius: 13px;
+  font-family: var(--display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--status-rejected-fg);
+  cursor: pointer;
+}
+
+.approval-reject-confirm-button:disabled {
+  background: var(--border);
+  color: var(--text-faint);
+  cursor: default;
+}

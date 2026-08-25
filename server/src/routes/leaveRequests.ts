@@ -15,10 +15,10 @@ import {
   type LeaveRequestStatus,
 } from '@hrm/shared'
 import { pool, withTransaction } from '../db.js'
-import { requireRole } from '../auth/middleware.js'
+import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
+import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { findLeaveTypeById } from '../leaveTypeQueries.js'
 import { listLeaveBalanceSummaries } from '../leaveBalanceQueries.js'
 import { resolveSupervisorScope } from '../supervisorScope.js'
@@ -45,6 +45,10 @@ type Queryable = Pick<pg.Pool, 'query'>
 // resolveLeaveApprover, checked per-request inside each handler once the row
 // (and its current_stage) is loaded.
 const canReadAdmin = requireRole(...ROLES)
+// Approve/reject only: an employee-kind caller (a LIFF supervisor) always
+// passes this gate too — resolveLeaveApprover still gates what they may
+// actually do once the row is loaded, same as an admin with the wrong role.
+const canDecideAsAdminOrEmployee = requireRoleOrEmployee(...ROLES)
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
@@ -57,12 +61,19 @@ type LeaveApproverKind = 'hr' | 'supervisor'
  *  act while the request is pending at the 'supervisor' stage and they are
  *  the snapshotted supervisor_employee_id, resolved from their Entra UPN the
  *  same way resolveSupervisorScope does. */
-async function resolveLeaveApprover(
+export async function resolveLeaveApprover(
   actor: AuthUser,
   row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
   db: Queryable
 ): Promise<LeaveApproverKind | null> {
-  if (actor.kind !== 'admin') return null
+  if (actor.kind === 'employee') {
+    // No UPN lookup needed — actor.employeeId is already the identity. Never
+    // the 'hr' override: that stays an admin-only privilege by design.
+    if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+      return null
+    }
+    return actor.employeeId === row.supervisorEmployeeId ? 'supervisor' : null
+  }
   if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
   if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
     return null
@@ -485,9 +496,9 @@ leaveRequestsRouter.get('/leave-requests/:id', canReadAdmin, async (req: Request
   }
 })
 
-leaveRequestsRouter.post('/leave-requests/:id/approve', canReadAdmin, async (req: Request, res: Response) => {
+leaveRequestsRouter.post('/leave-requests/:id/approve', canDecideAsAdminOrEmployee, async (req: Request, res: Response) => {
   const actor = actorOf(req)
-  if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+  if (!actor) return fail(res, 500, 'server misconfigured')
 
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -522,6 +533,9 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canReadAdmin, async (req
       )
       if (approverKind === null) return { kind: 'forbidden' as const }
 
+      const actorInfo = await describeActor(actor, client)
+      if (!actorInfo) return { kind: 'forbidden' as const }
+
       if (approverKind === 'supervisor') {
         // Forwarding approval only — the request stays pending, now waiting
         // on HR/Admin. Not the same event as the final approval below: no
@@ -531,7 +545,7 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canReadAdmin, async (req
            SET current_stage = 'hr', supervisor_approved_by_oid = $2,
                supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
            WHERE id = $1`,
-          [id, actor.oid, actor.name]
+          [id, actorInfo.oid, actorInfo.name]
         )
 
         await recordAudit(client, {
@@ -557,7 +571,7 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canReadAdmin, async (req
            (employee_id, leave_type_id, year, entry_type, amount_days, created_by_oid, created_by_name)
          VALUES ($1, $2, $3, 'usage', $4, $5, $6)
          RETURNING id`,
-        [row.employee_id, row.leave_type_id, year, -Number(row.total_days), actor.oid, actor.name]
+        [row.employee_id, row.leave_type_id, year, -Number(row.total_days), actorInfo.oid, actorInfo.name]
       )
       const leaveBalanceEntryId = Number(entryRows[0]?.id)
       if (!leaveBalanceEntryId) throw new Error('insert into leave_balance_entries returned no id')
@@ -567,7 +581,7 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canReadAdmin, async (req
          SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
              decided_at = now(), leave_balance_entry_id = $4, updated_at = now()
          WHERE id = $1`,
-        [id, actor.oid, actor.name, leaveBalanceEntryId]
+        [id, actorInfo.oid, actorInfo.name, leaveBalanceEntryId]
       )
 
       await recordAudit(client, {
@@ -593,9 +607,9 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canReadAdmin, async (req
   }
 })
 
-leaveRequestsRouter.post('/leave-requests/:id/reject', canReadAdmin, async (req: Request, res: Response) => {
+leaveRequestsRouter.post('/leave-requests/:id/reject', canDecideAsAdminOrEmployee, async (req: Request, res: Response) => {
   const actor = actorOf(req)
-  if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+  if (!actor) return fail(res, 500, 'server misconfigured')
 
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -629,6 +643,9 @@ leaveRequestsRouter.post('/leave-requests/:id/reject', canReadAdmin, async (req:
       )
       if (approverKind === null) return { kind: 'forbidden' as const }
 
+      const actorInfo = await describeActor(actor, client)
+      if (!actorInfo) return { kind: 'forbidden' as const }
+
       // Terminal either way — unlike approval, a supervisor's reject needs
       // no separate forwarding step: there is nothing left to decide once
       // one link in the chain has said no. decided_by_* names whoever
@@ -638,7 +655,7 @@ leaveRequestsRouter.post('/leave-requests/:id/reject', canReadAdmin, async (req:
          SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
              decided_at = now(), decision_reason = $4, updated_at = now()
          WHERE id = $1`,
-        [id, actor.oid, actor.name, reason]
+        [id, actorInfo.oid, actorInfo.name, reason]
       )
 
       await recordAudit(client, {

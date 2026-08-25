@@ -201,6 +201,28 @@ export async function listOvertimeRequestsPendingApproval(
   return rows.map(rowToOvertimeRequestListItem)
 }
 
+/** Requests this specific supervisor has already decided themselves, via
+ *  LIFF — scoped by the synthetic `employee:<id>` oid (see describeActor in
+ *  employeeQueries.ts) rather than just supervisor_employee_id, so a request
+ *  HR/Admin overrode without this supervisor ever acting, or one this same
+ *  person decided through admin/ under their real Entra oid, does not show
+ *  up here with no attributable reason. Used by the LIFF approval inbox's
+ *  "ตัดสินใจแล้ว" tab. */
+export async function listOvertimeRequestsDecidedBySupervisor(
+  supervisorEmployeeId: number,
+  db: Queryable = pool
+): Promise<OvertimeRequestListItem[]> {
+  const { rows } = await db.query<OvertimeRequestListRow>(
+    `${SELECT_OVERTIME_REQUEST_LIST}
+     WHERE otr.supervisor_employee_id = $1 AND otr.status <> 'pending'
+       AND (otr.supervisor_approved_by_oid = $2 OR otr.decided_by_oid = $2)
+     ORDER BY otr.decided_at DESC NULLS LAST, otr.created_at DESC
+     LIMIT 200`,
+    [supervisorEmployeeId, `employee:${supervisorEmployeeId}`]
+  )
+  return rows.map(rowToOvertimeRequestListItem)
+}
+
 /** Every row one Bulk OT Request submission created, employee code order —
  *  the batch detail screen's member table. */
 export async function listOvertimeRequestsByBatchId(

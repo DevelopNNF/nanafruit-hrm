@@ -9,6 +9,7 @@ import { DayOffSwapRequestScreen } from './screens/DayOffSwapRequestScreen'
 import { OvertimeRequestScreen } from './screens/OvertimeRequestScreen'
 import { ProfileScreen } from './screens/ProfileScreen'
 import { CalendarScreen } from './screens/CalendarScreen'
+import { ApprovalInboxScreen } from './screens/ApprovalInboxScreen'
 import './App.css'
 
 type Props = {
@@ -21,7 +22,7 @@ type Screen = 'home' | SubScreen
 
 const HISTORY_STATE_KEY = 'liffSubScreen'
 
-function EmployeeHome({ employee }: { employee: Employee }) {
+function EmployeeHome({ employee, isSupervisor }: { employee: Employee; isSupervisor: boolean }) {
   const [screen, setScreen] = useState<Screen>('home')
 
   useEffect(() => {
@@ -51,7 +52,8 @@ function EmployeeHome({ employee }: { employee: Employee }) {
   if (screen === 'overtime') return <OvertimeRequestScreen onBack={back} />
   if (screen === 'profile') return <ProfileScreen employee={employee} onBack={back} />
   if (screen === 'calendar') return <CalendarScreen onBack={back} />
-  return <HomeScreen employee={employee} onNavigate={navigate} />
+  if (screen === 'approvals') return <ApprovalInboxScreen onBack={back} />
+  return <HomeScreen employee={employee} isSupervisor={isSupervisor} onNavigate={navigate} />
 }
 
 function App({ idToken, initialSession }: Props) {
@@ -62,7 +64,7 @@ function App({ idToken, initialSession }: Props) {
   if (session === null) {
     return <LinkScreen idToken={idToken} onLinked={setSession} />
   }
-  return <EmployeeHome employee={session.employee} />
+  return <EmployeeHome employee={session.employee} isSupervisor={session.isSupervisor} />
 }
 
 export default App

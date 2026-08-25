@@ -32,10 +32,15 @@ import {
 } from '@hrm/shared'
 import type pg from 'pg'
 import { pool, withTransaction } from '../db.js'
-import { requireRole } from '../auth/middleware.js'
+import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById, findEmployeeIdByEntraUpn, listActiveEmployeesForBulkOt } from '../employeeQueries.js'
+import {
+  describeActor,
+  findEmployeeById,
+  findEmployeeIdByEntraUpn,
+  listActiveEmployeesForBulkOt,
+} from '../employeeQueries.js'
 import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
@@ -65,6 +70,10 @@ type Queryable = Pick<pg.Pool, 'query'>
 // for a batch, once against its first pending row, since every row in one
 // batch shares the same supervisor_employee_id) once current_stage is loaded.
 const canReadAdmin = requireRole(...ROLES)
+// Approve/reject only: an employee-kind caller (a LIFF supervisor) always
+// passes this gate too — resolveOvertimeApprover still gates what they may
+// actually do once the row is loaded, same as an admin with the wrong role.
+const canDecideAsAdminOrEmployee = requireRoleOrEmployee(...ROLES)
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
@@ -76,12 +85,19 @@ type OvertimeApproverKind = 'hr' | 'supervisor'
  *  leaveRequests.ts's resolveLeaveApprover: HR/Admin always, at any stage;
  *  anyone else only while pending at the 'supervisor' stage and only if they
  *  are the snapshotted supervisor_employee_id. */
-async function resolveOvertimeApprover(
+export async function resolveOvertimeApprover(
   actor: AuthUser,
   row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
   db: Queryable
 ): Promise<OvertimeApproverKind | null> {
-  if (actor.kind !== 'admin') return null
+  if (actor.kind === 'employee') {
+    // No UPN lookup needed — actor.employeeId is already the identity. Never
+    // the 'hr' override: that stays an admin-only privilege by design.
+    if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+      return null
+    }
+    return actor.employeeId === row.supervisorEmployeeId ? 'supervisor' : null
+  }
   if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
   if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
     return null
@@ -1027,10 +1043,10 @@ overtimeRequestsRouter.get(
 
 overtimeRequestsRouter.post(
   '/overtime-requests/:id/approve',
-  canReadAdmin,
+  canDecideAsAdminOrEmployee,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
-    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+    if (!actor) return fail(res, 500, 'server misconfigured')
 
     const id = parseId(req.params['id'])
     if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -1068,6 +1084,9 @@ overtimeRequestsRouter.post(
         )
         if (approverKind === null) return { kind: 'forbidden' as const }
 
+        const actorInfo = await describeActor(actor, client)
+        if (!actorInfo) return { kind: 'forbidden' as const }
+
         // Re-validated here, not just at submission, for BOTH a forwarding
         // approval and a final one: a request can sit pending long enough to
         // fall out of the backdating window, and in the meantime an approved
@@ -1099,7 +1118,7 @@ overtimeRequestsRouter.post(
              SET current_stage = 'hr', supervisor_approved_by_oid = $2,
                  supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
              WHERE id = $1`,
-            [id, actor.oid, actor.name]
+            [id, actorInfo.oid, actorInfo.name]
           )
 
           await recordAudit(client, {
@@ -1123,7 +1142,7 @@ overtimeRequestsRouter.post(
            SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), updated_at = now()
            WHERE id = $1`,
-          [id, actor.oid, actor.name]
+          [id, actorInfo.oid, actorInfo.name]
         )
 
         await recordAudit(client, {
@@ -1174,10 +1193,10 @@ overtimeRequestsRouter.post(
 
 overtimeRequestsRouter.post(
   '/overtime-requests/:id/reject',
-  canReadAdmin,
+  canDecideAsAdminOrEmployee,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
-    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+    if (!actor) return fail(res, 500, 'server misconfigured')
 
     const id = parseId(req.params['id'])
     if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -1213,6 +1232,9 @@ overtimeRequestsRouter.post(
         )
         if (approverKind === null) return { kind: 'forbidden' as const }
 
+        const actorInfo = await describeActor(actor, client)
+        if (!actorInfo) return { kind: 'forbidden' as const }
+
         // Terminal either way — see leaveRequests.ts's reject route for the
         // full reasoning, which applies unchanged here.
         await client.query(
@@ -1220,7 +1242,7 @@ overtimeRequestsRouter.post(
            SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), decision_reason = $4, updated_at = now()
            WHERE id = $1`,
-          [id, actor.oid, actor.name, reason]
+          [id, actorInfo.oid, actorInfo.name, reason]
         )
 
         await recordAudit(client, {
