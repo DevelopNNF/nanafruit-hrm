@@ -6,7 +6,7 @@
 // every employee and so needs the employee joined in for display).
 
 import type pg from 'pg'
-import type { LeaveRequest, LeaveRequestListItem, LeaveRequestStatus } from '@hrm/shared'
+import type { LeaveRequest, LeaveRequestListItem, LeaveRequestStage, LeaveRequestStatus } from '@hrm/shared'
 import { pool } from './db.js'
 import { currentShiftJoinSql } from './shiftAssignmentQueries.js'
 
@@ -26,6 +26,12 @@ export type LeaveRequestRow = {
   total_days: string // numeric: pg hands these back as strings too
   reason: string | null
   status: string
+  requires_supervisor_approval: boolean
+  supervisor_employee_id: string | null
+  supervisor_employee_name: string | null
+  current_stage: string | null
+  supervisor_approved_by_name: string | null
+  supervisor_approved_at: string | null
   decided_by_name: string | null
   decided_at: string | null
   decision_reason: string | null
@@ -41,21 +47,31 @@ export type LeaveRequestListRow = LeaveRequestRow & {
 export const SELECT_LEAVE_REQUEST = `
   SELECT lr.id, lr.employee_id, lr.leave_type_id, mlt.leave_code, mlt.leave_name,
          lr.start_date, lr.end_date, lr.start_time, lr.end_time, lr.total_days,
-         lr.reason, lr.status, lr.decided_by_name, lr.decided_at, lr.decision_reason,
+         lr.reason, lr.status,
+         lr.requires_supervisor_approval, lr.supervisor_employee_id,
+         (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
+         lr.current_stage, lr.supervisor_approved_by_name, lr.supervisor_approved_at,
+         lr.decided_by_name, lr.decided_at, lr.decision_reason,
          lr.leave_balance_entry_id, lr.created_at
   FROM leave_requests lr
   JOIN master_leave_types mlt ON mlt.id = lr.leave_type_id
+  LEFT JOIN employees sup ON sup.id = lr.supervisor_employee_id
 `
 
 export const SELECT_LEAVE_REQUEST_LIST = `
   SELECT lr.id, lr.employee_id, lr.leave_type_id, mlt.leave_code, mlt.leave_name,
          lr.start_date, lr.end_date, lr.start_time, lr.end_time, lr.total_days,
-         lr.reason, lr.status, lr.decided_by_name, lr.decided_at, lr.decision_reason,
+         lr.reason, lr.status,
+         lr.requires_supervisor_approval, lr.supervisor_employee_id,
+         (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
+         lr.current_stage, lr.supervisor_approved_by_name, lr.supervisor_approved_at,
+         lr.decided_by_name, lr.decided_at, lr.decision_reason,
          lr.leave_balance_entry_id, lr.created_at,
          e.employee_code, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
   FROM leave_requests lr
   JOIN master_leave_types mlt ON mlt.id = lr.leave_type_id
   JOIN employees e ON e.id = lr.employee_id
+  LEFT JOIN employees sup ON sup.id = lr.supervisor_employee_id
 `
 
 export function rowToLeaveRequest(row: LeaveRequestRow): LeaveRequest {
@@ -72,6 +88,13 @@ export function rowToLeaveRequest(row: LeaveRequestRow): LeaveRequest {
     totalDays: Number(row.total_days),
     reason: row.reason,
     status: row.status as LeaveRequestStatus,
+    requiresSupervisorApproval: row.requires_supervisor_approval,
+    supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+    supervisorEmployeeName: row.supervisor_employee_name,
+    currentStage: row.current_stage === null ? null : (row.current_stage as LeaveRequestStage),
+    supervisorApprovedByName: row.supervisor_approved_by_name,
+    supervisorApprovedAt:
+      row.supervisor_approved_at === null ? null : new Date(row.supervisor_approved_at).toISOString(),
     decidedByName: row.decided_by_name,
     decidedAt: row.decided_at === null ? null : new Date(row.decided_at).toISOString(),
     decisionReason: row.decision_reason,
@@ -121,6 +144,28 @@ export async function listLeaveRequests(
 ): Promise<LeaveRequestListItem[]> {
   const where = filter.status !== undefined ? 'WHERE lr.status = $1' : ''
   const params = filter.status !== undefined ? [filter.status] : []
+  const { rows } = await db.query<LeaveRequestListRow>(
+    `${SELECT_LEAVE_REQUEST_LIST} ${where} ORDER BY lr.created_at DESC LIMIT 500`,
+    params
+  )
+  return rows.map(rowToLeaveRequestListItem)
+}
+
+/** A supervisor's inbox: requests currently waiting on them specifically, or
+ *  — for the HR/Admin overview, supervisorEmployeeId = null — every request
+ *  currently waiting on ANY supervisor, most recent first. Only rows with
+ *  current_stage = 'supervisor' ever show up here; a request that never
+ *  needed one, or whose supervisor already forwarded it, is at the 'hr'
+ *  stage and found through the ordinary listLeaveRequests instead. */
+export async function listLeaveRequestsPendingApproval(
+  supervisorEmployeeId: number | null,
+  db: Queryable = pool
+): Promise<LeaveRequestListItem[]> {
+  const where =
+    supervisorEmployeeId !== null
+      ? `WHERE lr.current_stage = 'supervisor' AND lr.supervisor_employee_id = $1`
+      : `WHERE lr.current_stage = 'supervisor'`
+  const params = supervisorEmployeeId !== null ? [supervisorEmployeeId] : []
   const { rows } = await db.query<LeaveRequestListRow>(
     `${SELECT_LEAVE_REQUEST_LIST} ${where} ORDER BY lr.created_at DESC LIMIT 500`,
     params

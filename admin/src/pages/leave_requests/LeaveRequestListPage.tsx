@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { LeaveRequestListItem, LeaveRequestStatus } from '@hrm/shared'
-import { listLeaveRequests } from '../../api/leaveRequests'
+import type { LeaveRequestListItem, LeaveRequestStage, LeaveRequestStatus } from '@hrm/shared'
+import { listLeaveRequests, listLeaveRequestsPendingApproval } from '../../api/leaveRequests'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
 
@@ -10,9 +10,12 @@ type State =
   | { phase: 'ok'; requests: LeaveRequestListItem[] }
   | { phase: 'error'; message: string }
 
-type TabValue = LeaveRequestStatus | 'all'
+// 'mine' is not a LeaveRequestStatus — it's the caller's own supervisor
+// inbox, fetched from a different endpoint entirely (see the effect below).
+type TabValue = LeaveRequestStatus | 'all' | 'mine'
 
 const TABS: { value: TabValue; label: string }[] = [
+  { value: 'mine', label: 'รอฉันอนุมัติ' },
   { value: 'pending', label: 'รอดำเนินการ' },
   { value: 'approved', label: 'อนุมัติแล้ว' },
   { value: 'rejected', label: 'ปฏิเสธแล้ว' },
@@ -25,6 +28,11 @@ const STATUS_LABEL: Record<LeaveRequestStatus, string> = {
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
   cancelled: 'ยกเลิกแล้ว',
+}
+
+const STAGE_LABEL: Record<LeaveRequestStage, string> = {
+  supervisor: 'รอหัวหน้างาน',
+  hr: 'รอ HR/Admin',
 }
 
 function statusBadgeTone(status: LeaveRequestStatus): 'pending' | 'active' | 'danger' | 'inactive' {
@@ -64,7 +72,12 @@ export function LeaveRequestListPage() {
   useEffect(() => {
     const controller = new AbortController()
 
-    listLeaveRequests(tab === 'all' ? undefined : tab, controller.signal)
+    const fetchRequests =
+      tab === 'mine'
+        ? listLeaveRequestsPendingApproval(controller.signal)
+        : listLeaveRequests(tab === 'all' ? undefined : tab, controller.signal)
+
+    fetchRequests
       .then((requests) => setState({ phase: 'ok', requests }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
@@ -126,7 +139,7 @@ export function LeaveRequestListPage() {
                 <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
                   <thead>
                     <tr>
-                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภทการลา', 'ช่วงวันที่', 'จำนวนวัน', 'เหตุผล', 'สถานะ'].map(
+                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภทการลา', 'ช่วงวันที่', 'จำนวนวัน', 'เหตุผล', 'สถานะ', 'ขั้นตอน'].map(
                         (h) => (
                           <th
                             key={h}
@@ -168,6 +181,11 @@ export function LeaveRequestListPage() {
                         </td>
                         <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
                           <span className={badge(statusBadgeTone(request.status))}>{STATUS_LABEL[request.status]}</span>
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                          {request.status === 'pending' && request.currentStage
+                            ? STAGE_LABEL[request.currentStage]
+                            : '—'}
                         </td>
                       </tr>
                     ))}

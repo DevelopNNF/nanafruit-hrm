@@ -16,24 +16,39 @@ export async function listLeaveRequests(
   return body.requests
 }
 
-export async function getLeaveRequest(id: number, signal?: AbortSignal): Promise<LeaveRequestListItem> {
+/** The caller's own inbox: requests currently waiting on them as a
+ *  supervisor, or — for HR/Admin — every request currently waiting on any
+ *  supervisor. Empty rather than an error for an account that isn't anyone's
+ *  supervisor. */
+export async function listLeaveRequestsPendingApproval(signal?: AbortSignal): Promise<LeaveRequestListItem[]> {
+  const res = await apiFetch(`/api/leave-requests/pending-approval`, { signal })
+  const body = await unwrap<LeaveRequestListResponse>(res)
+  return body.requests
+}
+
+export async function getLeaveRequest(
+  id: number,
+  signal?: AbortSignal
+): Promise<{ request: LeaveRequestListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/leave-requests/${id}`, { signal })
-  const body = await unwrap<LeaveRequestDetailResponse>(res)
-  return body.request
+  return unwrap<LeaveRequestDetailResponse>(res)
 }
 
-export async function approveLeaveRequest(id: number): Promise<LeaveRequestListItem> {
+export async function approveLeaveRequest(
+  id: number
+): Promise<{ request: LeaveRequestListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/leave-requests/${id}/approve`, { method: 'POST' })
-  const body = await unwrap<LeaveRequestDetailResponse>(res)
-  return body.request
+  return unwrap<LeaveRequestDetailResponse>(res)
 }
 
-export async function rejectLeaveRequest(id: number, reason: string): Promise<LeaveRequestListItem> {
+export async function rejectLeaveRequest(
+  id: number,
+  reason: string
+): Promise<{ request: LeaveRequestListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/leave-requests/${id}/reject`, {
     method: 'POST',
     headers: jsonHeaders,
     body: JSON.stringify({ reason }),
   })
-  const body = await unwrap<LeaveRequestDetailResponse>(res)
-  return body.request
+  return unwrap<LeaveRequestDetailResponse>(res)
 }

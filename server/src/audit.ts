@@ -62,6 +62,7 @@ export type AuditAction =
   | 'leave_balance.bulk_grant'
   | 'leave_request.create'
   | 'leave_request.cancel'
+  | 'leave_request.supervisor_approve'
   | 'leave_request.approve'
   | 'leave_request.reject'
   | 'shift_change_request.create'

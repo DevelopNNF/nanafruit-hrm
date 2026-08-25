@@ -846,6 +846,12 @@ export type BulkGrantLeaveResponse = {
 export const LEAVE_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
 export type LeaveRequestStatus = (typeof LEAVE_REQUEST_STATUSES)[number]
 
+/** Who needs to act next on a pending request. Null once status leaves
+ *  'pending' — see the migration's comment on why 'hr' covers both "never
+ *  needed a supervisor" and "supervisor already forwarded it". */
+export const LEAVE_REQUEST_STAGES = ['supervisor', 'hr'] as const
+export type LeaveRequestStage = (typeof LEAVE_REQUEST_STAGES)[number]
+
 /** A row in leave_requests: one employee's request for one leave type over
  *  one date range. leaveTypeName/leaveTypeCode are joined in for display —
  *  every screen that shows a request needs them, the same reasoning as
@@ -871,7 +877,28 @@ export type LeaveRequest = {
   /** Required when the leave type has requireReason set, null otherwise. */
   reason: string | null
   status: LeaveRequestStatus
-  /** The admin's display name at decision time. Null while pending/cancelled. */
+  /** Snapshot of employment_details.supervisor_employee_id (via
+   *  employee.employment.supervisorEmployeeId) at submission time — same
+   *  snapshot reasoning as everything else on this request. False/null when
+   *  the employee had no supervisor, in which case the request skips
+   *  straight to the HR/Admin stage. */
+  requiresSupervisorApproval: boolean
+  supervisorEmployeeId: number | null
+  /** Joined in for display, same reasoning as leaveTypeName. Null exactly
+   *  when supervisorEmployeeId is null. */
+  supervisorEmployeeName: string | null
+  /** Who must act next; null once the request is no longer pending. */
+  currentStage: LeaveRequestStage | null
+  /** Set only when a supervisor approved and forwarded this request to HR —
+   *  a supervisor's rejection is terminal and recorded in decidedByName/
+   *  decisionReason below instead, same as HR/Admin's decision. Null when
+   *  requiresSupervisorApproval is false, or when HR/Admin decided before
+   *  the supervisor acted. */
+  supervisorApprovedByName: string | null
+  /** ISO 8601. Null under the same conditions as supervisorApprovedByName. */
+  supervisorApprovedAt: string | null
+  /** The final decision maker — a supervisor (if they rejected), or
+   *  HR/Admin. Null while pending/cancelled. */
   decidedByName: string | null
   /** ISO 8601. Null while pending/cancelled. */
   decidedAt: string | null
@@ -915,8 +942,15 @@ export type LeaveRequestMineResponse = { requests: LeaveRequest[] }
 /** GET /api/leave-requests */
 export type LeaveRequestListResponse = { requests: LeaveRequestListItem[] }
 
-/** GET /api/leave-requests/:id, POST .../approve, POST .../reject */
-export type LeaveRequestDetailResponse = { request: LeaveRequestListItem }
+/** GET /api/leave-requests/:id, POST .../approve, POST .../reject.
+ *  canDecide is caller-relative, not a property of the request — the same
+ *  reasoning as OvertimeWeeklyCapResponse being its own endpoint rather than
+ *  a field on the request. True only while status is 'pending' and the
+ *  caller is either HR/Admin (any stage) or the snapshotted
+ *  supervisorEmployeeId while currentStage is 'supervisor'. The server
+ *  checks this again on every write; it exists so the UI can decide whether
+ *  to show the approve/reject controls at all without guessing. */
+export type LeaveRequestDetailResponse = { request: LeaveRequestListItem; canDecide: boolean }
 
 /** Body of POST /api/leave-requests/:id/reject — a reason is required every
  *  time, never optional. */

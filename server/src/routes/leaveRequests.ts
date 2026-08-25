@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
+import type pg from 'pg'
 import {
   LEAVE_REQUEST_STATUSES,
   ROLES,
@@ -10,15 +11,17 @@ import {
   type LeaveRequestMineResponse,
   type LeaveRequestRejectRequest,
   type LeaveRequestResponse,
+  type LeaveRequestStage,
   type LeaveRequestStatus,
 } from '@hrm/shared'
-import { withTransaction } from '../db.js'
+import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById } from '../employeeQueries.js'
+import { findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { findLeaveTypeById } from '../leaveTypeQueries.js'
 import { listLeaveBalanceSummaries } from '../leaveBalanceQueries.js'
+import { resolveSupervisorScope } from '../supervisorScope.js'
 import {
   SELECT_LEAVE_REQUEST,
   computeTotalDays,
@@ -26,6 +29,7 @@ import {
   hasOverlappingLeaveRequest,
   listLeaveRequests,
   listLeaveRequestsForEmployee,
+  listLeaveRequestsPendingApproval,
   loadLeaveDayContext,
   rowToLeaveRequest,
   type LeaveRequestRow,
@@ -33,13 +37,49 @@ import {
 
 export const leaveRequestsRouter = Router()
 
-// Same split as time corrections: any HRM role may look at the review
-// queue, only HR and Admin may decide it.
+type Queryable = Pick<pg.Pool, 'query'>
+
+// Any HRM role may look at the review queue (unchanged). Deciding one is no
+// longer a fixed role check: HR/Admin may always decide, and a supervisor
+// may decide only their own team's request while it's waiting on them — see
+// resolveLeaveApprover, checked per-request inside each handler once the row
+// (and its current_stage) is loaded.
 const canReadAdmin = requireRole(...ROLES)
-const canDecide = requireRole('HRM.HR', 'HRM.Admin')
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
+}
+
+type LeaveApproverKind = 'hr' | 'supervisor'
+
+/** Who, if anyone, may decide this request right now. HR/Admin may always
+ *  decide, at any stage — the confirmed override rule. Anyone else may only
+ *  act while the request is pending at the 'supervisor' stage and they are
+ *  the snapshotted supervisor_employee_id, resolved from their Entra UPN the
+ *  same way resolveSupervisorScope does. */
+async function resolveLeaveApprover(
+  actor: AuthUser,
+  row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<LeaveApproverKind | null> {
+  if (actor.kind !== 'admin') return null
+  if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
+  if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+    return null
+  }
+  const callerEmployeeId = await findEmployeeIdByEntraUpn(actor.upn, db)
+  return callerEmployeeId === row.supervisorEmployeeId ? 'supervisor' : null
+}
+
+/** LeaveRequestDetailResponse.canDecide — whether to show the request's own
+ *  actor the approve/reject controls at all. */
+async function computeCanDecide(
+  actor: AuthUser | null,
+  request: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<boolean> {
+  if (!actor || request.status !== 'pending') return false
+  return (await resolveLeaveApprover(actor, request, db)) !== null
 }
 
 /** POST /leave-requests and its /me, /:id/cancel siblings are for the
@@ -243,11 +283,20 @@ leaveRequestsRouter.post('/leave-requests', async (req: Request, res: Response) 
       }
     }
 
+    // Snapshotted from employment_details.supervisor_employee_id (via
+    // employee.employment, already loaded above), same as every other frozen
+    // field on this request — see the migration's comment. No supervisor
+    // means the request skips straight to the HR/Admin stage.
+    const supervisorEmployeeId = employee.employment.supervisorEmployeeId
+    const requiresSupervisorApproval = supervisorEmployeeId !== null
+    const currentStage: LeaveRequestStage = requiresSupervisorApproval ? 'supervisor' : 'hr'
+
     const request = await withTransaction(async (client) => {
       const { rows } = await client.query<{ id: string; created_at: string }>(
         `INSERT INTO leave_requests
-           (employee_id, leave_type_id, start_date, end_date, start_time, end_time, total_days, reason)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           (employee_id, leave_type_id, start_date, end_date, start_time, end_time, total_days, reason,
+            requires_supervisor_approval, supervisor_employee_id, current_stage)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING id, created_at`,
         [
           employeeId,
@@ -258,6 +307,9 @@ leaveRequestsRouter.post('/leave-requests', async (req: Request, res: Response) 
           input.endTime,
           totalDays,
           input.reason,
+          requiresSupervisorApproval,
+          supervisorEmployeeId,
+          currentStage,
         ]
       )
       const created = rows[0]
@@ -283,6 +335,12 @@ leaveRequestsRouter.post('/leave-requests', async (req: Request, res: Response) 
         total_days: String(totalDays),
         reason: input.reason,
         status: 'pending',
+        requires_supervisor_approval: requiresSupervisorApproval,
+        supervisor_employee_id: supervisorEmployeeId === null ? null : String(supervisorEmployeeId),
+        supervisor_employee_name: employee.employment.supervisorEmployeeName,
+        current_stage: currentStage,
+        supervisor_approved_by_name: null,
+        supervisor_approved_at: null,
         decided_by_name: null,
         decided_at: null,
         decision_reason: null,
@@ -373,6 +431,32 @@ leaveRequestsRouter.get('/leave-requests', canReadAdmin, async (req: Request, re
   }
 })
 
+// A supervisor's inbox — requests currently waiting on them, or (HR/Admin)
+// every request currently waiting on any supervisor. Mounted ahead of
+// GET /leave-requests/:id so 'pending-approval' is never parsed as an id.
+leaveRequestsRouter.get('/leave-requests/pending-approval', canReadAdmin, async (req: Request, res: Response) => {
+  const auth = actorOf(req)
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
+  try {
+    const scope = await resolveSupervisorScope(auth)
+    // 'none' isn't an error here the way it is for Bulk OT — it just means
+    // this account isn't anyone's supervisor, so their inbox is empty.
+    if (scope.kind === 'none') {
+      const body: LeaveRequestListResponse = { requests: [] }
+      return res.json(body)
+    }
+
+    const requests = await listLeaveRequestsPendingApproval(
+      scope.kind === 'all' ? null : scope.supervisorEmployeeId
+    )
+    const body: LeaveRequestListResponse = { requests }
+    res.json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
+
 leaveRequestsRouter.get('/leave-requests/:id', canReadAdmin, async (req: Request, res: Response) => {
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -381,14 +465,15 @@ leaveRequestsRouter.get('/leave-requests/:id', canReadAdmin, async (req: Request
     const request = await findLeaveRequestById(id)
     if (!request) return fail(res, 404, `no leave request with id ${id}`)
 
-    const body: LeaveRequestDetailResponse = { request }
+    const canDecide = await computeCanDecide(actorOf(req), request, pool)
+    const body: LeaveRequestDetailResponse = { request, canDecide }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
   }
 })
 
-leaveRequestsRouter.post('/leave-requests/:id/approve', canDecide, async (req: Request, res: Response) => {
+leaveRequestsRouter.post('/leave-requests/:id/approve', canReadAdmin, async (req: Request, res: Response) => {
   const actor = actorOf(req)
   if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
 
@@ -403,8 +488,10 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canDecide, async (req: R
         start_date: string
         total_days: string
         status: string
+        current_stage: string | null
+        supervisor_employee_id: string | null
       }>(
-        `SELECT employee_id, leave_type_id, start_date, total_days, status
+        `SELECT employee_id, leave_type_id, start_date, total_days, status, current_stage, supervisor_employee_id
          FROM leave_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
@@ -412,6 +499,45 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canDecide, async (req: R
       if (!row) return { kind: 'not_found' as const }
       if (row.status !== 'pending') return { kind: 'conflict' as const, message: 'คำขอนี้ถูกดำเนินการไปแล้ว' }
 
+      const approverKind = await resolveLeaveApprover(
+        actor,
+        {
+          status: row.status,
+          currentStage: row.current_stage,
+          supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+        },
+        client
+      )
+      if (approverKind === null) return { kind: 'forbidden' as const }
+
+      if (approverKind === 'supervisor') {
+        // Forwarding approval only — the request stays pending, now waiting
+        // on HR/Admin. Not the same event as the final approval below: no
+        // leave balance is posted here, because nothing is decided yet.
+        await client.query(
+          `UPDATE leave_requests
+           SET current_stage = 'hr', supervisor_approved_by_oid = $2,
+               supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
+           WHERE id = $1`,
+          [id, actor.oid, actor.name]
+        )
+
+        await recordAudit(client, {
+          actor,
+          action: 'leave_request.supervisor_approve',
+          entityId: id,
+          detail: {},
+        })
+
+        const request = await findLeaveRequestById(id, client)
+        if (!request) throw new Error('re-select of leave_requests returned no row')
+        const canDecide = await computeCanDecide(actor, request, client)
+        return { kind: 'ok' as const, request, canDecide }
+      }
+
+      // HR/Admin's final decision — reached the ordinary way (current_stage
+      // was already 'hr') or as an override of a still-pending supervisor
+      // stage (confirmed: HR/Admin may act at any stage).
       const year = Number(row.start_date.slice(0, 4))
 
       const { rows: entryRows } = await client.query<{ id: string }>(
@@ -426,7 +552,7 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canDecide, async (req: R
 
       await client.query(
         `UPDATE leave_requests
-         SET status = 'approved', decided_by_oid = $2, decided_by_name = $3,
+         SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
              decided_at = now(), leave_balance_entry_id = $4, updated_at = now()
          WHERE id = $1`,
         [id, actor.oid, actor.name, leaveBalanceEntryId]
@@ -441,20 +567,21 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canDecide, async (req: R
 
       const request = await findLeaveRequestById(id, client)
       if (!request) throw new Error('re-select of leave_requests returned no row')
-      return { kind: 'ok' as const, request }
+      return { kind: 'ok' as const, request, canDecide: false }
     })
 
     if (result.kind === 'not_found') return fail(res, 404, `no leave request with id ${id}`)
     if (result.kind === 'conflict') return fail(res, 409, result.message)
+    if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์อนุมัติคำขอนี้', 'FORBIDDEN')
 
-    const body: LeaveRequestDetailResponse = { request: result.request }
+    const body: LeaveRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
   }
 })
 
-leaveRequestsRouter.post('/leave-requests/:id/reject', canDecide, async (req: Request, res: Response) => {
+leaveRequestsRouter.post('/leave-requests/:id/reject', canReadAdmin, async (req: Request, res: Response) => {
   const actor = actorOf(req)
   if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
 
@@ -467,17 +594,36 @@ leaveRequestsRouter.post('/leave-requests/:id/reject', canDecide, async (req: Re
 
   try {
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ status: string }>(
-        `SELECT status FROM leave_requests WHERE id = $1 FOR UPDATE`,
+      const { rows } = await client.query<{
+        status: string
+        current_stage: string | null
+        supervisor_employee_id: string | null
+      }>(
+        `SELECT status, current_stage, supervisor_employee_id FROM leave_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (row.status !== 'pending') return { kind: 'conflict' as const }
 
+      const approverKind = await resolveLeaveApprover(
+        actor,
+        {
+          status: row.status,
+          currentStage: row.current_stage,
+          supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+        },
+        client
+      )
+      if (approverKind === null) return { kind: 'forbidden' as const }
+
+      // Terminal either way — unlike approval, a supervisor's reject needs
+      // no separate forwarding step: there is nothing left to decide once
+      // one link in the chain has said no. decided_by_* names whoever
+      // actually made this call, supervisor or HR/Admin.
       await client.query(
         `UPDATE leave_requests
-         SET status = 'rejected', decided_by_oid = $2, decided_by_name = $3,
+         SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
              decided_at = now(), decision_reason = $4, updated_at = now()
          WHERE id = $1`,
         [id, actor.oid, actor.name, reason]
@@ -487,18 +633,19 @@ leaveRequestsRouter.post('/leave-requests/:id/reject', canDecide, async (req: Re
         actor,
         action: 'leave_request.reject',
         entityId: id,
-        detail: { reason },
+        detail: { reason, decidedAsSupervisor: approverKind === 'supervisor' },
       })
 
       const request = await findLeaveRequestById(id, client)
       if (!request) throw new Error('re-select of leave_requests returned no row')
-      return { kind: 'ok' as const, request }
+      return { kind: 'ok' as const, request, canDecide: false }
     })
 
     if (result.kind === 'not_found') return fail(res, 404, `no leave request with id ${id}`)
     if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
+    if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
 
-    const responseBody: LeaveRequestDetailResponse = { request: result.request }
+    const responseBody: LeaveRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
     res.json(responseBody)
   } catch (err) {
     handleUnexpected(res, err)
