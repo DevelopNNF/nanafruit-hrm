@@ -230,8 +230,20 @@ attendanceRouter.get('/attendance/me', async (req: Request, res: Response) => {
     const now = new Date()
     const todayDate = toThailandDateString(now)
     const yesterdayDate = addDays(todayDate, -1)
+    // Same buffered yesterday/today bound POST /attendance/clock uses for its
+    // clock-order check, so this reports the identical "what's next" the
+    // server would actually accept — see findLastAttendanceEvent's doc.
+    const [yesterdayWindow, todayWindow] = await Promise.all([
+      resolveMatchWindow(employeeId, yesterdayDate),
+      resolveMatchWindow(employeeId, todayDate),
+    ])
+    const bound = {
+      from: yesterdayWindow.startAt < todayWindow.startAt ? yesterdayWindow.startAt : todayWindow.startAt,
+      to: yesterdayWindow.endAt > todayWindow.endAt ? yesterdayWindow.endAt : todayWindow.endAt,
+    }
     const [yesterday, today] = await matchAttendanceForDates(employeeId, [yesterdayDate, todayDate])
     if (!yesterday || !today) throw new Error('matchAttendanceForDates returned fewer rows than dates requested')
+    const lastEvent = await findLastAttendanceEvent(employeeId, pool, bound)
 
     const chosen = chooseAttendanceWindow(yesterday, today, now)
     const status: AttendanceTodayStatus = {
@@ -245,6 +257,7 @@ attendanceRouter.get('/attendance/me', async (req: Request, res: Response) => {
       checkInEventId: chosen.actualCheckInEventId,
       checkOutAt: chosen.actualCheckOutAt,
       checkOutEventId: chosen.actualCheckOutEventId,
+      lastEventType: lastEvent?.eventType ?? null,
     }
     const body: AttendanceStatusResponse = { today: status }
     res.json(body)

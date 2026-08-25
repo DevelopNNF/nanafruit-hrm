@@ -1520,11 +1520,22 @@ export type AttendanceTodayStatus = {
   shiftEndAt: string | null
   isOvernight: boolean
   /** ISO 8601, from a matched attendance_events row — null when nothing has
-   *  been punched yet for this window. */
+   *  been punched yet for this window. First check-in / last check-out of the
+   *  window, i.e. the day's overall arrival/departure — NOT necessarily the
+   *  most recent event, so this pair alone can't tell the LIFF button what to
+   *  offer next once an employee has clocked in/out more than once in a day
+   *  (e.g. a check_out/check_in pair bracketing a break). Use lastEventType
+   *  for that instead. */
   checkInAt: string | null
   checkInEventId: number | null
   checkOutAt: string | null
   checkOutEventId: number | null
+  /** The type of the single most recent attendance_events row in this
+   *  window — null when nothing has been punched yet. This is what actually
+   *  determines the next legal punch (mirrors the server's own clock-order
+   *  check in POST /attendance/clock), independent of how many check_in/
+   *  check_out pairs happened today. */
+  lastEventType: AttendanceEventType | null
 }
 
 /** GET /api/attendance/me */

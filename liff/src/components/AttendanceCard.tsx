@@ -39,9 +39,15 @@ function dateHeading(workDate: string): string {
 }
 
 /** check_in and check_out alternate strictly — this is the only rule the
- *  client enforces; the server re-checks it against the real last event. */
+ *  client enforces; the server re-checks it against the real last event.
+ *  Must key off lastEventType, not checkInAt/checkOutAt: those two are the
+ *  day's first-check-in/last-check-out (a payroll-style summary), which
+ *  stops reflecting "what just happened" the moment an employee clocks
+ *  in/out more than once in a day — e.g. a check_out/check_in pair
+ *  bracketing a break would leave checkOutAt non-null and strand the button
+ *  on "check in" forever after. */
 function nextEventType(today: AttendanceTodayStatus): AttendanceEventType {
-  return today.checkInAt !== null && today.checkOutAt === null ? 'check_out' : 'check_in'
+  return today.lastEventType === 'check_in' ? 'check_out' : 'check_in'
 }
 
 /** Shown after a successful clock event whose GPS fix didn't come through —
@@ -100,8 +106,8 @@ export function AttendanceCard() {
               phase: 'ready',
               today:
                 eventType === 'check_in'
-                  ? { ...prev.today, checkInAt: event.eventTime, checkInEventId: event.id }
-                  : { ...prev.today, checkOutAt: event.eventTime, checkOutEventId: event.id },
+                  ? { ...prev.today, checkInAt: event.eventTime, checkInEventId: event.id, lastEventType: 'check_in' }
+                  : { ...prev.today, checkOutAt: event.eventTime, checkOutEventId: event.id, lastEventType: 'check_out' },
             }
           : prev
       )
@@ -142,16 +148,16 @@ export function AttendanceCard() {
             </div>
             <span
               className={`status-pill ${
-                state.today.checkInAt === null
+                state.today.lastEventType === null
                   ? 'pending'
-                  : state.today.checkOutAt === null
+                  : state.today.lastEventType === 'check_in'
                     ? 'approved'
                     : 'cancelled'
               }`}
             >
-              {state.today.checkInAt === null
+              {state.today.lastEventType === null
                 ? 'ยังไม่ลงเวลา'
-                : state.today.checkOutAt === null
+                : state.today.lastEventType === 'check_in'
                   ? 'กำลังทำงาน'
                   : 'ลงเวลาครบแล้ว'}
             </span>
