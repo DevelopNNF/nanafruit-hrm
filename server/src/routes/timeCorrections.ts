@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
+import type pg from 'pg'
 import {
   ATTENDANCE_EVENT_TYPES,
   ROLES,
@@ -12,20 +13,24 @@ import {
   type TimeCorrectionMineResponse,
   type TimeCorrectionRejectRequest,
   type TimeCorrectionResponse,
+  type TimeCorrectionStage,
   type TimeCorrectionStatus,
 } from '@hrm/shared'
 import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById } from '../employeeQueries.js'
+import { findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { addDays, getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { resolveMatchWindow } from '../attendanceMatchingQueries.js'
 import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
+import { resolveSupervisorScope } from '../supervisorScope.js'
 import {
+  SELECT_TIME_CORRECTION,
   findTimeCorrectionById,
   listTimeCorrections,
   listTimeCorrectionsForEmployee,
+  listTimeCorrectionsPendingApproval,
   rowToTimeCorrection,
   rowToTimeCorrectionListItem,
   type TimeCorrectionListRow,
@@ -34,15 +39,42 @@ import {
 
 export const timeCorrectionsRouter = Router()
 
-// Same split as attendance: any HRM role may look at the review queue, only
-// HR and Admin may decide it — matching employees/jobs/shifts' write level,
-// not locations' Admin-only (a time correction isn't a security control the
-// way a geofence radius is).
+type Queryable = Pick<pg.Pool, 'query'>
+
+// Any HRM role may look at the review queue. Deciding one is no longer a
+// fixed role check — see resolveTimeCorrectionApprover, checked per-request
+// once current_stage is loaded, same pattern as leaveRequests.ts.
 const canReadAdmin = requireRole(...ROLES)
-const canDecide = requireRole('HRM.HR', 'HRM.Admin')
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
+}
+
+type TimeCorrectionApproverKind = 'hr' | 'supervisor'
+
+/** Same rule as leaveRequests.ts's resolveLeaveApprover. */
+async function resolveTimeCorrectionApprover(
+  actor: AuthUser,
+  row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<TimeCorrectionApproverKind | null> {
+  if (actor.kind !== 'admin') return null
+  if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
+  if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+    return null
+  }
+  const callerEmployeeId = await findEmployeeIdByEntraUpn(actor.upn, db)
+  return callerEmployeeId === row.supervisorEmployeeId ? 'supervisor' : null
+}
+
+/** TimeCorrectionDetailResponse.canDecide. */
+async function computeCanDecide(
+  actor: AuthUser | null,
+  request: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<boolean> {
+  if (!actor || request.status !== 'pending') return false
+  return (await resolveTimeCorrectionApprover(actor, request, db)) !== null
 }
 
 /** POST /time-corrections and GET .../me are for the employee arm of AuthUser
@@ -126,24 +158,48 @@ timeCorrectionsRouter.post('/time-corrections', async (req: Request, res: Respon
   const input = parsed.value
 
   try {
+    const employee = await findEmployeeById(employeeId)
+    if (!employee) return fail(res, 404, `no employee with id ${employeeId}`)
+
+    // Snapshotted at submission — see LeaveRequest's fields of the same name
+    // for the full reasoning, which applies unchanged here.
+    const requiresSupervisorApproval = employee.employment.supervisorEmployeeId !== null
+    const supervisorEmployeeId = employee.employment.supervisorEmployeeId
+    const currentStage: TimeCorrectionStage = requiresSupervisorApproval ? 'supervisor' : 'hr'
+
     const request = await withTransaction(async (client) => {
-      const { rows } = await client.query<TimeCorrectionRow>(
-        `INSERT INTO time_correction_requests (employee_id, event_type, requested_event_time, reason)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, employee_id, event_type, requested_event_time, reason, status,
-                   decided_by_name, decided_at, decision_reason, resulting_event_id, created_at`,
-        [employeeId, input.eventType, input.requestedEventTime, input.reason]
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO time_correction_requests
+           (employee_id, event_type, requested_event_time, reason,
+            requires_supervisor_approval, supervisor_employee_id, current_stage)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [
+          employeeId,
+          input.eventType,
+          input.requestedEventTime,
+          input.reason,
+          requiresSupervisorApproval,
+          supervisorEmployeeId,
+          currentStage,
+        ]
       )
-      const row = rows[0]
-      if (!row) throw new Error('insert into time_correction_requests returned no row')
+      const created = rows[0]
+      if (!created) throw new Error('insert into time_correction_requests returned no row')
 
       await recordAudit(client, {
         actor: { kind: 'employee', employeeId },
         action: 'time_correction.create',
-        entityId: Number(row.id),
+        entityId: Number(created.id),
         detail: { eventType: input.eventType, requestedEventTime: input.requestedEventTime },
       })
 
+      const { rows: selectRows } = await client.query<TimeCorrectionRow>(
+        `${SELECT_TIME_CORRECTION} WHERE t.id = $1`,
+        [created.id]
+      )
+      const row = selectRows[0]
+      if (!row) throw new Error('re-select of time_correction_requests returned no row')
       return rowToTimeCorrection(row)
     })
 
@@ -180,6 +236,34 @@ timeCorrectionsRouter.get('/time-corrections', canReadAdmin, async (req: Request
   }
 })
 
+// A supervisor's inbox — mirrors GET /leave-requests/pending-approval. Mounted
+// ahead of GET /time-corrections/:id so 'pending-approval' is never parsed
+// as an id.
+timeCorrectionsRouter.get(
+  '/time-corrections/pending-approval',
+  canReadAdmin,
+  async (req: Request, res: Response) => {
+    const auth = actorOf(req)
+    if (!auth) return fail(res, 500, 'server misconfigured')
+
+    try {
+      const scope = await resolveSupervisorScope(auth)
+      if (scope.kind === 'none') {
+        const body: TimeCorrectionListResponse = { requests: [] }
+        return res.json(body)
+      }
+
+      const requests = await listTimeCorrectionsPendingApproval(
+        scope.kind === 'all' ? null : scope.supervisorEmployeeId
+      )
+      const body: TimeCorrectionListResponse = { requests }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
 timeCorrectionsRouter.get('/time-corrections/:id', canReadAdmin, async (req: Request, res: Response) => {
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -188,7 +272,8 @@ timeCorrectionsRouter.get('/time-corrections/:id', canReadAdmin, async (req: Req
     const request = await findTimeCorrectionById(id)
     if (!request) return fail(res, 404, `no time correction request with id ${id}`)
 
-    const body: TimeCorrectionDetailResponse = { request }
+    const canDecide = await computeCanDecide(actorOf(req), request, pool)
+    const body: TimeCorrectionDetailResponse = { request, canDecide }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
@@ -248,7 +333,7 @@ function scopeFor(window: { startAt: Date; endAt: Date }, eventTime: Date): { st
   }
 }
 
-timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (req: Request, res: Response) => {
+timeCorrectionsRouter.post('/time-corrections/:id/approve', canReadAdmin, async (req: Request, res: Response) => {
   const actor = actorOf(req)
   if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
 
@@ -257,8 +342,11 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (re
 
   try {
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<TimeCorrectionRow>(
+      const { rows } = await client.query<
+        TimeCorrectionRow & { current_stage: string | null; supervisor_employee_id: string | null }
+      >(
         `SELECT id, employee_id, event_type, requested_event_time, reason, status,
+                current_stage, supervisor_employee_id,
                 decided_by_name, decided_at, decision_reason, resulting_event_id, created_at
          FROM time_correction_requests WHERE id = $1 FOR UPDATE`,
         [id]
@@ -266,6 +354,17 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (re
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (row.status !== 'pending') return { kind: 'conflict' as const, message: 'คำขอนี้ถูกดำเนินการไปแล้ว' }
+
+      const approverKind = await resolveTimeCorrectionApprover(
+        actor,
+        {
+          status: row.status,
+          currentStage: row.current_stage,
+          supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+        },
+        client
+      )
+      if (approverKind === null) return { kind: 'forbidden' as const }
 
       const employeeId = Number(row.employee_id)
       const eventType = row.event_type as AttendanceEventType
@@ -306,6 +405,32 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (re
         }
       }
 
+      if (approverKind === 'supervisor') {
+        // Forwarding approval only — the request stays pending, now waiting
+        // on HR/Admin. No attendance_events row is written here: nothing is
+        // decided yet, and that insert (below) is exactly the thing a
+        // forwarding step must not do twice.
+        await client.query(
+          `UPDATE time_correction_requests
+           SET current_stage = 'hr', supervisor_approved_by_oid = $2,
+               supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
+           WHERE id = $1`,
+          [id, actor.oid, actor.name]
+        )
+
+        await recordAudit(client, {
+          actor,
+          action: 'time_correction.supervisor_approve',
+          entityId: id,
+          detail: {},
+        })
+
+        const request = await findTimeCorrectionById(id, client)
+        if (!request) throw new Error('re-select of time_correction_requests returned no row')
+        const canDecide = await computeCanDecide(actor, request, client)
+        return { kind: 'ok' as const, request, canDecide }
+      }
+
       const employee = await findEmployeeById(employeeId, client)
       if (!employee) return { kind: 'conflict' as const, message: 'ไม่พบข้อมูลพนักงานของคำขอนี้' }
 
@@ -324,22 +449,13 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (re
       const resultingEventId = Number(insertedRows[0]?.id)
       if (!resultingEventId) throw new Error('insert into attendance_events returned no id')
 
-      const { rows: updatedRows } = await client.query<TimeCorrectionListRow>(
-        `WITH updated AS (
-           UPDATE time_correction_requests
-           SET status = 'approved', decided_by_oid = $2, decided_by_name = $3,
-               decided_at = now(), resulting_event_id = $4, updated_at = now()
-           WHERE id = $1
-           RETURNING id, employee_id, event_type, requested_event_time, reason, status,
-                     decided_by_name, decided_at, decision_reason, resulting_event_id, created_at
-         )
-         SELECT updated.*, e.employee_code,
-                (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
-         FROM updated JOIN employees e ON e.id = updated.employee_id`,
+      await client.query(
+        `UPDATE time_correction_requests
+         SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
+             decided_at = now(), resulting_event_id = $4, updated_at = now()
+         WHERE id = $1`,
         [id, actor.oid, actor.name, resultingEventId]
       )
-      const updated = updatedRows[0]
-      if (!updated) throw new Error('update time_correction_requests returned no row')
 
       await recordAudit(client, {
         actor,
@@ -360,20 +476,23 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecide, async (re
       // figures can never reflect an approval that then rolled back.
       await recomputeAttendanceDaily(employeeId, addDays(workDate, -1), addDays(workDate, 1), client)
 
-      return { kind: 'ok' as const, request: rowToTimeCorrectionListItem(updated) }
+      const request = await findTimeCorrectionById(id, client)
+      if (!request) throw new Error('re-select of time_correction_requests returned no row')
+      return { kind: 'ok' as const, request, canDecide: false }
     })
 
     if (result.kind === 'not_found') return fail(res, 404, `no time correction request with id ${id}`)
+    if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์อนุมัติคำขอนี้', 'FORBIDDEN')
     if (result.kind === 'conflict') return fail(res, 409, result.message)
 
-    const body: TimeCorrectionDetailResponse = { request: result.request }
+    const body: TimeCorrectionDetailResponse = { request: result.request, canDecide: result.canDecide }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
   }
 })
 
-timeCorrectionsRouter.post('/time-corrections/:id/reject', canDecide, async (req: Request, res: Response) => {
+timeCorrectionsRouter.post('/time-corrections/:id/reject', canReadAdmin, async (req: Request, res: Response) => {
   const actor = actorOf(req)
   if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
 
@@ -386,45 +505,54 @@ timeCorrectionsRouter.post('/time-corrections/:id/reject', canDecide, async (req
 
   try {
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ status: string }>(
-        `SELECT status FROM time_correction_requests WHERE id = $1 FOR UPDATE`,
+      const { rows } = await client.query<{
+        status: string
+        current_stage: string | null
+        supervisor_employee_id: string | null
+      }>(
+        `SELECT status, current_stage, supervisor_employee_id FROM time_correction_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (row.status !== 'pending') return { kind: 'conflict' as const }
 
-      const { rows: updatedRows } = await client.query<TimeCorrectionListRow>(
-        `WITH updated AS (
-           UPDATE time_correction_requests
-           SET status = 'rejected', decided_by_oid = $2, decided_by_name = $3,
-               decided_at = now(), decision_reason = $4, updated_at = now()
-           WHERE id = $1
-           RETURNING id, employee_id, event_type, requested_event_time, reason, status,
-                     decided_by_name, decided_at, decision_reason, resulting_event_id, created_at
-         )
-         SELECT updated.*, e.employee_code,
-                (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
-         FROM updated JOIN employees e ON e.id = updated.employee_id`,
+      const approverKind = await resolveTimeCorrectionApprover(
+        actor,
+        {
+          status: row.status,
+          currentStage: row.current_stage,
+          supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+        },
+        client
+      )
+      if (approverKind === null) return { kind: 'forbidden' as const }
+
+      await client.query(
+        `UPDATE time_correction_requests
+         SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
+             decided_at = now(), decision_reason = $4, updated_at = now()
+         WHERE id = $1`,
         [id, actor.oid, actor.name, reason]
       )
-      const updated = updatedRows[0]
-      if (!updated) throw new Error('update time_correction_requests returned no row')
 
       await recordAudit(client, {
         actor,
         action: 'time_correction.reject',
         entityId: id,
-        detail: { reason },
+        detail: { reason, decidedAsSupervisor: approverKind === 'supervisor' },
       })
 
-      return { kind: 'ok' as const, request: rowToTimeCorrectionListItem(updated) }
+      const request = await findTimeCorrectionById(id, client)
+      if (!request) throw new Error('re-select of time_correction_requests returned no row')
+      return { kind: 'ok' as const, request, canDecide: false }
     })
 
     if (result.kind === 'not_found') return fail(res, 404, `no time correction request with id ${id}`)
     if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
+    if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
 
-    const body2: TimeCorrectionDetailResponse = { request: result.request }
+    const body2: TimeCorrectionDetailResponse = { request: result.request, canDecide: result.canDecide }
     res.json(body2)
   } catch (err) {
     handleUnexpected(res, err)

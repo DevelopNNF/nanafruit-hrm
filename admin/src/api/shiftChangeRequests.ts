@@ -17,29 +17,40 @@ export async function listShiftChangeRequests(
   return body.requests
 }
 
+/** The caller's own inbox — mirrors listLeaveRequestsPendingApproval. */
+export async function listShiftChangeRequestsPendingApproval(
+  signal?: AbortSignal
+): Promise<ShiftChangeRequestListItem[]> {
+  const res = await apiFetch(`/api/shift-change-requests/pending-approval`, { signal })
+  const body = await unwrap<ShiftChangeRequestListResponse>(res)
+  return body.requests
+}
+
 export async function getShiftChangeRequest(
   id: number,
   signal?: AbortSignal
-): Promise<ShiftChangeRequestListItem> {
+): Promise<{ request: ShiftChangeRequestListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/shift-change-requests/${id}`, { signal })
-  const body = await unwrap<ShiftChangeRequestDetailResponse>(res)
-  return body.request
+  return unwrap<ShiftChangeRequestDetailResponse>(res)
 }
 
-export async function approveShiftChangeRequest(id: number): Promise<ShiftChangeRequestListItem> {
+export async function approveShiftChangeRequest(
+  id: number
+): Promise<{ request: ShiftChangeRequestListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/shift-change-requests/${id}/approve`, { method: 'POST' })
-  const body = await unwrap<ShiftChangeRequestDetailResponse>(res)
-  return body.request
+  return unwrap<ShiftChangeRequestDetailResponse>(res)
 }
 
-export async function rejectShiftChangeRequest(id: number, reason: string): Promise<ShiftChangeRequestListItem> {
+export async function rejectShiftChangeRequest(
+  id: number,
+  reason: string
+): Promise<{ request: ShiftChangeRequestListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/shift-change-requests/${id}/reject`, {
     method: 'POST',
     headers: jsonHeaders,
     body: JSON.stringify({ reason }),
   })
-  const body = await unwrap<ShiftChangeRequestDetailResponse>(res)
-  return body.request
+  return unwrap<ShiftChangeRequestDetailResponse>(res)
 }
 
 export async function getShiftChangeAttachmentUrl(id: number, signal?: AbortSignal): Promise<string | null> {

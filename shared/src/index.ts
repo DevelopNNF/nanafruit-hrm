@@ -1917,6 +1917,10 @@ export function attendanceBadges(day: AttendanceDailyItem): AttendanceBadge[] {
 export const TIME_CORRECTION_STATUSES = ['pending', 'approved', 'rejected'] as const
 export type TimeCorrectionStatus = (typeof TIME_CORRECTION_STATUSES)[number]
 
+/** Who needs to act next — same shape and reasons as LeaveRequestStage. */
+export const TIME_CORRECTION_STAGES = ['supervisor', 'hr'] as const
+export type TimeCorrectionStage = (typeof TIME_CORRECTION_STAGES)[number]
+
 /** A row in time_correction_requests: one employee asking to add one
  *  check-in or check-out that liff's clock-in flow missed. */
 export type TimeCorrectionRequest = {
@@ -1929,6 +1933,15 @@ export type TimeCorrectionRequest = {
   requestedEventTime: string
   reason: string
   status: TimeCorrectionStatus
+  /** Snapshotted at submission from employment_details.supervisor_employee_id
+   *  — see LeaveRequest's fields of the same name for the full reasoning,
+   *  which applies unchanged here. */
+  requiresSupervisorApproval: boolean
+  supervisorEmployeeId: number | null
+  supervisorEmployeeName: string | null
+  currentStage: TimeCorrectionStage | null
+  supervisorApprovedByName: string | null
+  supervisorApprovedAt: string | null
   /** The admin's display name at decision time. Null while pending. */
   decidedByName: string | null
   /** ISO 8601. Null while pending. */
@@ -1967,8 +1980,10 @@ export type TimeCorrectionMineResponse = { requests: TimeCorrectionRequest[] }
 /** GET /api/time-corrections */
 export type TimeCorrectionListResponse = { requests: TimeCorrectionListItem[] }
 
-/** GET /api/time-corrections/:id, POST .../approve, POST .../reject */
-export type TimeCorrectionDetailResponse = { request: TimeCorrectionListItem }
+/** GET /api/time-corrections/:id, POST .../approve, POST .../reject.
+ *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,
+ *  which applies unchanged here. */
+export type TimeCorrectionDetailResponse = { request: TimeCorrectionListItem; canDecide: boolean }
 
 /** Body of POST /api/time-corrections/:id/reject — a reason is required
  *  every time, never optional. */
@@ -1985,6 +2000,10 @@ export type TimeCorrectionRejectRequest = { reason: string }
 
 export const SHIFT_CHANGE_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
 export type ShiftChangeRequestStatus = (typeof SHIFT_CHANGE_REQUEST_STATUSES)[number]
+
+/** Who needs to act next — same shape and reasons as LeaveRequestStage. */
+export const SHIFT_CHANGE_REQUEST_STAGES = ['supervisor', 'hr'] as const
+export type ShiftChangeRequestStage = (typeof SHIFT_CHANGE_REQUEST_STAGES)[number]
 
 /** A row in shift_change_requests: one employee asking to swap into a
  *  different shift for a single calendar day. currentShiftName/newShiftName
@@ -2008,6 +2027,15 @@ export type ShiftChangeRequest = {
    *  GET /shift-change-requests/:id/attachment. */
   attachmentKey: string | null
   status: ShiftChangeRequestStatus
+  /** Snapshotted at submission (and re-snapshotted on every edit) from
+   *  employment_details.supervisor_employee_id — see LeaveRequest's fields of
+   *  the same name for the full reasoning, which applies unchanged here. */
+  requiresSupervisorApproval: boolean
+  supervisorEmployeeId: number | null
+  supervisorEmployeeName: string | null
+  currentStage: ShiftChangeRequestStage | null
+  supervisorApprovedByName: string | null
+  supervisorApprovedAt: string | null
   /** The admin's display name at decision time. Null while pending/cancelled. */
   decidedByName: string | null
   /** ISO 8601. Null while pending/cancelled. */
@@ -2053,8 +2081,10 @@ export type ShiftChangeRequestMineResponse = { requests: ShiftChangeRequest[] }
 /** GET /api/shift-change-requests */
 export type ShiftChangeRequestListResponse = { requests: ShiftChangeRequestListItem[] }
 
-/** GET /api/shift-change-requests/:id, POST .../approve, POST .../reject */
-export type ShiftChangeRequestDetailResponse = { request: ShiftChangeRequestListItem }
+/** GET /api/shift-change-requests/:id, POST .../approve, POST .../reject.
+ *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,
+ *  which applies unchanged here. */
+export type ShiftChangeRequestDetailResponse = { request: ShiftChangeRequestListItem; canDecide: boolean }
 
 /** Body of POST /api/shift-change-requests/:id/reject — a reason is required
  *  every time, never optional. */
@@ -2103,6 +2133,10 @@ export type ShiftChangeAttachmentResponse = { url: string | null }
 export const DAY_OFF_SWAP_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
 export type DayOffSwapRequestStatus = (typeof DAY_OFF_SWAP_REQUEST_STATUSES)[number]
 
+/** Who needs to act next — same shape and reasons as LeaveRequestStage. */
+export const DAY_OFF_SWAP_REQUEST_STAGES = ['supervisor', 'hr'] as const
+export type DayOffSwapRequestStage = (typeof DAY_OFF_SWAP_REQUEST_STAGES)[number]
+
 /** A row in day_off_swap_requests: one employee asking to work on workDate
  *  in exchange for taking offDate off instead. Fixed roles — never
  *  interchangeable, unlike a plain single-date request. */
@@ -2134,6 +2168,15 @@ export type DayOffSwapRequest = {
   workShiftEndTime: string | null
   reason: string
   status: DayOffSwapRequestStatus
+  /** Snapshotted at submission (and re-snapshotted on every edit) from
+   *  employment_details.supervisor_employee_id — see LeaveRequest's fields of
+   *  the same name for the full reasoning, which applies unchanged here. */
+  requiresSupervisorApproval: boolean
+  supervisorEmployeeId: number | null
+  supervisorEmployeeName: string | null
+  currentStage: DayOffSwapRequestStage | null
+  supervisorApprovedByName: string | null
+  supervisorApprovedAt: string | null
   /** The admin's display name at decision time. Null while pending/cancelled. */
   decidedByName: string | null
   /** ISO 8601. Null while pending/cancelled. */
@@ -2174,8 +2217,10 @@ export type DayOffSwapRequestMineResponse = { requests: DayOffSwapRequest[] }
 /** GET /api/day-off-swap-requests */
 export type DayOffSwapRequestListResponse = { requests: DayOffSwapRequestListItem[] }
 
-/** GET /api/day-off-swap-requests/:id, POST .../approve, POST .../reject */
-export type DayOffSwapRequestDetailResponse = { request: DayOffSwapRequestListItem }
+/** GET /api/day-off-swap-requests/:id, POST .../approve, POST .../reject.
+ *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,
+ *  which applies unchanged here. */
+export type DayOffSwapRequestDetailResponse = { request: DayOffSwapRequestListItem; canDecide: boolean }
 
 /** Body of POST /api/day-off-swap-requests/:id/reject — a reason is required
  *  every time, never optional. */
@@ -2285,6 +2330,12 @@ export type WorkScheduleResponse = { year: number; month: number; employees: Emp
 export const OVERTIME_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
 export type OvertimeRequestStatus = (typeof OVERTIME_REQUEST_STATUSES)[number]
 
+/** Who needs to act next on a pending request — same shape and same reasons
+ *  as LeaveRequestStage. For a Bulk OT Request row, this is resolved from the
+ *  filer's own supervisor, not the employee's — see migration 063's comment. */
+export const OVERTIME_REQUEST_STAGES = ['supervisor', 'hr'] as const
+export type OvertimeRequestStage = (typeof OVERTIME_REQUEST_STAGES)[number]
+
 /** How far back an OT request may be dated. OT is unlike a shift change,
  *  which can never be backdated at all: some of it is planned ahead and some
  *  of it was worked last night and only written up afterwards. The window is
@@ -2368,7 +2419,24 @@ export type OvertimeRequest = {
    *  supervisor, HR or Admin, via Bulk OT Request) — null when the employee
    *  filed it themselves, which is the ordinary case. */
   createdByName: string | null
-  /** The admin's display name at decision time. Null while pending/cancelled. */
+  /** Snapshotted at submission time — the requesting employee's own
+   *  supervisor for a self-filed request, or the FILER's supervisor for a
+   *  Bulk OT Request row (see migration 063). False/null skips straight to
+   *  the HR/Admin stage. */
+  requiresSupervisorApproval: boolean
+  supervisorEmployeeId: number | null
+  /** Joined in for display. Null exactly when supervisorEmployeeId is null. */
+  supervisorEmployeeName: string | null
+  /** Who must act next; null once the request is no longer pending. */
+  currentStage: OvertimeRequestStage | null
+  /** Set only when a supervisor approved and forwarded this request to HR —
+   *  see LeaveRequest.supervisorApprovedByName for the full reasoning, which
+   *  applies unchanged here. */
+  supervisorApprovedByName: string | null
+  /** ISO 8601. Null under the same conditions as supervisorApprovedByName. */
+  supervisorApprovedAt: string | null
+  /** The final decision maker — a supervisor (if they rejected), or
+   *  HR/Admin. Null while pending/cancelled. */
   decidedByName: string | null
   /** ISO 8601. Null while pending/cancelled. */
   decidedAt: string | null
@@ -2411,8 +2479,10 @@ export type OvertimeRequestMineResponse = { requests: OvertimeRequest[] }
 /** GET /api/overtime-requests */
 export type OvertimeRequestListResponse = { requests: OvertimeRequestListItem[] }
 
-/** GET /api/overtime-requests/:id, POST .../approve, POST .../reject */
-export type OvertimeRequestDetailResponse = { request: OvertimeRequestListItem }
+/** GET /api/overtime-requests/:id, POST .../approve, POST .../reject.
+ *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,
+ *  the same reasoning applies unchanged here. */
+export type OvertimeRequestDetailResponse = { request: OvertimeRequestListItem; canDecide: boolean }
 
 /** Body of POST /api/overtime-requests/:id/reject — a reason is required
  *  every time, never optional. */
@@ -2480,8 +2550,13 @@ export type OvertimeBulkCreateResponse = { batchId: string; outcomes: OvertimeBu
 
 /** GET /api/overtime-requests/batch/:batchId — every row created by one bulk
  *  submission, for the batch detail screen. Same list-item shape the queue
- *  already uses. */
-export type OvertimeBatchResponse = { requests: OvertimeRequestListItem[] }
+ *  already uses. canDecideBatch is caller-relative, same reasoning as
+ *  OvertimeRequestDetailResponse.canDecide — every pending row in one batch
+ *  shares the same supervisor_employee_id/currentStage (resolved once from
+ *  the filer, not per employee, see migration 063), so one flag for the
+ *  whole batch is accurate rather than a per-row approximation. False when
+ *  there is nothing pending left to decide. */
+export type OvertimeBatchResponse = { requests: OvertimeRequestListItem[]; canDecideBatch: boolean }
 
 /** One request's result from a batch-wide approve/reject. 'stale' mirrors
  *  approvalStaleFail on the single-request endpoint — the request was valid

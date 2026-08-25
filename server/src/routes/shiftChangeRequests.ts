@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
+import type pg from 'pg'
 import {
   ROLES,
   SHIFT_CHANGE_REQUEST_STATUSES,
@@ -12,14 +13,16 @@ import {
   type ShiftChangeRequestMineResponse,
   type ShiftChangeRequestRejectRequest,
   type ShiftChangeRequestResponse,
+  type ShiftChangeRequestStage,
   type ShiftChangeRequestStatus,
 } from '@hrm/shared'
 import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById } from '../employeeQueries.js'
+import { findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { findShiftById } from '../shiftQueries.js'
+import { resolveSupervisorScope } from '../supervisorScope.js'
 import {
   createShiftChange,
   getShiftIdForDate,
@@ -31,6 +34,7 @@ import {
   hasConflictingShiftChangeRequest,
   listShiftChangeRequests,
   listShiftChangeRequestsForEmployee,
+  listShiftChangeRequestsPendingApproval,
   rowToShiftChangeRequest,
   type ShiftChangeRequestRow,
 } from '../shiftChangeRequestQueries.js'
@@ -43,13 +47,42 @@ import {
 
 export const shiftChangeRequestsRouter = Router()
 
-// Same split as time corrections/leave requests: any HRM role may look at the
-// review queue, only HR and Admin may decide it.
+type Queryable = Pick<pg.Pool, 'query'>
+
+// Any HRM role may look at the review queue. Deciding one is no longer a
+// fixed role check — see resolveShiftChangeApprover, checked per-request once
+// current_stage is loaded, same pattern as leaveRequests.ts/overtimeRequests.ts.
 const canReadAdmin = requireRole(...ROLES)
-const canDecide = requireRole('HRM.HR', 'HRM.Admin')
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
+}
+
+type ShiftChangeApproverKind = 'hr' | 'supervisor'
+
+/** Same rule as leaveRequests.ts's resolveLeaveApprover. */
+async function resolveShiftChangeApprover(
+  actor: AuthUser,
+  row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<ShiftChangeApproverKind | null> {
+  if (actor.kind !== 'admin') return null
+  if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
+  if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+    return null
+  }
+  const callerEmployeeId = await findEmployeeIdByEntraUpn(actor.upn, db)
+  return callerEmployeeId === row.supervisorEmployeeId ? 'supervisor' : null
+}
+
+/** ShiftChangeRequestDetailResponse.canDecide. */
+async function computeCanDecide(
+  actor: AuthUser | null,
+  request: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<boolean> {
+  if (!actor || request.status !== 'pending') return false
+  return (await resolveShiftChangeApprover(actor, request, db)) !== null
 }
 
 /** POST /shift-change-requests and its /me, /:id, /:id/cancel,
@@ -139,7 +172,13 @@ async function validateShiftChangeRequestInput(
   input: ShiftChangeRequestInput,
   excludeId: number | null
 ): Promise<
-  | { kind: 'ok'; hireDate: string }
+  | {
+      kind: 'ok'
+      hireDate: string
+      requiresSupervisorApproval: boolean
+      supervisorEmployeeId: number | null
+      supervisorEmployeeName: string | null
+    }
   | { kind: 'employee-not-found' }
   | { kind: 'shift-not-found' }
   | { kind: 'shift-inactive' }
@@ -163,7 +202,13 @@ async function validateShiftChangeRequestInput(
   const conflicting = await hasConflictingShiftChangeRequest(employeeId, input.requestedDate, excludeId)
   if (conflicting) return { kind: 'conflict' }
 
-  return { kind: 'ok', hireDate: employee.employment.hireDate }
+  return {
+    kind: 'ok',
+    hireDate: employee.employment.hireDate,
+    requiresSupervisorApproval: employee.employment.supervisorEmployeeId !== null,
+    supervisorEmployeeId: employee.employment.supervisorEmployeeId,
+    supervisorEmployeeName: employee.employment.supervisorEmployeeName,
+  }
 }
 
 function validationFail(
@@ -201,14 +246,25 @@ shiftChangeRequestsRouter.post('/shift-change-requests', async (req: Request, re
     if (outcome.kind !== 'ok') return validationFail(res, outcome)
 
     const currentShiftId = await getShiftIdForDate(employeeId, input.requestedDate)
+    const currentStage: ShiftChangeRequestStage = outcome.requiresSupervisorApproval ? 'supervisor' : 'hr'
 
     const request = await withTransaction(async (client) => {
       const { rows } = await client.query<{ id: string; created_at: string; updated_at: string }>(
         `INSERT INTO shift_change_requests
-           (employee_id, requested_date, current_shift_id, new_shift_id, reason)
-         VALUES ($1, $2, $3, $4, $5)
+           (employee_id, requested_date, current_shift_id, new_shift_id, reason,
+            requires_supervisor_approval, supervisor_employee_id, current_stage)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, created_at, updated_at`,
-        [employeeId, input.requestedDate, currentShiftId, input.newShiftId, input.reason]
+        [
+          employeeId,
+          input.requestedDate,
+          currentShiftId,
+          input.newShiftId,
+          input.reason,
+          outcome.requiresSupervisorApproval,
+          outcome.supervisorEmployeeId,
+          currentStage,
+        ]
       )
       const created = rows[0]
       if (!created) throw new Error('insert into shift_change_requests returned no row')
@@ -267,6 +323,9 @@ shiftChangeRequestsRouter.put('/shift-change-requests/:id', async (req: Request,
     if (outcome.kind !== 'ok') return validationFail(res, outcome)
 
     const currentShiftId = await getShiftIdForDate(employeeId, input.requestedDate)
+    // Re-freezes the supervisor snapshot too, and resets any prior supervisor
+    // sign-off — same reasoning as overtimeRequests.ts's PUT route.
+    const currentStage: ShiftChangeRequestStage = outcome.requiresSupervisorApproval ? 'supervisor' : 'hr'
 
     const result = await withTransaction(async (client) => {
       const { rows } = await client.query<{ employee_id: string; status: string }>(
@@ -280,9 +339,21 @@ shiftChangeRequestsRouter.put('/shift-change-requests/:id', async (req: Request,
 
       await client.query(
         `UPDATE shift_change_requests
-         SET requested_date = $2, current_shift_id = $3, new_shift_id = $4, reason = $5, updated_at = now()
+         SET requested_date = $2, current_shift_id = $3, new_shift_id = $4, reason = $5,
+             requires_supervisor_approval = $6, supervisor_employee_id = $7, current_stage = $8,
+             supervisor_approved_by_oid = NULL, supervisor_approved_by_name = NULL, supervisor_approved_at = NULL,
+             updated_at = now()
          WHERE id = $1`,
-        [id, input.requestedDate, currentShiftId, input.newShiftId, input.reason]
+        [
+          id,
+          input.requestedDate,
+          currentShiftId,
+          input.newShiftId,
+          input.reason,
+          outcome.requiresSupervisorApproval,
+          outcome.supervisorEmployeeId,
+          currentStage,
+        ]
       )
 
       await recordAudit(client, {
@@ -330,7 +401,7 @@ shiftChangeRequestsRouter.post('/shift-change-requests/:id/cancel', async (req: 
       if (row.status !== 'pending') return { kind: 'conflict' as const }
 
       await client.query(
-        `UPDATE shift_change_requests SET status = 'cancelled', updated_at = now() WHERE id = $1`,
+        `UPDATE shift_change_requests SET status = 'cancelled', current_stage = NULL, updated_at = now() WHERE id = $1`,
         [id]
       )
 
@@ -373,6 +444,34 @@ shiftChangeRequestsRouter.get('/shift-change-requests', canReadAdmin, async (req
   }
 })
 
+// A supervisor's inbox — mirrors GET /leave-requests/pending-approval. Mounted
+// ahead of GET /shift-change-requests/:id so 'pending-approval' is never
+// parsed as an id.
+shiftChangeRequestsRouter.get(
+  '/shift-change-requests/pending-approval',
+  canReadAdmin,
+  async (req: Request, res: Response) => {
+    const auth = actorOf(req)
+    if (!auth) return fail(res, 500, 'server misconfigured')
+
+    try {
+      const scope = await resolveSupervisorScope(auth)
+      if (scope.kind === 'none') {
+        const body: ShiftChangeRequestListResponse = { requests: [] }
+        return res.json(body)
+      }
+
+      const requests = await listShiftChangeRequestsPendingApproval(
+        scope.kind === 'all' ? null : scope.supervisorEmployeeId
+      )
+      const body: ShiftChangeRequestListResponse = { requests }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
 shiftChangeRequestsRouter.get('/shift-change-requests/:id', canReadAdmin, async (req: Request, res: Response) => {
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -381,7 +480,8 @@ shiftChangeRequestsRouter.get('/shift-change-requests/:id', canReadAdmin, async 
     const request = await findShiftChangeRequestById(id)
     if (!request) return fail(res, 404, `no shift change request with id ${id}`)
 
-    const body: ShiftChangeRequestDetailResponse = { request }
+    const canDecide = await computeCanDecide(actorOf(req), request, pool)
+    const body: ShiftChangeRequestDetailResponse = { request, canDecide }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
@@ -390,7 +490,7 @@ shiftChangeRequestsRouter.get('/shift-change-requests/:id', canReadAdmin, async 
 
 shiftChangeRequestsRouter.post(
   '/shift-change-requests/:id/approve',
-  canDecide,
+  canReadAdmin,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
     if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -405,8 +505,10 @@ shiftChangeRequestsRouter.post(
           requested_date: string
           new_shift_id: string
           status: string
+          current_stage: string | null
+          supervisor_employee_id: string | null
         }>(
-          `SELECT employee_id, requested_date, new_shift_id, status
+          `SELECT employee_id, requested_date, new_shift_id, status, current_stage, supervisor_employee_id
            FROM shift_change_requests WHERE id = $1 FOR UPDATE`,
           [id]
         )
@@ -414,8 +516,20 @@ shiftChangeRequestsRouter.post(
         if (!row) return { kind: 'not_found' as const }
         if (row.status !== 'pending') return { kind: 'conflict' as const, message: 'คำขอนี้ถูกดำเนินการไปแล้ว' }
 
-        // Re-checked here, not just at submission: a request can sit pending
-        // long enough for its date to slip into the past.
+        const approverKind = await resolveShiftChangeApprover(
+          actor,
+          {
+            status: row.status,
+            currentStage: row.current_stage,
+            supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+          },
+          client
+        )
+        if (approverKind === null) return { kind: 'forbidden' as const }
+
+        // Re-checked here, not just at submission, for BOTH a forwarding
+        // approval and a final one — same reasoning as overtimeRequests.ts's
+        // approve route.
         const today = toThailandDateString(new Date())
         if (row.requested_date < today) {
           return {
@@ -425,6 +539,31 @@ shiftChangeRequestsRouter.post(
         }
 
         const employeeId = Number(row.employee_id)
+
+        if (approverKind === 'supervisor') {
+          // Forwarding approval only — the request stays pending, now
+          // waiting on HR/Admin. createShiftChange (which actually writes
+          // the temporary swap) only runs on the final decision below.
+          await client.query(
+            `UPDATE shift_change_requests
+             SET current_stage = 'hr', supervisor_approved_by_oid = $2,
+                 supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
+             WHERE id = $1`,
+            [id, actor.oid, actor.name]
+          )
+
+          await recordAudit(client, {
+            actor,
+            action: 'shift_change_request.supervisor_approve',
+            entityId: id,
+            detail: {},
+          })
+
+          const request = await findShiftChangeRequestById(id, client)
+          if (!request) throw new Error('re-select of shift_change_requests returned no row')
+          const canDecide = await computeCanDecide(actor, request, client)
+          return { kind: 'ok' as const, request, canDecide }
+        }
 
         const outcome = await createShiftChange(client, {
           employeeId,
@@ -439,7 +578,7 @@ shiftChangeRequestsRouter.post(
 
         await client.query(
           `UPDATE shift_change_requests
-           SET status = 'approved', decided_by_oid = $2, decided_by_name = $3,
+           SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), resulting_assignment_id = $4, updated_at = now()
            WHERE id = $1`,
           [id, actor.oid, actor.name, outcome.assignment.id]
@@ -459,11 +598,12 @@ shiftChangeRequestsRouter.post(
 
         const request = await findShiftChangeRequestById(id, client)
         if (!request) throw new Error('re-select of shift_change_requests returned no row')
-        return { kind: 'ok' as const, request }
+        return { kind: 'ok' as const, request, canDecide: false }
       })
 
       if (result.kind === 'not_found') return fail(res, 404, `no shift change request with id ${id}`)
       if (result.kind === 'conflict' || result.kind === 'expired') return fail(res, 409, result.message)
+      if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์อนุมัติคำขอนี้', 'FORBIDDEN')
       if (result.kind === 'no_baseline') {
         return fail(
           res,
@@ -479,7 +619,7 @@ shiftChangeRequestsRouter.post(
         )
       }
 
-      const body: ShiftChangeRequestDetailResponse = { request: result.request }
+      const body: ShiftChangeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
@@ -489,7 +629,7 @@ shiftChangeRequestsRouter.post(
 
 shiftChangeRequestsRouter.post(
   '/shift-change-requests/:id/reject',
-  canDecide,
+  canReadAdmin,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
     if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -503,17 +643,32 @@ shiftChangeRequestsRouter.post(
 
     try {
       const result = await withTransaction(async (client) => {
-        const { rows } = await client.query<{ status: string }>(
-          `SELECT status FROM shift_change_requests WHERE id = $1 FOR UPDATE`,
+        const { rows } = await client.query<{
+          status: string
+          current_stage: string | null
+          supervisor_employee_id: string | null
+        }>(
+          `SELECT status, current_stage, supervisor_employee_id FROM shift_change_requests WHERE id = $1 FOR UPDATE`,
           [id]
         )
         const row = rows[0]
         if (!row) return { kind: 'not_found' as const }
         if (row.status !== 'pending') return { kind: 'conflict' as const }
 
+        const approverKind = await resolveShiftChangeApprover(
+          actor,
+          {
+            status: row.status,
+            currentStage: row.current_stage,
+            supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+          },
+          client
+        )
+        if (approverKind === null) return { kind: 'forbidden' as const }
+
         await client.query(
           `UPDATE shift_change_requests
-           SET status = 'rejected', decided_by_oid = $2, decided_by_name = $3,
+           SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), decision_reason = $4, updated_at = now()
            WHERE id = $1`,
           [id, actor.oid, actor.name, reason]
@@ -523,18 +678,19 @@ shiftChangeRequestsRouter.post(
           actor,
           action: 'shift_change_request.reject',
           entityId: id,
-          detail: { reason },
+          detail: { reason, decidedAsSupervisor: approverKind === 'supervisor' },
         })
 
         const request = await findShiftChangeRequestById(id, client)
         if (!request) throw new Error('re-select of shift_change_requests returned no row')
-        return { kind: 'ok' as const, request }
+        return { kind: 'ok' as const, request, canDecide: false }
       })
 
       if (result.kind === 'not_found') return fail(res, 404, `no shift change request with id ${id}`)
       if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
+      if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
 
-      const responseBody: ShiftChangeRequestDetailResponse = { request: result.request }
+      const responseBody: ShiftChangeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(responseBody)
     } catch (err) {
       handleUnexpected(res, err)
@@ -659,7 +815,8 @@ shiftChangeRequestsRouter.post(
       const request = await findShiftChangeRequestById(id)
       if (!request) throw new Error('shift change request vanished after attachment update')
 
-      const body: ShiftChangeRequestDetailResponse = { request }
+      const canDecide = await computeCanDecide(actorOf(req), request, pool)
+      const body: ShiftChangeRequestDetailResponse = { request, canDecide }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)

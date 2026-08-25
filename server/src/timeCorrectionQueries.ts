@@ -5,7 +5,13 @@
 // in for display) — see rowToTimeCorrection vs rowToTimeCorrectionListItem.
 
 import type pg from 'pg'
-import type { AttendanceEventType, TimeCorrectionListItem, TimeCorrectionRequest, TimeCorrectionStatus } from '@hrm/shared'
+import type {
+  AttendanceEventType,
+  TimeCorrectionListItem,
+  TimeCorrectionRequest,
+  TimeCorrectionStage,
+  TimeCorrectionStatus,
+} from '@hrm/shared'
 import { pool } from './db.js'
 
 type Queryable = Pick<pg.Pool, 'query'>
@@ -18,6 +24,12 @@ export type TimeCorrectionRow = {
   requested_event_time: string
   reason: string
   status: string
+  requires_supervisor_approval: boolean
+  supervisor_employee_id: string | null
+  supervisor_employee_name: string | null
+  current_stage: string | null
+  supervisor_approved_by_name: string | null
+  supervisor_approved_at: string | null
   decided_by_name: string | null
   decided_at: string | null
   decision_reason: string | null
@@ -31,16 +43,24 @@ export type TimeCorrectionListRow = TimeCorrectionRow & {
 }
 
 export const SELECT_TIME_CORRECTION = `
-  SELECT id, employee_id, event_type, requested_event_time, reason, status,
-         decided_by_name, decided_at, decision_reason, resulting_event_id, created_at
-  FROM time_correction_requests
+  SELECT t.id, t.employee_id, t.event_type, t.requested_event_time, t.reason, t.status,
+         t.requires_supervisor_approval, t.supervisor_employee_id,
+         (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
+         t.current_stage, t.supervisor_approved_by_name, t.supervisor_approved_at,
+         t.decided_by_name, t.decided_at, t.decision_reason, t.resulting_event_id, t.created_at
+  FROM time_correction_requests t
+  LEFT JOIN employees sup ON sup.id = t.supervisor_employee_id
 `
 
 export const SELECT_TIME_CORRECTION_LIST = `
   SELECT t.id, t.employee_id, t.event_type, t.requested_event_time, t.reason, t.status,
+         t.requires_supervisor_approval, t.supervisor_employee_id,
+         (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
+         t.current_stage, t.supervisor_approved_by_name, t.supervisor_approved_at,
          t.decided_by_name, t.decided_at, t.decision_reason, t.resulting_event_id, t.created_at,
          e.employee_code, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
   FROM time_correction_requests t
+  LEFT JOIN employees sup ON sup.id = t.supervisor_employee_id
   JOIN employees e ON e.id = t.employee_id
 `
 
@@ -52,6 +72,13 @@ export function rowToTimeCorrection(row: TimeCorrectionRow): TimeCorrectionReque
     requestedEventTime: new Date(row.requested_event_time).toISOString(),
     reason: row.reason,
     status: row.status as TimeCorrectionStatus,
+    requiresSupervisorApproval: row.requires_supervisor_approval,
+    supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+    supervisorEmployeeName: row.supervisor_employee_name,
+    currentStage: row.current_stage === null ? null : (row.current_stage as TimeCorrectionStage),
+    supervisorApprovedByName: row.supervisor_approved_by_name,
+    supervisorApprovedAt:
+      row.supervisor_approved_at === null ? null : new Date(row.supervisor_approved_at).toISOString(),
     decidedByName: row.decided_by_name,
     decidedAt: row.decided_at === null ? null : new Date(row.decided_at).toISOString(),
     decisionReason: row.decision_reason,
@@ -86,7 +113,7 @@ export async function listTimeCorrectionsForEmployee(
   db: Queryable = pool
 ): Promise<TimeCorrectionRequest[]> {
   const { rows } = await db.query<TimeCorrectionRow>(
-    `${SELECT_TIME_CORRECTION} WHERE employee_id = $1 ORDER BY created_at DESC LIMIT 100`,
+    `${SELECT_TIME_CORRECTION} WHERE t.employee_id = $1 ORDER BY t.created_at DESC LIMIT 100`,
     [employeeId]
   )
   return rows.map(rowToTimeCorrection)
@@ -100,6 +127,24 @@ export async function listTimeCorrections(
 ): Promise<TimeCorrectionListItem[]> {
   const where = filter.status !== undefined ? 'WHERE t.status = $1' : ''
   const params = filter.status !== undefined ? [filter.status] : []
+  const { rows } = await db.query<TimeCorrectionListRow>(
+    `${SELECT_TIME_CORRECTION_LIST} ${where} ORDER BY t.created_at DESC LIMIT 500`,
+    params
+  )
+  return rows.map(rowToTimeCorrectionListItem)
+}
+
+/** A supervisor's inbox, mirroring listLeaveRequestsPendingApproval — see its
+ *  comment. */
+export async function listTimeCorrectionsPendingApproval(
+  supervisorEmployeeId: number | null,
+  db: Queryable = pool
+): Promise<TimeCorrectionListItem[]> {
+  const where =
+    supervisorEmployeeId !== null
+      ? `WHERE t.current_stage = 'supervisor' AND t.supervisor_employee_id = $1`
+      : `WHERE t.current_stage = 'supervisor'`
+  const params = supervisorEmployeeId !== null ? [supervisorEmployeeId] : []
   const { rows } = await db.query<TimeCorrectionListRow>(
     `${SELECT_TIME_CORRECTION_LIST} ${where} ORDER BY t.created_at DESC LIMIT 500`,
     params

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import type { OvertimeRequestListItem, OvertimeRequestStatus } from '@hrm/shared'
-import { listOvertimeRequests } from '../../api/overtimeRequests'
+import type { OvertimeRequestListItem, OvertimeRequestStage, OvertimeRequestStatus } from '@hrm/shared'
+import { listOvertimeRequests, listOvertimeRequestsPendingApproval } from '../../api/overtimeRequests'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import {
   DAY_STATUS_LABEL,
@@ -27,7 +27,9 @@ type State =
   | { phase: 'ok'; requests: OvertimeRequestListItem[] }
   | { phase: 'error'; message: string }
 
-type TabValue = OvertimeRequestStatus | 'all'
+// 'mine' is not an OvertimeRequestStatus — it's the caller's own supervisor
+// inbox, fetched from a different endpoint (see the effect below).
+type TabValue = OvertimeRequestStatus | 'all' | 'mine'
 
 /** One row of the table — either a normal self-filed request, or every
  *  member of one Bulk OT Request submission collapsed into a single row
@@ -59,6 +61,7 @@ function groupByBatch(requests: OvertimeRequestListItem[]): DisplayRow[] {
 }
 
 const TABS: { value: TabValue; label: string }[] = [
+  { value: 'mine', label: 'รอฉันอนุมัติ' },
   { value: 'pending', label: 'รอดำเนินการ' },
   { value: 'approved', label: 'อนุมัติแล้ว' },
   { value: 'rejected', label: 'ปฏิเสธแล้ว' },
@@ -71,6 +74,11 @@ const STATUS_LABEL: Record<OvertimeRequestStatus, string> = {
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
   cancelled: 'ยกเลิกแล้ว',
+}
+
+const STAGE_LABEL: Record<OvertimeRequestStage, string> = {
+  supervisor: 'รอหัวหน้างาน',
+  hr: 'รอ HR/Admin',
 }
 
 function statusBadgeTone(
@@ -93,7 +101,12 @@ export function OvertimeRequestListPage() {
   useEffect(() => {
     const controller = new AbortController()
 
-    listOvertimeRequests(tab === 'all' ? undefined : tab, controller.signal)
+    const fetchRequests =
+      tab === 'mine'
+        ? listOvertimeRequestsPendingApproval(controller.signal)
+        : listOvertimeRequests(tab === 'all' ? undefined : tab, controller.signal)
+
+    fetchRequests
       .then((requests) => setState({ phase: 'ok', requests }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
@@ -173,6 +186,7 @@ export function OvertimeRequestListPage() {
                         'ประเภทวัน',
                         'เหตุผล',
                         'สถานะ',
+                        'ขั้นตอน',
                       ].map((h) => (
                         <th
                           key={h}
@@ -224,6 +238,11 @@ export function OvertimeRequestListPage() {
                               <span className={badge(statusBadgeTone(request.status))}>
                                 {STATUS_LABEL[request.status]}
                               </span>
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                              {request.status === 'pending' && request.currentStage
+                                ? STAGE_LABEL[request.currentStage]
+                                : '—'}
                             </td>
                           </tr>
                         )
@@ -279,6 +298,11 @@ export function OvertimeRequestListPage() {
                                 </span>
                               ))}
                             </div>
+                          </td>
+                          <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                            {first.status === 'pending' && first.currentStage
+                              ? STAGE_LABEL[first.currentStage]
+                              : '—'}
                           </td>
                         </tr>
                       )

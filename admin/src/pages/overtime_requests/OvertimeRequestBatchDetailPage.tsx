@@ -6,7 +6,6 @@ import {
   getOvertimeRequestBatch,
   rejectOvertimeRequestBatch,
 } from '../../api/overtimeRequests'
-import { useCanWrite } from '../../auth/meContext'
 import { notify } from '../../notifications/notify'
 import { DAY_STATUS_LABEL, formatOvertimeDate, formatOvertimeHours, hhmm } from '../../overtimeFormat'
 import {
@@ -26,7 +25,7 @@ import {
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; requests: OvertimeRequestListItem[] }
+  | { phase: 'ok'; requests: OvertimeRequestListItem[]; canDecideBatch: boolean }
   | { phase: 'error'; message: string }
 
 const STATUS_LABEL = {
@@ -34,6 +33,11 @@ const STATUS_LABEL = {
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
   cancelled: 'ยกเลิกแล้ว',
+} as const
+
+const STAGE_LABEL = {
+  supervisor: 'รอหัวหน้างาน',
+  hr: 'รอ HR/Admin',
 } as const
 
 function statusBadgeTone(
@@ -57,7 +61,6 @@ function statusBadgeTone(
  */
 export function OvertimeRequestBatchDetailPage() {
   const { batchId } = useParams()
-  const canWrite = useCanWrite()
 
   const [state, setState] = useState<State>({ phase: 'loading' })
   const [busy, setBusy] = useState(false)
@@ -68,7 +71,7 @@ export function OvertimeRequestBatchDetailPage() {
     if (!batchId) return
     const controller = new AbortController()
     getOvertimeRequestBatch(batchId, controller.signal)
-      .then((requests) => setState({ phase: 'ok', requests }))
+      .then(({ requests, canDecideBatch }) => setState({ phase: 'ok', requests, canDecideBatch }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({
@@ -82,8 +85,8 @@ export function OvertimeRequestBatchDetailPage() {
   async function refetch() {
     if (!batchId) return
     try {
-      const requests = await getOvertimeRequestBatch(batchId)
-      setState({ phase: 'ok', requests })
+      const { requests, canDecideBatch } = await getOvertimeRequestBatch(batchId)
+      setState({ phase: 'ok', requests, canDecideBatch })
     } catch {
       // Best-effort refresh — the outcome notification already told the user
       // what happened.
@@ -138,6 +141,7 @@ export function OvertimeRequestBatchDetailPage() {
 
   const first = state.phase === 'ok' ? state.requests[0] : undefined
   const pendingCount = state.phase === 'ok' ? state.requests.filter((r) => r.status === 'pending').length : 0
+  const canDecideBatch = state.phase === 'ok' && state.canDecideBatch
 
   return (
     <>
@@ -177,7 +181,7 @@ export function OvertimeRequestBatchDetailPage() {
 
           <p className="mb-4 text-[0.825rem] text-slate-600">{first.reason}</p>
 
-          {canWrite && pendingCount > 0 && (
+          {canDecideBatch && pendingCount > 0 && (
             <div className="border-t border-slate-200 pt-4">
               {!rejecting ? (
                 <div className="flex gap-2.5">
@@ -244,7 +248,7 @@ export function OvertimeRequestBatchDetailPage() {
             <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
               <thead>
                 <tr>
-                  {['รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภทวัน', 'ชั่วโมง', 'สถานะ'].map((h) => (
+                  {['รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภทวัน', 'ชั่วโมง', 'สถานะ', 'ขั้นตอน'].map((h) => (
                     <th
                       key={h}
                       className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
@@ -278,6 +282,11 @@ export function OvertimeRequestBatchDetailPage() {
                           เปิดคำขอนี้
                         </Link>
                       </div>
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                      {request.status === 'pending' && request.currentStage
+                        ? STAGE_LABEL[request.currentStage]
+                        : '—'}
                     </td>
                   </tr>
                 ))}

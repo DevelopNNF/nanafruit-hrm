@@ -16,27 +16,38 @@ export async function listDayOffSwapRequests(
   return body.requests
 }
 
+/** The caller's own inbox — mirrors listLeaveRequestsPendingApproval. */
+export async function listDayOffSwapRequestsPendingApproval(
+  signal?: AbortSignal
+): Promise<DayOffSwapRequestListItem[]> {
+  const res = await apiFetch(`/api/day-off-swap-requests/pending-approval`, { signal })
+  const body = await unwrap<DayOffSwapRequestListResponse>(res)
+  return body.requests
+}
+
 export async function getDayOffSwapRequest(
   id: number,
   signal?: AbortSignal
-): Promise<DayOffSwapRequestListItem> {
+): Promise<{ request: DayOffSwapRequestListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/day-off-swap-requests/${id}`, { signal })
-  const body = await unwrap<DayOffSwapRequestDetailResponse>(res)
-  return body.request
+  return unwrap<DayOffSwapRequestDetailResponse>(res)
 }
 
-export async function approveDayOffSwapRequest(id: number): Promise<DayOffSwapRequestListItem> {
+export async function approveDayOffSwapRequest(
+  id: number
+): Promise<{ request: DayOffSwapRequestListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/day-off-swap-requests/${id}/approve`, { method: 'POST' })
-  const body = await unwrap<DayOffSwapRequestDetailResponse>(res)
-  return body.request
+  return unwrap<DayOffSwapRequestDetailResponse>(res)
 }
 
-export async function rejectDayOffSwapRequest(id: number, reason: string): Promise<DayOffSwapRequestListItem> {
+export async function rejectDayOffSwapRequest(
+  id: number,
+  reason: string
+): Promise<{ request: DayOffSwapRequestListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/day-off-swap-requests/${id}/reject`, {
     method: 'POST',
     headers: jsonHeaders,
     body: JSON.stringify({ reason }),
   })
-  const body = await unwrap<DayOffSwapRequestDetailResponse>(res)
-  return body.request
+  return unwrap<DayOffSwapRequestDetailResponse>(res)
 }

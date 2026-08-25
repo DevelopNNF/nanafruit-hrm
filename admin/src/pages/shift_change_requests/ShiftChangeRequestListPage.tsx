@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { ShiftChangeRequestListItem, ShiftChangeRequestStatus } from '@hrm/shared'
-import { listShiftChangeRequests } from '../../api/shiftChangeRequests'
+import type { ShiftChangeRequestListItem, ShiftChangeRequestStage, ShiftChangeRequestStatus } from '@hrm/shared'
+import { listShiftChangeRequests, listShiftChangeRequestsPendingApproval } from '../../api/shiftChangeRequests'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
 
@@ -10,9 +10,12 @@ type State =
   | { phase: 'ok'; requests: ShiftChangeRequestListItem[] }
   | { phase: 'error'; message: string }
 
-type TabValue = ShiftChangeRequestStatus | 'all'
+// 'mine' is not a ShiftChangeRequestStatus — it's the caller's own supervisor
+// inbox, fetched from a different endpoint (see the effect below).
+type TabValue = ShiftChangeRequestStatus | 'all' | 'mine'
 
 const TABS: { value: TabValue; label: string }[] = [
+  { value: 'mine', label: 'รอฉันอนุมัติ' },
   { value: 'pending', label: 'รอดำเนินการ' },
   { value: 'approved', label: 'อนุมัติแล้ว' },
   { value: 'rejected', label: 'ปฏิเสธแล้ว' },
@@ -25,6 +28,11 @@ const STATUS_LABEL: Record<ShiftChangeRequestStatus, string> = {
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
   cancelled: 'ยกเลิกแล้ว',
+}
+
+const STAGE_LABEL: Record<ShiftChangeRequestStage, string> = {
+  supervisor: 'รอหัวหน้างาน',
+  hr: 'รอ HR/Admin',
 }
 
 function statusBadgeTone(status: ShiftChangeRequestStatus): 'pending' | 'active' | 'danger' | 'inactive' {
@@ -53,7 +61,12 @@ export function ShiftChangeRequestListPage() {
   useEffect(() => {
     const controller = new AbortController()
 
-    listShiftChangeRequests(tab === 'all' ? undefined : tab, controller.signal)
+    const fetchRequests =
+      tab === 'mine'
+        ? listShiftChangeRequestsPendingApproval(controller.signal)
+        : listShiftChangeRequests(tab === 'all' ? undefined : tab, controller.signal)
+
+    fetchRequests
       .then((requests) => setState({ phase: 'ok', requests }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
@@ -115,7 +128,7 @@ export function ShiftChangeRequestListPage() {
                 <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
                   <thead>
                     <tr>
-                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'วันที่ขอเปลี่ยนกะ', 'กะเดิม', 'กะใหม่', 'เหตุผล', 'สถานะ'].map(
+                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'วันที่ขอเปลี่ยนกะ', 'กะเดิม', 'กะใหม่', 'เหตุผล', 'สถานะ', 'ขั้นตอน'].map(
                         (h) => (
                           <th
                             key={h}
@@ -157,6 +170,11 @@ export function ShiftChangeRequestListPage() {
                         </td>
                         <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
                           <span className={badge(statusBadgeTone(request.status))}>{STATUS_LABEL[request.status]}</span>
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                          {request.status === 'pending' && request.currentStage
+                            ? STAGE_LABEL[request.currentStage]
+                            : '—'}
                         </td>
                       </tr>
                     ))}

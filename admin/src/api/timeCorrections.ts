@@ -16,24 +16,38 @@ export async function listTimeCorrections(
   return body.requests
 }
 
-export async function getTimeCorrection(id: number, signal?: AbortSignal): Promise<TimeCorrectionListItem> {
+/** The caller's own inbox — mirrors listLeaveRequestsPendingApproval. */
+export async function listTimeCorrectionsPendingApproval(
+  signal?: AbortSignal
+): Promise<TimeCorrectionListItem[]> {
+  const res = await apiFetch(`/api/time-corrections/pending-approval`, { signal })
+  const body = await unwrap<TimeCorrectionListResponse>(res)
+  return body.requests
+}
+
+export async function getTimeCorrection(
+  id: number,
+  signal?: AbortSignal
+): Promise<{ request: TimeCorrectionListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/time-corrections/${id}`, { signal })
-  const body = await unwrap<TimeCorrectionDetailResponse>(res)
-  return body.request
+  return unwrap<TimeCorrectionDetailResponse>(res)
 }
 
-export async function approveTimeCorrection(id: number): Promise<TimeCorrectionListItem> {
+export async function approveTimeCorrection(
+  id: number
+): Promise<{ request: TimeCorrectionListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/time-corrections/${id}/approve`, { method: 'POST' })
-  const body = await unwrap<TimeCorrectionDetailResponse>(res)
-  return body.request
+  return unwrap<TimeCorrectionDetailResponse>(res)
 }
 
-export async function rejectTimeCorrection(id: number, reason: string): Promise<TimeCorrectionListItem> {
+export async function rejectTimeCorrection(
+  id: number,
+  reason: string
+): Promise<{ request: TimeCorrectionListItem; canDecide: boolean }> {
   const res = await apiFetch(`/api/time-corrections/${id}/reject`, {
     method: 'POST',
     headers: jsonHeaders,
     body: JSON.stringify({ reason }),
   })
-  const body = await unwrap<TimeCorrectionDetailResponse>(res)
-  return body.request
+  return unwrap<TimeCorrectionDetailResponse>(res)
 }

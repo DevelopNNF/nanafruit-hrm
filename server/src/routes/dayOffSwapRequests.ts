@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
+import type pg from 'pg'
 import {
   ROLES,
   DAY_OFF_SWAP_REQUEST_STATUSES,
@@ -10,21 +11,24 @@ import {
   type DayOffSwapRequestMineResponse,
   type DayOffSwapRequestRejectRequest,
   type DayOffSwapRequestResponse,
+  type DayOffSwapRequestStage,
   type DayOffSwapRequestStatus,
 } from '@hrm/shared'
-import { withTransaction } from '../db.js'
+import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById } from '../employeeQueries.js'
+import { findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
+import { resolveSupervisorScope } from '../supervisorScope.js'
 import {
   SELECT_DAY_OFF_SWAP_REQUEST,
   findDayOffSwapRequestById,
   hasConflictingDayOffSwapRequest,
   listDayOffSwapRequests,
   listDayOffSwapRequestsForEmployee,
+  listDayOffSwapRequestsPendingApproval,
   rowToDayOffSwapRequest,
   type DayOffSwapRequestRow,
 } from '../dayOffSwapRequestQueries.js'
@@ -32,13 +36,42 @@ import { hasConflictingShiftChangeRequest } from '../shiftChangeRequestQueries.j
 
 export const dayOffSwapRequestsRouter = Router()
 
-// Same split as shift-change/leave requests: any HRM role may look at the
-// review queue, only HR and Admin may decide it.
+type Queryable = Pick<pg.Pool, 'query'>
+
+// Any HRM role may look at the review queue. Deciding one is no longer a
+// fixed role check — see resolveDayOffSwapApprover, checked per-request once
+// current_stage is loaded, same pattern as leaveRequests.ts.
 const canReadAdmin = requireRole(...ROLES)
-const canDecide = requireRole('HRM.HR', 'HRM.Admin')
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
+}
+
+type DayOffSwapApproverKind = 'hr' | 'supervisor'
+
+/** Same rule as leaveRequests.ts's resolveLeaveApprover. */
+async function resolveDayOffSwapApprover(
+  actor: AuthUser,
+  row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<DayOffSwapApproverKind | null> {
+  if (actor.kind !== 'admin') return null
+  if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
+  if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+    return null
+  }
+  const callerEmployeeId = await findEmployeeIdByEntraUpn(actor.upn, db)
+  return callerEmployeeId === row.supervisorEmployeeId ? 'supervisor' : null
+}
+
+/** DayOffSwapRequestDetailResponse.canDecide. */
+async function computeCanDecide(
+  actor: AuthUser | null,
+  request: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<boolean> {
+  if (!actor || request.status !== 'pending') return false
+  return (await resolveDayOffSwapApprover(actor, request, db)) !== null
 }
 
 /** POST /day-off-swap-requests and its /me, /:id, /:id/cancel siblings are
@@ -138,7 +171,14 @@ async function validateDayOffSwapRequestInput(
   input: DayOffSwapRequestInput,
   excludeId: number | null
 ): Promise<
-  | { kind: 'ok'; workDateOriginalStatus: 'holiday' | 'weekly_off'; workDateOriginalLabel: string | null }
+  | {
+      kind: 'ok'
+      workDateOriginalStatus: 'holiday' | 'weekly_off'
+      workDateOriginalLabel: string | null
+      requiresSupervisorApproval: boolean
+      supervisorEmployeeId: number | null
+      supervisorEmployeeName: string | null
+    }
   | { kind: 'employee-not-found' }
   | { kind: 'same-date' }
   | { kind: 'too-soon' }
@@ -180,6 +220,9 @@ async function validateDayOffSwapRequestInput(
     kind: 'ok',
     workDateOriginalStatus: workDay.status as 'holiday' | 'weekly_off',
     workDateOriginalLabel: workDay.label,
+    requiresSupervisorApproval: employee.employment.supervisorEmployeeId !== null,
+    supervisorEmployeeId: employee.employment.supervisorEmployeeId,
+    supervisorEmployeeName: employee.employment.supervisorEmployeeName,
   }
 }
 
@@ -229,11 +272,14 @@ dayOffSwapRequestsRouter.post('/day-off-swap-requests', async (req: Request, res
     const outcome = await validateDayOffSwapRequestInput(employeeId, input, null)
     if (outcome.kind !== 'ok') return validationFail(res, outcome)
 
+    const currentStage: DayOffSwapRequestStage = outcome.requiresSupervisorApproval ? 'supervisor' : 'hr'
+
     const request = await withTransaction(async (client) => {
       const { rows } = await client.query<{ id: string; created_at: string; updated_at: string }>(
         `INSERT INTO day_off_swap_requests
-           (employee_id, work_date, off_date, work_date_original_status, work_date_original_label, reason)
-         VALUES ($1, $2, $3, $4, $5, $6)
+           (employee_id, work_date, off_date, work_date_original_status, work_date_original_label, reason,
+            requires_supervisor_approval, supervisor_employee_id, current_stage)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, created_at, updated_at`,
         [
           employeeId,
@@ -242,6 +288,9 @@ dayOffSwapRequestsRouter.post('/day-off-swap-requests', async (req: Request, res
           outcome.workDateOriginalStatus,
           outcome.workDateOriginalLabel,
           input.reason,
+          outcome.requiresSupervisorApproval,
+          outcome.supervisorEmployeeId,
+          currentStage,
         ]
       )
       const created = rows[0]
@@ -300,6 +349,10 @@ dayOffSwapRequestsRouter.put('/day-off-swap-requests/:id', async (req: Request, 
     const outcome = await validateDayOffSwapRequestInput(employeeId, input, id)
     if (outcome.kind !== 'ok') return validationFail(res, outcome)
 
+    // Re-freezes the supervisor snapshot too, and resets any prior supervisor
+    // sign-off — same reasoning as overtimeRequests.ts's PUT route.
+    const currentStage: DayOffSwapRequestStage = outcome.requiresSupervisorApproval ? 'supervisor' : 'hr'
+
     const result = await withTransaction(async (client) => {
       const { rows } = await client.query<{ employee_id: string; status: string }>(
         `SELECT employee_id, status FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
@@ -313,9 +366,22 @@ dayOffSwapRequestsRouter.put('/day-off-swap-requests/:id', async (req: Request, 
       await client.query(
         `UPDATE day_off_swap_requests
          SET work_date = $2, off_date = $3, work_date_original_status = $4,
-             work_date_original_label = $5, reason = $6, updated_at = now()
+             work_date_original_label = $5, reason = $6,
+             requires_supervisor_approval = $7, supervisor_employee_id = $8, current_stage = $9,
+             supervisor_approved_by_oid = NULL, supervisor_approved_by_name = NULL, supervisor_approved_at = NULL,
+             updated_at = now()
          WHERE id = $1`,
-        [id, input.workDate, input.offDate, outcome.workDateOriginalStatus, outcome.workDateOriginalLabel, input.reason]
+        [
+          id,
+          input.workDate,
+          input.offDate,
+          outcome.workDateOriginalStatus,
+          outcome.workDateOriginalLabel,
+          input.reason,
+          outcome.requiresSupervisorApproval,
+          outcome.supervisorEmployeeId,
+          currentStage,
+        ]
       )
 
       await recordAudit(client, {
@@ -363,7 +429,7 @@ dayOffSwapRequestsRouter.post('/day-off-swap-requests/:id/cancel', async (req: R
       if (row.status !== 'pending') return { kind: 'conflict' as const }
 
       await client.query(
-        `UPDATE day_off_swap_requests SET status = 'cancelled', updated_at = now() WHERE id = $1`,
+        `UPDATE day_off_swap_requests SET status = 'cancelled', current_stage = NULL, updated_at = now() WHERE id = $1`,
         [id]
       )
 
@@ -406,6 +472,34 @@ dayOffSwapRequestsRouter.get('/day-off-swap-requests', canReadAdmin, async (req:
   }
 })
 
+// A supervisor's inbox — mirrors GET /leave-requests/pending-approval. Mounted
+// ahead of GET /day-off-swap-requests/:id so 'pending-approval' is never
+// parsed as an id.
+dayOffSwapRequestsRouter.get(
+  '/day-off-swap-requests/pending-approval',
+  canReadAdmin,
+  async (req: Request, res: Response) => {
+    const auth = actorOf(req)
+    if (!auth) return fail(res, 500, 'server misconfigured')
+
+    try {
+      const scope = await resolveSupervisorScope(auth)
+      if (scope.kind === 'none') {
+        const body: DayOffSwapRequestListResponse = { requests: [] }
+        return res.json(body)
+      }
+
+      const requests = await listDayOffSwapRequestsPendingApproval(
+        scope.kind === 'all' ? null : scope.supervisorEmployeeId
+      )
+      const body: DayOffSwapRequestListResponse = { requests }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
 dayOffSwapRequestsRouter.get('/day-off-swap-requests/:id', canReadAdmin, async (req: Request, res: Response) => {
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
@@ -414,7 +508,8 @@ dayOffSwapRequestsRouter.get('/day-off-swap-requests/:id', canReadAdmin, async (
     const request = await findDayOffSwapRequestById(id)
     if (!request) return fail(res, 404, `no day off swap request with id ${id}`)
 
-    const body: DayOffSwapRequestDetailResponse = { request }
+    const canDecide = await computeCanDecide(actorOf(req), request, pool)
+    const body: DayOffSwapRequestDetailResponse = { request, canDecide }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
@@ -423,7 +518,7 @@ dayOffSwapRequestsRouter.get('/day-off-swap-requests/:id', canReadAdmin, async (
 
 dayOffSwapRequestsRouter.post(
   '/day-off-swap-requests/:id/approve',
-  canDecide,
+  canReadAdmin,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
     if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -438,8 +533,10 @@ dayOffSwapRequestsRouter.post(
           work_date: string
           off_date: string
           status: string
+          current_stage: string | null
+          supervisor_employee_id: string | null
         }>(
-          `SELECT employee_id, work_date, off_date, status
+          `SELECT employee_id, work_date, off_date, status, current_stage, supervisor_employee_id
            FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
           [id]
         )
@@ -447,10 +544,20 @@ dayOffSwapRequestsRouter.post(
         if (!row) return { kind: 'not_found' as const }
         if (row.status !== 'pending') return { kind: 'conflict' as const, message: 'คำขอนี้ถูกดำเนินการไปแล้ว' }
 
-        // Re-checked here, not just at submission: a request can sit pending
-        // long enough for its dates to slip into the past, or for the
-        // underlying holiday calendar/shift assignment to change out from
-        // under it.
+        const approverKind = await resolveDayOffSwapApprover(
+          actor,
+          {
+            status: row.status,
+            currentStage: row.current_stage,
+            supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+          },
+          client
+        )
+        if (approverKind === null) return { kind: 'forbidden' as const }
+
+        // Re-checked here, not just at submission, for BOTH a forwarding
+        // approval and a final one — same reasoning as
+        // overtimeRequests.ts's approve route.
         const employeeId = Number(row.employee_id)
         const today = toThailandDateString(new Date())
         if (row.work_date < today || row.off_date < today) {
@@ -476,9 +583,34 @@ dayOffSwapRequestsRouter.post(
           }
         }
 
+        if (approverKind === 'supervisor') {
+          // Forwarding approval only — the request stays pending, now
+          // waiting on HR/Admin.
+          await client.query(
+            `UPDATE day_off_swap_requests
+             SET current_stage = 'hr', supervisor_approved_by_oid = $2,
+                 supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
+             WHERE id = $1`,
+            [id, actor.oid, actor.name]
+          )
+
+          await recordAudit(client, {
+            actor,
+            action: 'day_off_swap_request.supervisor_approve',
+            entityId: id,
+            detail: {},
+          })
+
+          const request = await findDayOffSwapRequestById(id, client)
+          if (!request) throw new Error('re-select of day_off_swap_requests returned no row')
+          const canDecide = await computeCanDecide(actor, request, client)
+          return { kind: 'ok' as const, request, canDecide }
+        }
+
         await client.query(
           `UPDATE day_off_swap_requests
-           SET status = 'approved', decided_by_oid = $2, decided_by_name = $3, decided_at = now(), updated_at = now()
+           SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
+               decided_at = now(), updated_at = now()
            WHERE id = $1`,
           [id, actor.oid, actor.name]
         )
@@ -492,15 +624,16 @@ dayOffSwapRequestsRouter.post(
 
         const request = await findDayOffSwapRequestById(id, client)
         if (!request) throw new Error('re-select of day_off_swap_requests returned no row')
-        return { kind: 'ok' as const, request }
+        return { kind: 'ok' as const, request, canDecide: false }
       })
 
       if (result.kind === 'not_found') return fail(res, 404, `no day off swap request with id ${id}`)
+      if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์อนุมัติคำขอนี้', 'FORBIDDEN')
       if (result.kind === 'conflict' || result.kind === 'expired' || result.kind === 'drifted' || result.kind === 'no_shift') {
         return fail(res, 409, result.message)
       }
 
-      const body: DayOffSwapRequestDetailResponse = { request: result.request }
+      const body: DayOffSwapRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
@@ -510,7 +643,7 @@ dayOffSwapRequestsRouter.post(
 
 dayOffSwapRequestsRouter.post(
   '/day-off-swap-requests/:id/reject',
-  canDecide,
+  canReadAdmin,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
     if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -524,17 +657,32 @@ dayOffSwapRequestsRouter.post(
 
     try {
       const result = await withTransaction(async (client) => {
-        const { rows } = await client.query<{ status: string }>(
-          `SELECT status FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
+        const { rows } = await client.query<{
+          status: string
+          current_stage: string | null
+          supervisor_employee_id: string | null
+        }>(
+          `SELECT status, current_stage, supervisor_employee_id FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
           [id]
         )
         const row = rows[0]
         if (!row) return { kind: 'not_found' as const }
         if (row.status !== 'pending') return { kind: 'conflict' as const }
 
+        const approverKind = await resolveDayOffSwapApprover(
+          actor,
+          {
+            status: row.status,
+            currentStage: row.current_stage,
+            supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+          },
+          client
+        )
+        if (approverKind === null) return { kind: 'forbidden' as const }
+
         await client.query(
           `UPDATE day_off_swap_requests
-           SET status = 'rejected', decided_by_oid = $2, decided_by_name = $3,
+           SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), decision_reason = $4, updated_at = now()
            WHERE id = $1`,
           [id, actor.oid, actor.name, reason]
@@ -544,18 +692,19 @@ dayOffSwapRequestsRouter.post(
           actor,
           action: 'day_off_swap_request.reject',
           entityId: id,
-          detail: { reason },
+          detail: { reason, decidedAsSupervisor: approverKind === 'supervisor' },
         })
 
         const request = await findDayOffSwapRequestById(id, client)
         if (!request) throw new Error('re-select of day_off_swap_requests returned no row')
-        return { kind: 'ok' as const, request }
+        return { kind: 'ok' as const, request, canDecide: false }
       })
 
       if (result.kind === 'not_found') return fail(res, 404, `no day off swap request with id ${id}`)
       if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
+      if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
 
-      const responseBody: DayOffSwapRequestDetailResponse = { request: result.request }
+      const responseBody: DayOffSwapRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(responseBody)
     } catch (err) {
       handleUnexpected(res, err)

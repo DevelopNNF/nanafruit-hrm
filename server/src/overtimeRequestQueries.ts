@@ -17,6 +17,7 @@ import {
   type CalendarDayStatus,
   type OvertimeRequest,
   type OvertimeRequestListItem,
+  type OvertimeRequestStage,
   type OvertimeRequestStatus,
 } from '@hrm/shared'
 import { pool } from './db.js'
@@ -44,6 +45,12 @@ export type OvertimeRequestRow = {
   status: string
   batch_id: string | null
   created_by_name: string | null
+  requires_supervisor_approval: boolean
+  supervisor_employee_id: string | null
+  supervisor_employee_name: string | null
+  current_stage: string | null
+  supervisor_approved_by_name: string | null
+  supervisor_approved_at: string | null
   decided_by_name: string | null
   decided_at: string | null
   decision_reason: string | null
@@ -62,11 +69,15 @@ export const SELECT_OVERTIME_REQUEST = `
          otr.shift_id, ms.shift_name, otr.shift_start_time, otr.shift_end_time,
          otr.overtime_group_id, mog.group_name AS overtime_group_name,
          otr.reason, otr.status, otr.batch_id, otr.created_by_name,
+         otr.requires_supervisor_approval, otr.supervisor_employee_id,
+         (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
+         otr.current_stage, otr.supervisor_approved_by_name, otr.supervisor_approved_at,
          otr.decided_by_name, otr.decided_at, otr.decision_reason,
          otr.created_at, otr.updated_at
   FROM overtime_requests otr
   LEFT JOIN master_shifts ms ON ms.id = otr.shift_id
   JOIN master_overtime_groups mog ON mog.id = otr.overtime_group_id
+  LEFT JOIN employees sup ON sup.id = otr.supervisor_employee_id
 `
 
 export const SELECT_OVERTIME_REQUEST_LIST = `
@@ -75,6 +86,9 @@ export const SELECT_OVERTIME_REQUEST_LIST = `
          otr.shift_id, ms.shift_name, otr.shift_start_time, otr.shift_end_time,
          otr.overtime_group_id, mog.group_name AS overtime_group_name,
          otr.reason, otr.status, otr.batch_id, otr.created_by_name,
+         otr.requires_supervisor_approval, otr.supervisor_employee_id,
+         (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
+         otr.current_stage, otr.supervisor_approved_by_name, otr.supervisor_approved_at,
          otr.decided_by_name, otr.decided_at, otr.decision_reason,
          otr.created_at, otr.updated_at,
          e.employee_code, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
@@ -82,6 +96,7 @@ export const SELECT_OVERTIME_REQUEST_LIST = `
   LEFT JOIN master_shifts ms ON ms.id = otr.shift_id
   JOIN master_overtime_groups mog ON mog.id = otr.overtime_group_id
   JOIN employees e ON e.id = otr.employee_id
+  LEFT JOIN employees sup ON sup.id = otr.supervisor_employee_id
 `
 
 export function rowToOvertimeRequest(row: OvertimeRequestRow): OvertimeRequest {
@@ -105,6 +120,13 @@ export function rowToOvertimeRequest(row: OvertimeRequestRow): OvertimeRequest {
     status: row.status as OvertimeRequestStatus,
     batchId: row.batch_id,
     createdByName: row.created_by_name,
+    requiresSupervisorApproval: row.requires_supervisor_approval,
+    supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+    supervisorEmployeeName: row.supervisor_employee_name,
+    currentStage: row.current_stage === null ? null : (row.current_stage as OvertimeRequestStage),
+    supervisorApprovedByName: row.supervisor_approved_by_name,
+    supervisorApprovedAt:
+      row.supervisor_approved_at === null ? null : new Date(row.supervisor_approved_at).toISOString(),
     decidedByName: row.decided_by_name,
     decidedAt: row.decided_at === null ? null : new Date(row.decided_at).toISOString(),
     decisionReason: row.decision_reason,
@@ -153,6 +175,25 @@ export async function listOvertimeRequests(
 ): Promise<OvertimeRequestListItem[]> {
   const where = filter.status !== undefined ? 'WHERE otr.status = $1' : ''
   const params = filter.status !== undefined ? [filter.status] : []
+  const { rows } = await db.query<OvertimeRequestListRow>(
+    `${SELECT_OVERTIME_REQUEST_LIST} ${where} ORDER BY otr.created_at DESC LIMIT 500`,
+    params
+  )
+  return rows.map(rowToOvertimeRequestListItem)
+}
+
+/** A supervisor's inbox, mirroring listLeaveRequestsPendingApproval — see its
+ *  comment. supervisorEmployeeId = null gives HR/Admin's company-wide
+ *  overview of every request currently waiting on any supervisor. */
+export async function listOvertimeRequestsPendingApproval(
+  supervisorEmployeeId: number | null,
+  db: Queryable = pool
+): Promise<OvertimeRequestListItem[]> {
+  const where =
+    supervisorEmployeeId !== null
+      ? `WHERE otr.current_stage = 'supervisor' AND otr.supervisor_employee_id = $1`
+      : `WHERE otr.current_stage = 'supervisor'`
+  const params = supervisorEmployeeId !== null ? [supervisorEmployeeId] : []
   const { rows } = await db.query<OvertimeRequestListRow>(
     `${SELECT_OVERTIME_REQUEST_LIST} ${where} ORDER BY otr.created_at DESC LIMIT 500`,
     params

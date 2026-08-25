@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { DayOffSwapRequestListItem, DayOffSwapRequestStatus } from '@hrm/shared'
-import { listDayOffSwapRequests } from '../../api/dayOffSwapRequests'
+import type { DayOffSwapRequestListItem, DayOffSwapRequestStage, DayOffSwapRequestStatus } from '@hrm/shared'
+import { listDayOffSwapRequests, listDayOffSwapRequestsPendingApproval } from '../../api/dayOffSwapRequests'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
 
@@ -10,9 +10,12 @@ type State =
   | { phase: 'ok'; requests: DayOffSwapRequestListItem[] }
   | { phase: 'error'; message: string }
 
-type TabValue = DayOffSwapRequestStatus | 'all'
+// 'mine' is not a DayOffSwapRequestStatus — it's the caller's own supervisor
+// inbox, fetched from a different endpoint (see the effect below).
+type TabValue = DayOffSwapRequestStatus | 'all' | 'mine'
 
 const TABS: { value: TabValue; label: string }[] = [
+  { value: 'mine', label: 'รอฉันอนุมัติ' },
   { value: 'pending', label: 'รอดำเนินการ' },
   { value: 'approved', label: 'อนุมัติแล้ว' },
   { value: 'rejected', label: 'ปฏิเสธแล้ว' },
@@ -25,6 +28,11 @@ const STATUS_LABEL: Record<DayOffSwapRequestStatus, string> = {
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
   cancelled: 'ยกเลิกแล้ว',
+}
+
+const STAGE_LABEL: Record<DayOffSwapRequestStage, string> = {
+  supervisor: 'รอหัวหน้างาน',
+  hr: 'รอ HR/Admin',
 }
 
 function statusBadgeTone(status: DayOffSwapRequestStatus): 'pending' | 'active' | 'danger' | 'inactive' {
@@ -53,7 +61,12 @@ export function DayOffSwapRequestListPage() {
   useEffect(() => {
     const controller = new AbortController()
 
-    listDayOffSwapRequests(tab === 'all' ? undefined : tab, controller.signal)
+    const fetchRequests =
+      tab === 'mine'
+        ? listDayOffSwapRequestsPendingApproval(controller.signal)
+        : listDayOffSwapRequests(tab === 'all' ? undefined : tab, controller.signal)
+
+    fetchRequests
       .then((requests) => setState({ phase: 'ok', requests }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
@@ -115,7 +128,7 @@ export function DayOffSwapRequestListPage() {
                 <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
                   <thead>
                     <tr>
-                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'วันทำงาน', 'วันที่หยุดแทน', 'เหตุผล', 'สถานะ'].map((h) => (
+                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'วันทำงาน', 'วันที่หยุดแทน', 'เหตุผล', 'สถานะ', 'ขั้นตอน'].map((h) => (
                         <th
                           key={h}
                           className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
@@ -152,6 +165,11 @@ export function DayOffSwapRequestListPage() {
                         </td>
                         <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
                           <span className={badge(statusBadgeTone(request.status))}>{STATUS_LABEL[request.status]}</span>
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                          {request.status === 'pending' && request.currentStage
+                            ? STAGE_LABEL[request.currentStage]
+                            : '—'}
                         </td>
                       </tr>
                     ))}

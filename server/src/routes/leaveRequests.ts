@@ -388,7 +388,7 @@ leaveRequestsRouter.post('/leave-requests/:id/cancel', async (req: Request, res:
       if (row.status !== 'pending') return { kind: 'conflict' as const }
 
       await client.query(
-        `UPDATE leave_requests SET status = 'cancelled', updated_at = now() WHERE id = $1`,
+        `UPDATE leave_requests SET status = 'cancelled', current_stage = NULL, updated_at = now() WHERE id = $1`,
         [id]
       )
 

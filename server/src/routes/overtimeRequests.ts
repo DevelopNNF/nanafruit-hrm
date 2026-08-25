@@ -26,6 +26,7 @@ import {
   type OvertimeRequestMineResponse,
   type OvertimeRequestRejectRequest,
   type OvertimeRequestResponse,
+  type OvertimeRequestStage,
   type OvertimeRequestStatus,
   type OvertimeWeeklyCapResponse,
 } from '@hrm/shared'
@@ -34,7 +35,7 @@ import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { findEmployeeById, listActiveEmployeesForBulkOt } from '../employeeQueries.js'
+import { findEmployeeById, findEmployeeIdByEntraUpn, listActiveEmployeesForBulkOt } from '../employeeQueries.js'
 import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
@@ -50,6 +51,7 @@ import {
   listOvertimeRequests,
   listOvertimeRequestsByBatchId,
   listOvertimeRequestsForEmployee,
+  listOvertimeRequestsPendingApproval,
   rowToOvertimeRequest,
   type OvertimeRequestRow,
 } from '../overtimeRequestQueries.js'
@@ -58,13 +60,44 @@ export const overtimeRequestsRouter = Router()
 
 type Queryable = Pick<pg.Pool, 'query'>
 
-// Same split as the other request queues: any HRM role may look at it, only
-// HR and Admin may decide it.
+// Any HRM role may look at the review queue. Deciding one is no longer a
+// fixed role check — see resolveOvertimeApprover, checked per-request (or,
+// for a batch, once against its first pending row, since every row in one
+// batch shares the same supervisor_employee_id) once current_stage is loaded.
 const canReadAdmin = requireRole(...ROLES)
-const canDecide = requireRole('HRM.HR', 'HRM.Admin')
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
+}
+
+type OvertimeApproverKind = 'hr' | 'supervisor'
+
+/** Who, if anyone, may decide this request right now — same rule as
+ *  leaveRequests.ts's resolveLeaveApprover: HR/Admin always, at any stage;
+ *  anyone else only while pending at the 'supervisor' stage and only if they
+ *  are the snapshotted supervisor_employee_id. */
+async function resolveOvertimeApprover(
+  actor: AuthUser,
+  row: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<OvertimeApproverKind | null> {
+  if (actor.kind !== 'admin') return null
+  if (actor.roles.includes('HRM.HR') || actor.roles.includes('HRM.Admin')) return 'hr'
+  if (row.status !== 'pending' || row.currentStage !== 'supervisor' || row.supervisorEmployeeId === null) {
+    return null
+  }
+  const callerEmployeeId = await findEmployeeIdByEntraUpn(actor.upn, db)
+  return callerEmployeeId === row.supervisorEmployeeId ? 'supervisor' : null
+}
+
+/** OvertimeRequestDetailResponse.canDecide. */
+async function computeCanDecide(
+  actor: AuthUser | null,
+  request: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<boolean> {
+  if (!actor || request.status !== 'pending') return false
+  return (await resolveOvertimeApprover(actor, request, db)) !== null
 }
 
 /** POST /overtime-requests and its /me, /:id, /:id/cancel siblings are for
@@ -240,6 +273,13 @@ type OvertimeSnapshot = {
   shiftStartTime: string | null
   shiftEndTime: string | null
   overtimeGroupId: number
+  /** The requesting employee's own supervisor, at submission/edit time — see
+   *  the migration's comment. A Bulk OT Request row overrides this with the
+   *  filer's own supervisor instead (resolved once per batch, not here),
+   *  since every employee's own supervisor is usually the filer themselves. */
+  requiresSupervisorApproval: boolean
+  supervisorEmployeeId: number | null
+  supervisorEmployeeName: string | null
 }
 
 type ValidationOutcome =
@@ -324,6 +364,9 @@ async function validateOvertimeRequestInput(
       shiftStartTime: day.shiftStartTime,
       shiftEndTime: day.shiftEndTime,
       overtimeGroupId,
+      requiresSupervisorApproval: employee.employment.supervisorEmployeeId !== null,
+      supervisorEmployeeId: employee.employment.supervisorEmployeeId,
+      supervisorEmployeeName: employee.employment.supervisorEmployeeName,
     },
   }
 }
@@ -443,13 +486,16 @@ overtimeRequestsRouter.post('/overtime-requests', async (req: Request, res: Resp
     if (outcome.kind !== 'ok') return validationFail(res, outcome)
     const snapshot = outcome.snapshot
 
+    const currentStage: OvertimeRequestStage = snapshot.requiresSupervisorApproval ? 'supervisor' : 'hr'
+
     const request = await withTransaction(async (client) => {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO overtime_requests
            (employee_id, ot_date, start_time, end_time, requested_minutes,
             day_status, day_label, shift_id, shift_start_time, shift_end_time,
-            overtime_group_id, reason)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            overtime_group_id, reason,
+            requires_supervisor_approval, supervisor_employee_id, current_stage)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING id`,
         [
           employeeId,
@@ -464,6 +510,9 @@ overtimeRequestsRouter.post('/overtime-requests', async (req: Request, res: Resp
           snapshot.shiftEndTime,
           snapshot.overtimeGroupId,
           input.reason,
+          snapshot.requiresSupervisorApproval,
+          snapshot.supervisorEmployeeId,
+          currentStage,
         ]
       )
       const created = rows[0]
@@ -540,12 +589,25 @@ overtimeRequestsRouter.put('/overtime-requests/:id', async (req: Request, res: R
       if (Number(row.employee_id) !== employeeId) return { kind: 'not_found' as const }
       if (row.status !== 'pending') return { kind: 'conflict' as const }
 
+      // Re-freezes the supervisor snapshot too, same as every other column
+      // here — an edit re-derives everything fresh from current data, so a
+      // supervisor assigned (or removed) after the original submission is
+      // picked up by the next edit. Any prior supervisor sign-off is reset
+      // along with it below: the thing they signed off on (this date/time)
+      // no longer exists once edited, so starting the approval over from
+      // 'supervisor' (or 'hr', if there's no supervisor at all) is the
+      // honest choice rather than carrying a decision made on stale details.
+      const currentStage: OvertimeRequestStage = snapshot.requiresSupervisorApproval ? 'supervisor' : 'hr'
+
       await client.query(
         `UPDATE overtime_requests
          SET ot_date = $2, start_time = $3, end_time = $4, requested_minutes = $5,
              day_status = $6, day_label = $7, shift_id = $8,
              shift_start_time = $9, shift_end_time = $10,
-             overtime_group_id = $11, reason = $12, updated_at = now()
+             overtime_group_id = $11, reason = $12,
+             requires_supervisor_approval = $13, supervisor_employee_id = $14, current_stage = $15,
+             supervisor_approved_by_oid = NULL, supervisor_approved_by_name = NULL, supervisor_approved_at = NULL,
+             updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -560,6 +622,9 @@ overtimeRequestsRouter.put('/overtime-requests/:id', async (req: Request, res: R
           snapshot.shiftEndTime,
           snapshot.overtimeGroupId,
           input.reason,
+          snapshot.requiresSupervisorApproval,
+          snapshot.supervisorEmployeeId,
+          currentStage,
         ]
       )
 
@@ -615,7 +680,7 @@ overtimeRequestsRouter.post('/overtime-requests/:id/cancel', async (req: Request
       if (row.status !== 'pending') return { kind: 'conflict' as const }
 
       await client.query(
-        `UPDATE overtime_requests SET status = 'cancelled', updated_at = now() WHERE id = $1`,
+        `UPDATE overtime_requests SET status = 'cancelled', current_stage = NULL, updated_at = now() WHERE id = $1`,
         [id]
       )
 
@@ -722,6 +787,19 @@ overtimeRequestsRouter.post('/overtime-requests/bulk', async (req: Request, res:
 
     const batchId = randomUUID()
 
+    // Resolved once for the whole batch, not per employee: this request is
+    // filed BY the caller ON BEHALF OF everyone in employeeIds, so the
+    // approval chain follows the caller's own supervisor (their boss), not
+    // each employee's — which is usually the caller themselves, and routing
+    // it back to them would be a self-approval loop. See migration 063.
+    // No employee record for the caller (an HR/Admin account with none) is
+    // the same as no supervisor: straight to the HR/Admin stage.
+    const callerEmployeeId = await findEmployeeIdByEntraUpn(actor.upn)
+    const callerEmployee = callerEmployeeId !== null ? await findEmployeeById(callerEmployeeId) : null
+    const batchSupervisorEmployeeId = callerEmployee?.employment.supervisorEmployeeId ?? null
+    const batchRequiresSupervisorApproval = batchSupervisorEmployeeId !== null
+    const batchCurrentStage: OvertimeRequestStage = batchRequiresSupervisorApproval ? 'supervisor' : 'hr'
+
     const outcomes = await withTransaction(async (client) => {
       const results: OvertimeBulkCreateOutcome[] = []
       for (const employeeId of input.employeeIds) {
@@ -766,8 +844,9 @@ overtimeRequestsRouter.post('/overtime-requests/bulk', async (req: Request, res:
             `INSERT INTO overtime_requests
                (employee_id, ot_date, start_time, end_time, requested_minutes,
                 day_status, day_label, shift_id, shift_start_time, shift_end_time,
-                overtime_group_id, reason, batch_id, created_by_oid, created_by_name)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                overtime_group_id, reason, batch_id, created_by_oid, created_by_name,
+                requires_supervisor_approval, supervisor_employee_id, current_stage)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
              RETURNING id`,
             [
               employeeId,
@@ -785,6 +864,14 @@ overtimeRequestsRouter.post('/overtime-requests/bulk', async (req: Request, res:
               batchId,
               actor.oid,
               actor.name,
+              // The batch-level resolution from above, not
+              // snapshot.requiresSupervisorApproval/supervisorEmployeeId —
+              // those are this employee's own supervisor, which is the wrong
+              // chain for a request filed on their behalf. See this route's
+              // comment above the batch resolution.
+              batchRequiresSupervisorApproval,
+              batchSupervisorEmployeeId,
+              batchCurrentStage,
             ]
           )
           const created = rows[0]
@@ -841,6 +928,34 @@ overtimeRequestsRouter.get(
   }
 )
 
+// A supervisor's inbox — mirrors GET /leave-requests/pending-approval. Mounted
+// ahead of GET /overtime-requests/:id so 'pending-approval' is never parsed
+// as an id.
+overtimeRequestsRouter.get(
+  '/overtime-requests/pending-approval',
+  canReadAdmin,
+  async (req: Request, res: Response) => {
+    const auth = actorOf(req)
+    if (!auth) return fail(res, 500, 'server misconfigured')
+
+    try {
+      const scope = await resolveSupervisorScope(auth)
+      if (scope.kind === 'none') {
+        const body: OvertimeRequestListResponse = { requests: [] }
+        return res.json(body)
+      }
+
+      const requests = await listOvertimeRequestsPendingApproval(
+        scope.kind === 'all' ? null : scope.supervisorEmployeeId
+      )
+      const body: OvertimeRequestListResponse = { requests }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
 overtimeRequestsRouter.get(
   '/overtime-requests/:id',
   canReadAdmin,
@@ -852,7 +967,8 @@ overtimeRequestsRouter.get(
       const request = await findOvertimeRequestById(id)
       if (!request) return fail(res, 404, `no overtime request with id ${id}`)
 
-      const body: OvertimeRequestDetailResponse = { request }
+      const canDecide = await computeCanDecide(actorOf(req), request, pool)
+      const body: OvertimeRequestDetailResponse = { request, canDecide }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
@@ -893,7 +1009,7 @@ overtimeRequestsRouter.get(
 
 overtimeRequestsRouter.post(
   '/overtime-requests/:id/approve',
-  canDecide,
+  canReadAdmin,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
     if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -910,8 +1026,10 @@ overtimeRequestsRouter.post(
           end_time: string
           reason: string
           status: string
+          current_stage: string | null
+          supervisor_employee_id: string | null
         }>(
-          `SELECT employee_id, ot_date, start_time, end_time, reason, status
+          `SELECT employee_id, ot_date, start_time, end_time, reason, status, current_stage, supervisor_employee_id
            FROM overtime_requests WHERE id = $1 FOR UPDATE`,
           [id]
         )
@@ -921,12 +1039,26 @@ overtimeRequestsRouter.post(
           return { kind: 'conflict' as const, message: 'คำขอนี้ถูกดำเนินการไปแล้ว' }
         }
 
-        // Re-validated here, not just at submission: a request can sit pending
-        // long enough to fall out of the backdating window, and in the
-        // meantime an approved shift change can have moved the employee's
-        // shift onto the hours this request claims. Both are checked against
-        // live data — the row's own snapshot is what was true when it was
-        // filed, which is exactly the thing in question.
+        const approverKind = await resolveOvertimeApprover(
+          actor,
+          {
+            status: row.status,
+            currentStage: row.current_stage,
+            supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+          },
+          client
+        )
+        if (approverKind === null) return { kind: 'forbidden' as const }
+
+        // Re-validated here, not just at submission, for BOTH a forwarding
+        // approval and a final one: a request can sit pending long enough to
+        // fall out of the backdating window, and in the meantime an approved
+        // shift change can have moved the employee's shift onto the hours
+        // this request claims. Both are checked against live data — the
+        // row's own snapshot is what was true when it was filed, which is
+        // exactly the thing in question. Forwarding something already stale
+        // just pushes the same problem to HR/Admin instead of catching it
+        // where it happened.
         const outcome = await validateOvertimeRequestInput(
           Number(row.employee_id),
           {
@@ -940,9 +1072,37 @@ overtimeRequestsRouter.post(
         )
         if (outcome.kind !== 'ok') return { kind: 'stale' as const, outcome }
 
+        if (approverKind === 'supervisor') {
+          // Forwarding approval only — the request stays pending, now
+          // waiting on HR/Admin. No ledger effect, no attendance recompute:
+          // nothing is decided yet.
+          await client.query(
+            `UPDATE overtime_requests
+             SET current_stage = 'hr', supervisor_approved_by_oid = $2,
+                 supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
+             WHERE id = $1`,
+            [id, actor.oid, actor.name]
+          )
+
+          await recordAudit(client, {
+            actor,
+            action: 'overtime_request.supervisor_approve',
+            entityId: id,
+            detail: {},
+          })
+
+          const request = await findOvertimeRequestById(id, client)
+          if (!request) throw new Error('re-select of overtime_requests returned no row')
+          const canDecide = await computeCanDecide(actor, request, client)
+          return { kind: 'ok' as const, request, canDecide }
+        }
+
+        // HR/Admin's final decision — the ordinary path (current_stage was
+        // already 'hr') or an override of a still-pending supervisor stage
+        // (confirmed: HR/Admin may act at any stage).
         await client.query(
           `UPDATE overtime_requests
-           SET status = 'approved', decided_by_oid = $2, decided_by_name = $3,
+           SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), updated_at = now()
            WHERE id = $1`,
           [id, actor.oid, actor.name]
@@ -978,14 +1138,15 @@ overtimeRequestsRouter.post(
 
         const request = await findOvertimeRequestById(id, client)
         if (!request) throw new Error('re-select of overtime_requests returned no row')
-        return { kind: 'ok' as const, request }
+        return { kind: 'ok' as const, request, canDecide: false }
       })
 
       if (result.kind === 'not_found') return fail(res, 404, `no overtime request with id ${id}`)
       if (result.kind === 'conflict') return fail(res, 409, result.message)
+      if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์อนุมัติคำขอนี้', 'FORBIDDEN')
       if (result.kind === 'stale') return approvalStaleFail(res, result.outcome)
 
-      const body: OvertimeRequestDetailResponse = { request: result.request }
+      const body: OvertimeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
@@ -995,7 +1156,7 @@ overtimeRequestsRouter.post(
 
 overtimeRequestsRouter.post(
   '/overtime-requests/:id/reject',
-  canDecide,
+  canReadAdmin,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
     if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -1011,17 +1172,34 @@ overtimeRequestsRouter.post(
 
     try {
       const result = await withTransaction(async (client) => {
-        const { rows } = await client.query<{ status: string }>(
-          `SELECT status FROM overtime_requests WHERE id = $1 FOR UPDATE`,
+        const { rows } = await client.query<{
+          status: string
+          current_stage: string | null
+          supervisor_employee_id: string | null
+        }>(
+          `SELECT status, current_stage, supervisor_employee_id FROM overtime_requests WHERE id = $1 FOR UPDATE`,
           [id]
         )
         const row = rows[0]
         if (!row) return { kind: 'not_found' as const }
         if (row.status !== 'pending') return { kind: 'conflict' as const }
 
+        const approverKind = await resolveOvertimeApprover(
+          actor,
+          {
+            status: row.status,
+            currentStage: row.current_stage,
+            supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+          },
+          client
+        )
+        if (approverKind === null) return { kind: 'forbidden' as const }
+
+        // Terminal either way — see leaveRequests.ts's reject route for the
+        // full reasoning, which applies unchanged here.
         await client.query(
           `UPDATE overtime_requests
-           SET status = 'rejected', decided_by_oid = $2, decided_by_name = $3,
+           SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                decided_at = now(), decision_reason = $4, updated_at = now()
            WHERE id = $1`,
           [id, actor.oid, actor.name, reason]
@@ -1031,18 +1209,19 @@ overtimeRequestsRouter.post(
           actor,
           action: 'overtime_request.reject',
           entityId: id,
-          detail: { reason },
+          detail: { reason, decidedAsSupervisor: approverKind === 'supervisor' },
         })
 
         const request = await findOvertimeRequestById(id, client)
         if (!request) throw new Error('re-select of overtime_requests returned no row')
-        return { kind: 'ok' as const, request }
+        return { kind: 'ok' as const, request, canDecide: false }
       })
 
       if (result.kind === 'not_found') return fail(res, 404, `no overtime request with id ${id}`)
       if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
+      if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
 
-      const responseBody: OvertimeRequestDetailResponse = { request: result.request }
+      const responseBody: OvertimeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(responseBody)
     } catch (err) {
       handleUnexpected(res, err)
@@ -1066,7 +1245,14 @@ overtimeRequestsRouter.get(
       const requests = await listOvertimeRequestsByBatchId(batchId)
       if (requests.length === 0) return fail(res, 404, `no batch with id ${batchId}`)
 
-      const body: OvertimeBatchResponse = { requests }
+      // Every pending row in one batch shares the same supervisor_employee_id
+      // (resolved once from the filer, see the bulk-create route), so
+      // checking the first one still pending stands in for the whole batch.
+      const firstPending = requests.find((r) => r.status === 'pending')
+      const canDecideBatch =
+        firstPending !== undefined ? await computeCanDecide(actorOf(req), firstPending, pool) : false
+
+      const body: OvertimeBatchResponse = { requests, canDecideBatch }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
@@ -1084,7 +1270,7 @@ overtimeRequestsRouter.get(
 // single-request detail page.
 overtimeRequestsRouter.post(
   '/overtime-requests/batch/:batchId/approve',
-  canDecide,
+  canReadAdmin,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
     if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -1095,13 +1281,38 @@ overtimeRequestsRouter.post(
     }
 
     try {
-      const pendingRows = await pool.query<{ id: string; employee_id: string }>(
-        `SELECT id, employee_id FROM overtime_requests WHERE batch_id = $1 AND status = 'pending'`,
+      const pendingRows = await pool.query<{
+        id: string
+        employee_id: string
+        current_stage: string | null
+        supervisor_employee_id: string | null
+      }>(
+        `SELECT id, employee_id, current_stage, supervisor_employee_id
+         FROM overtime_requests WHERE batch_id = $1 AND status = 'pending'`,
         [batchId]
       )
       if (pendingRows.rows.length === 0) {
         return fail(res, 404, `no pending requests in batch ${batchId}`)
       }
+
+      // Checked once against the batch's first pending row rather than per
+      // row inside the loop: every row in one batch shares the same
+      // supervisor_employee_id (resolved once from the filer, not per
+      // employee — see the bulk-create route), so this is representative of
+      // the whole batch and gives a clean top-level 403 instead of a batch
+      // of individually-forbidden outcomes.
+      const first = pendingRows.rows[0]
+      if (!first) throw new Error('pendingRows.rows was non-empty but has no first element')
+      const approverKind = await resolveOvertimeApprover(
+        actor,
+        {
+          status: 'pending',
+          currentStage: first.current_stage,
+          supervisorEmployeeId: first.supervisor_employee_id === null ? null : Number(first.supervisor_employee_id),
+        },
+        pool
+      )
+      if (approverKind === null) return fail(res, 403, 'คุณไม่มีสิทธิ์อนุมัติคำขอกลุ่มนี้', 'FORBIDDEN')
 
       const outcomes = await withTransaction(async (client) => {
         const results: OvertimeBatchDecisionOutcome[] = []
@@ -1135,7 +1346,8 @@ overtimeRequestsRouter.post(
             }
 
             // Same live re-validation as the single-request approve route —
-            // see its own comment for why the row's own snapshot isn't enough.
+            // see its own comment for why the row's own snapshot isn't
+            // enough, and for why this runs before a forwarding approval too.
             const outcome = await validateOvertimeRequestInput(
               employeeId,
               {
@@ -1158,9 +1370,30 @@ overtimeRequestsRouter.post(
               continue
             }
 
+            if (approverKind === 'supervisor') {
+              await client.query(
+                `UPDATE overtime_requests
+                 SET current_stage = 'hr', supervisor_approved_by_oid = $2,
+                     supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
+                 WHERE id = $1`,
+                [id, actor.oid, actor.name]
+              )
+
+              await recordAudit(client, {
+                actor,
+                action: 'overtime_request.supervisor_approve',
+                entityId: id,
+                detail: { batchId },
+              })
+
+              results.push({ requestId: id, employeeId, kind: 'ok' })
+              await client.query('RELEASE SAVEPOINT batch_overtime_approve')
+              continue
+            }
+
             await client.query(
               `UPDATE overtime_requests
-               SET status = 'approved', decided_by_oid = $2, decided_by_name = $3,
+               SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                    decided_at = now(), updated_at = now()
                WHERE id = $1`,
               [id, actor.oid, actor.name]
@@ -1213,7 +1446,7 @@ overtimeRequestsRouter.post(
 // reason — the batch-detail mirror of POST /overtime-requests/:id/reject.
 overtimeRequestsRouter.post(
   '/overtime-requests/batch/:batchId/reject',
-  canDecide,
+  canReadAdmin,
   async (req: Request, res: Response) => {
     const actor = actorOf(req)
     if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -1230,13 +1463,33 @@ overtimeRequestsRouter.post(
     }
 
     try {
-      const pendingRows = await pool.query<{ id: string; employee_id: string }>(
-        `SELECT id, employee_id FROM overtime_requests WHERE batch_id = $1 AND status = 'pending'`,
+      const pendingRows = await pool.query<{
+        id: string
+        employee_id: string
+        current_stage: string | null
+        supervisor_employee_id: string | null
+      }>(
+        `SELECT id, employee_id, current_stage, supervisor_employee_id
+         FROM overtime_requests WHERE batch_id = $1 AND status = 'pending'`,
         [batchId]
       )
       if (pendingRows.rows.length === 0) {
         return fail(res, 404, `no pending requests in batch ${batchId}`)
       }
+
+      // Same one-check-for-the-whole-batch reasoning as the approve route.
+      const first = pendingRows.rows[0]
+      if (!first) throw new Error('pendingRows.rows was non-empty but has no first element')
+      const approverKind = await resolveOvertimeApprover(
+        actor,
+        {
+          status: 'pending',
+          currentStage: first.current_stage,
+          supervisorEmployeeId: first.supervisor_employee_id === null ? null : Number(first.supervisor_employee_id),
+        },
+        pool
+      )
+      if (approverKind === null) return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอกลุ่มนี้', 'FORBIDDEN')
 
       const outcomes = await withTransaction(async (client) => {
         const results: OvertimeBatchDecisionOutcome[] = []
@@ -1264,7 +1517,7 @@ overtimeRequestsRouter.post(
 
             await client.query(
               `UPDATE overtime_requests
-               SET status = 'rejected', decided_by_oid = $2, decided_by_name = $3,
+               SET status = 'rejected', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
                    decided_at = now(), decision_reason = $4, updated_at = now()
                WHERE id = $1`,
               [id, actor.oid, actor.name, reason]
@@ -1274,7 +1527,7 @@ overtimeRequestsRouter.post(
               actor,
               action: 'overtime_request.reject',
               entityId: id,
-              detail: { reason, batchId },
+              detail: { reason, batchId, decidedAsSupervisor: approverKind === 'supervisor' },
             })
 
             results.push({ requestId: id, employeeId, kind: 'ok' })

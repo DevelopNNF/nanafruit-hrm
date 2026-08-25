@@ -6,7 +6,6 @@ import {
   getOvertimeRequest,
   rejectOvertimeRequest,
 } from '../../api/overtimeRequests'
-import { useCanWrite } from '../../auth/meContext'
 import { notify } from '../../notifications/notify'
 import { fetchOvertimeWeeklyCap } from '../../api/overtimeReport'
 import {
@@ -36,7 +35,7 @@ import {
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; request: OvertimeRequestListItem }
+  | { phase: 'ok'; request: OvertimeRequestListItem; canDecide: boolean }
   | { phase: 'error'; message: string }
 
 type WeeklyCap = OvertimeWeeklyCapResponse & { wouldExceed: boolean }
@@ -46,6 +45,11 @@ const STATUS_LABEL = {
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
   cancelled: 'ยกเลิกแล้ว',
+} as const
+
+const STAGE_LABEL = {
+  supervisor: 'รอหัวหน้างานอนุมัติ',
+  hr: 'รอ HR/Admin อนุมัติ',
 } as const
 
 function statusBadgeTone(
@@ -69,7 +73,6 @@ function formatDateTime(iso: string): string {
 
 export function OvertimeRequestDetailPage() {
   const { id } = useParams()
-  const canWrite = useCanWrite()
 
   const [state, setState] = useState<State>({ phase: 'loading' })
   const [busy, setBusy] = useState(false)
@@ -82,7 +85,7 @@ export function OvertimeRequestDetailPage() {
     const controller = new AbortController()
 
     getOvertimeRequest(requestId, controller.signal)
-      .then((request) => setState({ phase: 'ok', request }))
+      .then(({ request, canDecide }) => setState({ phase: 'ok', request, canDecide }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({
@@ -111,16 +114,19 @@ export function OvertimeRequestDetailPage() {
 
     setBusy(true)
     try {
-      const request = await approveOvertimeRequest(state.request.id)
-      setState({ phase: 'ok', request })
-      notify.success('อนุมัติคำขอแล้ว', 'บันทึกการทำงานล่วงเวลาของพนักงานแล้ว')
+      const { request, canDecide } = await approveOvertimeRequest(state.request.id)
+      setState({ phase: 'ok', request, canDecide })
+      notify.success(
+        request.status === 'pending' ? 'ส่งต่อให้ HR/Admin แล้ว' : 'อนุมัติคำขอแล้ว',
+        request.status === 'pending' ? undefined : 'บันทึกการทำงานล่วงเวลาของพนักงานแล้ว'
+      )
     } catch (err) {
       notify.error('อนุมัติไม่สำเร็จ', err instanceof Error ? err.message : undefined)
       // The decision may have raced with another admin, or the request may have
       // gone stale since it was filed — refetch so the page shows the current,
       // authoritative state rather than a stale "pending" view.
       getOvertimeRequest(state.request.id)
-        .then((request) => setState({ phase: 'ok', request }))
+        .then(({ request, canDecide }) => setState({ phase: 'ok', request, canDecide }))
         .catch(() => {})
     } finally {
       setBusy(false)
@@ -133,14 +139,14 @@ export function OvertimeRequestDetailPage() {
 
     setBusy(true)
     try {
-      const request = await rejectOvertimeRequest(state.request.id, rejectReason)
-      setState({ phase: 'ok', request })
+      const { request, canDecide } = await rejectOvertimeRequest(state.request.id, rejectReason)
+      setState({ phase: 'ok', request, canDecide })
       setRejecting(false)
       notify.success('ปฏิเสธคำขอแล้ว')
     } catch (err) {
       notify.error('ปฏิเสธไม่สำเร็จ', err instanceof Error ? err.message : undefined)
       getOvertimeRequest(state.request.id)
-        .then((request) => setState({ phase: 'ok', request }))
+        .then(({ request, canDecide }) => setState({ phase: 'ok', request, canDecide }))
         .catch(() => {})
     } finally {
       setBusy(false)
@@ -239,6 +245,31 @@ export function OvertimeRequestDetailPage() {
             <dt className={specDt}>ส่งคำขอเมื่อ</dt>
             <dd className={specDd}>{formatDateTime(state.request.createdAt)}</dd>
 
+            {state.request.requiresSupervisorApproval && (
+              <>
+                <dt className={specDt}>หัวหน้างาน</dt>
+                <dd className={specDd}>{state.request.supervisorEmployeeName ?? '—'}</dd>
+              </>
+            )}
+
+            {state.request.status === 'pending' && state.request.currentStage && (
+              <>
+                <dt className={specDt}>ขั้นตอนปัจจุบัน</dt>
+                <dd className={specDd}>{STAGE_LABEL[state.request.currentStage]}</dd>
+              </>
+            )}
+
+            {state.request.supervisorApprovedByName && (
+              <>
+                <dt className={specDt}>หัวหน้างานอนุมัติโดย</dt>
+                <dd className={specDd}>
+                  {state.request.supervisorApprovedByName}
+                  {state.request.supervisorApprovedAt &&
+                    ` เมื่อ ${formatDateTime(state.request.supervisorApprovedAt)}`}
+                </dd>
+              </>
+            )}
+
             {state.request.status !== 'pending' && state.request.status !== 'cancelled' && (
               <>
                 <dt className={specDt}>ดำเนินการโดย</dt>
@@ -281,7 +312,7 @@ export function OvertimeRequestDetailPage() {
             </div>
           )}
 
-          {state.request.status === 'pending' && canWrite && (
+          {state.request.status === 'pending' && state.canDecide && (
             <div className="mt-5 border-t border-slate-200 pt-4">
               {!rejecting ? (
                 <div className="flex gap-2.5">

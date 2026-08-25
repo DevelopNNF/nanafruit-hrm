@@ -11,6 +11,7 @@ import type pg from 'pg'
 import type {
   DayOffSwapRequest,
   DayOffSwapRequestListItem,
+  DayOffSwapRequestStage,
   DayOffSwapRequestStatus,
 } from '@hrm/shared'
 import { pool } from './db.js'
@@ -31,6 +32,12 @@ export type DayOffSwapRequestRow = {
   work_shift_end_time: string | null
   reason: string
   status: string
+  requires_supervisor_approval: boolean
+  supervisor_employee_id: string | null
+  supervisor_employee_name: string | null
+  current_stage: string | null
+  supervisor_approved_by_name: string | null
+  supervisor_approved_at: string | null
   decided_by_name: string | null
   decided_at: string | null
   decision_reason: string | null
@@ -49,6 +56,9 @@ export const SELECT_DAY_OFF_SWAP_REQUEST = `
          work_shift.shift_id AS work_shift_id, ws.shift_name AS work_shift_name,
          ws.shift_start_time AS work_shift_start_time, ws.shift_end_time AS work_shift_end_time,
          dosr.reason, dosr.status,
+         dosr.requires_supervisor_approval, dosr.supervisor_employee_id,
+         (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
+         dosr.current_stage, dosr.supervisor_approved_by_name, dosr.supervisor_approved_at,
          dosr.decided_by_name, dosr.decided_at, dosr.decision_reason,
          dosr.created_at, dosr.updated_at
   FROM day_off_swap_requests dosr
@@ -58,6 +68,7 @@ export const SELECT_DAY_OFF_SWAP_REQUEST = `
       AND (esa.effective_to IS NULL OR esa.effective_to >= dosr.work_date)
   ) work_shift ON true
   LEFT JOIN master_shifts ws ON ws.id = work_shift.shift_id
+  LEFT JOIN employees sup ON sup.id = dosr.supervisor_employee_id
 `
 
 export const SELECT_DAY_OFF_SWAP_REQUEST_LIST = `
@@ -66,6 +77,9 @@ export const SELECT_DAY_OFF_SWAP_REQUEST_LIST = `
          work_shift.shift_id AS work_shift_id, ws.shift_name AS work_shift_name,
          ws.shift_start_time AS work_shift_start_time, ws.shift_end_time AS work_shift_end_time,
          dosr.reason, dosr.status,
+         dosr.requires_supervisor_approval, dosr.supervisor_employee_id,
+         (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
+         dosr.current_stage, dosr.supervisor_approved_by_name, dosr.supervisor_approved_at,
          dosr.decided_by_name, dosr.decided_at, dosr.decision_reason,
          dosr.created_at, dosr.updated_at,
          e.employee_code, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
@@ -76,6 +90,7 @@ export const SELECT_DAY_OFF_SWAP_REQUEST_LIST = `
       AND (esa.effective_to IS NULL OR esa.effective_to >= dosr.work_date)
   ) work_shift ON true
   LEFT JOIN master_shifts ws ON ws.id = work_shift.shift_id
+  LEFT JOIN employees sup ON sup.id = dosr.supervisor_employee_id
   JOIN employees e ON e.id = dosr.employee_id
 `
 
@@ -93,6 +108,13 @@ export function rowToDayOffSwapRequest(row: DayOffSwapRequestRow): DayOffSwapReq
     workShiftEndTime: row.work_shift_end_time,
     reason: row.reason,
     status: row.status as DayOffSwapRequestStatus,
+    requiresSupervisorApproval: row.requires_supervisor_approval,
+    supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+    supervisorEmployeeName: row.supervisor_employee_name,
+    currentStage: row.current_stage === null ? null : (row.current_stage as DayOffSwapRequestStage),
+    supervisorApprovedByName: row.supervisor_approved_by_name,
+    supervisorApprovedAt:
+      row.supervisor_approved_at === null ? null : new Date(row.supervisor_approved_at).toISOString(),
     decidedByName: row.decided_by_name,
     decidedAt: row.decided_at === null ? null : new Date(row.decided_at).toISOString(),
     decisionReason: row.decision_reason,
@@ -143,6 +165,24 @@ export async function listDayOffSwapRequests(
 ): Promise<DayOffSwapRequestListItem[]> {
   const where = filter.status !== undefined ? 'WHERE dosr.status = $1' : ''
   const params = filter.status !== undefined ? [filter.status] : []
+  const { rows } = await db.query<DayOffSwapRequestListRow>(
+    `${SELECT_DAY_OFF_SWAP_REQUEST_LIST} ${where} ORDER BY dosr.created_at DESC LIMIT 500`,
+    params
+  )
+  return rows.map(rowToDayOffSwapRequestListItem)
+}
+
+/** A supervisor's inbox, mirroring listLeaveRequestsPendingApproval — see its
+ *  comment. */
+export async function listDayOffSwapRequestsPendingApproval(
+  supervisorEmployeeId: number | null,
+  db: Queryable = pool
+): Promise<DayOffSwapRequestListItem[]> {
+  const where =
+    supervisorEmployeeId !== null
+      ? `WHERE dosr.current_stage = 'supervisor' AND dosr.supervisor_employee_id = $1`
+      : `WHERE dosr.current_stage = 'supervisor'`
+  const params = supervisorEmployeeId !== null ? [supervisorEmployeeId] : []
   const { rows } = await db.query<DayOffSwapRequestListRow>(
     `${SELECT_DAY_OFF_SWAP_REQUEST_LIST} ${where} ORDER BY dosr.created_at DESC LIMIT 500`,
     params
