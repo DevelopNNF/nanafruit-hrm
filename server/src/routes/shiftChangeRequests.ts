@@ -328,14 +328,23 @@ shiftChangeRequestsRouter.put('/shift-change-requests/:id', async (req: Request,
     const currentStage: ShiftChangeRequestStage = outcome.requiresSupervisorApproval ? 'supervisor' : 'hr'
 
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ employee_id: string; status: string }>(
-        `SELECT employee_id, status FROM shift_change_requests WHERE id = $1 FOR UPDATE`,
+      const { rows } = await client.query<{
+        employee_id: string
+        status: string
+        supervisor_approved_by_oid: string | null
+      }>(
+        `SELECT employee_id, status, supervisor_approved_by_oid FROM shift_change_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (Number(row.employee_id) !== employeeId) return { kind: 'not_found' as const }
-      if (row.status !== 'pending') return { kind: 'conflict' as const }
+      // Blocked once the supervisor has already forwarded it, even though
+      // status is still 'pending' — see leaveRequests.ts's cancel route for
+      // the full reasoning, which applies unchanged here.
+      if (row.status !== 'pending' || row.supervisor_approved_by_oid !== null) {
+        return { kind: 'conflict' as const }
+      }
 
       await client.query(
         `UPDATE shift_change_requests
@@ -391,14 +400,23 @@ shiftChangeRequestsRouter.post('/shift-change-requests/:id/cancel', async (req: 
 
   try {
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ employee_id: string; status: string }>(
-        `SELECT employee_id, status FROM shift_change_requests WHERE id = $1 FOR UPDATE`,
+      const { rows } = await client.query<{
+        employee_id: string
+        status: string
+        supervisor_approved_by_oid: string | null
+      }>(
+        `SELECT employee_id, status, supervisor_approved_by_oid FROM shift_change_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (Number(row.employee_id) !== employeeId) return { kind: 'not_found' as const }
-      if (row.status !== 'pending') return { kind: 'conflict' as const }
+      // Blocked once the supervisor has already forwarded it, even though
+      // status is still 'pending' — see this file's PUT route for the full
+      // reasoning, which applies unchanged here.
+      if (row.status !== 'pending' || row.supervisor_approved_by_oid !== null) {
+        return { kind: 'conflict' as const }
+      }
 
       await client.query(
         `UPDATE shift_change_requests SET status = 'cancelled', current_stage = NULL, updated_at = now() WHERE id = $1`,
@@ -702,7 +720,8 @@ shiftChangeRequestsRouter.post(
  * Same three-step direct-to-R2 flow as employee photos: presign a PUT,
  * upload straight to R2 from the browser, then tell us it landed. Only the
  * owning employee may attach/replace/remove a photo, and only while the
- * request is still pending — once it's decided, the record is frozen.
+ * request is still pending AND the supervisor hasn't already forwarded it —
+ * once either is true, the record is frozen, same as the PUT/cancel routes.
  */
 
 async function ownedPendingRequestOr(
@@ -710,8 +729,12 @@ async function ownedPendingRequestOr(
   id: number,
   employeeId: number
 ): Promise<{ ok: true } | { ok: false }> {
-  const { rows } = await pool.query<{ employee_id: string; status: string }>(
-    `SELECT employee_id, status FROM shift_change_requests WHERE id = $1`,
+  const { rows } = await pool.query<{
+    employee_id: string
+    status: string
+    supervisor_approved_by_oid: string | null
+  }>(
+    `SELECT employee_id, status, supervisor_approved_by_oid FROM shift_change_requests WHERE id = $1`,
     [id]
   )
   const row = rows[0]
@@ -719,7 +742,7 @@ async function ownedPendingRequestOr(
     fail(res, 404, `no shift change request with id ${id}`)
     return { ok: false }
   }
-  if (row.status !== 'pending') {
+  if (row.status !== 'pending' || row.supervisor_approved_by_oid !== null) {
     fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว ไม่สามารถแก้ไขไฟล์แนบได้')
     return { ok: false }
   }

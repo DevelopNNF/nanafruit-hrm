@@ -354,14 +354,23 @@ dayOffSwapRequestsRouter.put('/day-off-swap-requests/:id', async (req: Request, 
     const currentStage: DayOffSwapRequestStage = outcome.requiresSupervisorApproval ? 'supervisor' : 'hr'
 
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ employee_id: string; status: string }>(
-        `SELECT employee_id, status FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
+      const { rows } = await client.query<{
+        employee_id: string
+        status: string
+        supervisor_approved_by_oid: string | null
+      }>(
+        `SELECT employee_id, status, supervisor_approved_by_oid FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (Number(row.employee_id) !== employeeId) return { kind: 'not_found' as const }
-      if (row.status !== 'pending') return { kind: 'conflict' as const }
+      // Blocked once the supervisor has already forwarded it, even though
+      // status is still 'pending' — see leaveRequests.ts's cancel route for
+      // the full reasoning, which applies unchanged here.
+      if (row.status !== 'pending' || row.supervisor_approved_by_oid !== null) {
+        return { kind: 'conflict' as const }
+      }
 
       await client.query(
         `UPDATE day_off_swap_requests
@@ -419,14 +428,23 @@ dayOffSwapRequestsRouter.post('/day-off-swap-requests/:id/cancel', async (req: R
 
   try {
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ employee_id: string; status: string }>(
-        `SELECT employee_id, status FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
+      const { rows } = await client.query<{
+        employee_id: string
+        status: string
+        supervisor_approved_by_oid: string | null
+      }>(
+        `SELECT employee_id, status, supervisor_approved_by_oid FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (Number(row.employee_id) !== employeeId) return { kind: 'not_found' as const }
-      if (row.status !== 'pending') return { kind: 'conflict' as const }
+      // Blocked once the supervisor has already forwarded it, even though
+      // status is still 'pending' — see this file's PUT route for the full
+      // reasoning, which applies unchanged here.
+      if (row.status !== 'pending' || row.supervisor_approved_by_oid !== null) {
+        return { kind: 'conflict' as const }
+      }
 
       await client.query(
         `UPDATE day_off_swap_requests SET status = 'cancelled', current_stage = NULL, updated_at = now() WHERE id = $1`,

@@ -225,8 +225,18 @@ export function OvertimeRequestCard({ onBack }: Props) {
           reason: request.reason,
           decisionNote:
             request.status === 'rejected' ? `เหตุผลจากผู้อนุมัติ: ${request.decisionReason ?? ''}` : undefined,
-          onEdit: request.status === 'pending' ? () => openEditForm(request) : undefined,
-          onCancel: request.status === 'pending' ? () => setCancelId(request.id) : undefined,
+          // Once a supervisor has already forwarded this to HR (even though
+          // status is still 'pending'), it's locked — see LeaveRequestCard's
+          // onCancel comment for the full reasoning, which applies to edit
+          // here too.
+          onEdit:
+            request.status === 'pending' && request.supervisorApprovedByName === null
+              ? () => openEditForm(request)
+              : undefined,
+          onCancel:
+            request.status === 'pending' && request.supervisorApprovedByName === null
+              ? () => setCancelId(request.id)
+              : undefined,
         }))
       : []
 

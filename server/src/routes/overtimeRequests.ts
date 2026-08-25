@@ -580,14 +580,23 @@ overtimeRequestsRouter.put('/overtime-requests/:id', async (req: Request, res: R
     const snapshot = outcome.snapshot
 
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ employee_id: string; status: string }>(
-        `SELECT employee_id, status FROM overtime_requests WHERE id = $1 FOR UPDATE`,
+      const { rows } = await client.query<{
+        employee_id: string
+        status: string
+        supervisor_approved_by_oid: string | null
+      }>(
+        `SELECT employee_id, status, supervisor_approved_by_oid FROM overtime_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (Number(row.employee_id) !== employeeId) return { kind: 'not_found' as const }
-      if (row.status !== 'pending') return { kind: 'conflict' as const }
+      // Blocked once the supervisor has already forwarded it, even though
+      // status is still 'pending' — see leaveRequests.ts's cancel route for
+      // the full reasoning, which applies unchanged here.
+      if (row.status !== 'pending' || row.supervisor_approved_by_oid !== null) {
+        return { kind: 'conflict' as const }
+      }
 
       // Re-freezes the supervisor snapshot too, same as every other column
       // here — an edit re-derives everything fresh from current data, so a
@@ -670,14 +679,23 @@ overtimeRequestsRouter.post('/overtime-requests/:id/cancel', async (req: Request
 
   try {
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ employee_id: string; status: string }>(
-        `SELECT employee_id, status FROM overtime_requests WHERE id = $1 FOR UPDATE`,
+      const { rows } = await client.query<{
+        employee_id: string
+        status: string
+        supervisor_approved_by_oid: string | null
+      }>(
+        `SELECT employee_id, status, supervisor_approved_by_oid FROM overtime_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (Number(row.employee_id) !== employeeId) return { kind: 'not_found' as const }
-      if (row.status !== 'pending') return { kind: 'conflict' as const }
+      // Blocked once the supervisor has already forwarded it, even though
+      // status is still 'pending' — see leaveRequests.ts's cancel route for
+      // the full reasoning, which applies unchanged here.
+      if (row.status !== 'pending' || row.supervisor_approved_by_oid !== null) {
+        return { kind: 'conflict' as const }
+      }
 
       await client.query(
         `UPDATE overtime_requests SET status = 'cancelled', current_stage = NULL, updated_at = now() WHERE id = $1`,

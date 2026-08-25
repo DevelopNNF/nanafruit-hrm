@@ -378,14 +378,26 @@ leaveRequestsRouter.post('/leave-requests/:id/cancel', async (req: Request, res:
 
   try {
     const result = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ employee_id: string; status: string }>(
-        `SELECT employee_id, status FROM leave_requests WHERE id = $1 FOR UPDATE`,
+      const { rows } = await client.query<{
+        employee_id: string
+        status: string
+        supervisor_approved_by_oid: string | null
+      }>(
+        `SELECT employee_id, status, supervisor_approved_by_oid FROM leave_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
       if (!row) return { kind: 'not_found' as const }
       if (Number(row.employee_id) !== employeeId) return { kind: 'not_found' as const }
-      if (row.status !== 'pending') return { kind: 'conflict' as const }
+      // Blocked once the supervisor has already forwarded it, even though
+      // status is still 'pending' — HR is now looking at this request, and
+      // an employee withdrawing it out from under them (or, via the
+      // sibling edit route on other request types, silently changing what
+      // they're deciding) is exactly the case a first-level approval is
+      // supposed to lock in against.
+      if (row.status !== 'pending' || row.supervisor_approved_by_oid !== null) {
+        return { kind: 'conflict' as const }
+      }
 
       await client.query(
         `UPDATE leave_requests SET status = 'cancelled', current_stage = NULL, updated_at = now() WHERE id = $1`,

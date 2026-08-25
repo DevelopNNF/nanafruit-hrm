@@ -258,7 +258,15 @@ export function LeaveRequestCard({ employee, onBack }: Props) {
           reason: request.reason,
           decisionNote:
             request.status === 'rejected' ? `เหตุผลจากผู้อนุมัติ: ${request.decisionReason ?? ''}` : undefined,
-          onCancel: request.status === 'pending' ? () => setCancelId(request.id) : undefined,
+          // Once a supervisor has already forwarded this to HR (even though
+          // status is still 'pending'), it's locked — HR is now looking at
+          // it, so withdrawing it out from under them isn't allowed. The
+          // server enforces this too; hiding the button here just keeps the
+          // employee from hitting an error over it.
+          onCancel:
+            request.status === 'pending' && request.supervisorApprovedByName === null
+              ? () => setCancelId(request.id)
+              : undefined,
         }))
       : []
 
