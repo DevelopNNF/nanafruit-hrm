@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
 import {
   Activity,
@@ -29,8 +29,8 @@ const ROLE_LABELS: Record<Role, string> = {
 }
 
 type NavItem =
-  | { type: 'link'; to: string; label: string; icon: LucideIcon }
-  | { type: 'group'; label: string; icon: LucideIcon; children: { to: string; label: string }[] }
+  | { type: 'link'; to: string; label: string; icon: LucideIcon, role?: Role[] | null }
+  | { type: 'group'; label: string; icon: LucideIcon;role?: Role[] | null; children: { to: string; label: string; role?: Role[] | null}[] }
 
 // "Master" is a group rather than a link: it holds no page of its own, only
 // the master-data sub-pages nested under it. Job is the first; more master
@@ -42,6 +42,7 @@ const NAV: NavItem[] = [
     type: 'group',
     label: 'Master',
     icon: Database,
+    role: ['HRM.Admin', 'HRM.HR'],
     children: [
       { to: '/master/departments', label: 'แผนก (Department)' },
       { to: '/master/jobs', label: 'ตำแหน่งงาน (Job)' },
@@ -60,7 +61,7 @@ const NAV: NavItem[] = [
     icon: Clock,
     children: [
       { to: '/schedule', label: 'ตารางการทำงาน'},
-      { to: '/attendance', label: 'รายละเอียดการลงเวลา'},
+      { to: '/attendance', label: 'รายละเอียดการลงเวลา', role: ['HRM.Admin', 'HRM.HR', 'HRM.Payroll']},
       { to: '/employees/shift-assignments/daily', label: 'มอบหมายกะรายวัน'},
       { to: '/time-corrections', label: 'คำขอแก้ไขเวลา'},
       { to: '/shift-change-requests', label: 'คำขอเปลี่ยนกะ'},
@@ -75,13 +76,14 @@ const NAV: NavItem[] = [
     icon: Clock,
     children: [
       { to: '/leave-requests', label: 'คำขอลา'},
-      { to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา'},
+      { to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา', role: ['HRM.Admin', 'HRM.HR']},
     ],
   },
   {
     type: 'group',
     label: 'เงินเดือน',
     icon: Wallet,
+    role: ['HRM.Admin', 'HRM.Payroll'],
     children: [
       { to: '/payroll/periods', label: 'งวดเงินเดือน' },
     ],
@@ -90,6 +92,7 @@ const NAV: NavItem[] = [
     type: 'group',
     label: 'รายงาน',
     icon: Files,
+    role: ['HRM.Admin', 'HRM.HR', 'HRM.Payroll'],
     children: [
       { to: 'report/attendance', label: 'รายงานการลงเวลา'},
       { to: 'report/overtime', label: 'รายงาน OT'},
@@ -231,6 +234,7 @@ export function AppLayout() {
             เมนูหลัก
           </p>
           {NAV.map((item) =>
+            item.role && !item.role.some((role) => roles.includes(role)) ? null :
             item.type === 'link' ? (
               <NavLink key={item.to} to={item.to} className={navLinkClass}>
                 <item.icon size={17} className="flex-none opacity-90" />
@@ -257,6 +261,7 @@ export function AppLayout() {
                 {openGroups.has(item.label) && (
                   <div className="ml-3.5 flex flex-col gap-0.5 border-l border-white/10 py-0.5 pl-2.5">
                     {item.children.map((child) => (
+                      child.role && !child.role.some((role) => roles.includes(role)) ? null :
                       <NavLink key={child.to} to={child.to} className={navLinkClass}>
                         <span>{child.label}</span>
                       </NavLink>
@@ -317,4 +322,19 @@ export function AppLayout() {
       </main>
     </div>
   )
+}
+
+/**
+ * Route guard for pages restricted to specific roles — NAV only hides the
+ * link, it doesn't stop someone who types the URL directly. Used as a
+ * path-less layout route wrapping the relevant children in App.tsx, mirroring
+ * the same `role` arrays NAV uses to decide what to show.
+ */
+export function RequireRole({ role }: { role: Role[] }) {
+  const me = useMe()
+  const roles = me.kind === 'admin' ? me.roles : []
+  if (!role.some((r) => roles.includes(r))) {
+    return <Navigate to="/dashboard" replace />
+  }
+  return <Outlet />
 }
