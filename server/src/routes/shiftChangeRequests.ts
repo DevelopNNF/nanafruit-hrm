@@ -21,6 +21,7 @@ import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
 import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
+import { notify } from '../notifications/dispatch.js'
 import { findShiftById } from '../shiftQueries.js'
 import { resolveSupervisorScope } from '../supervisorScope.js'
 import {
@@ -296,6 +297,14 @@ shiftChangeRequestsRouter.post('/shift-change-requests', async (req: Request, re
       return rowToShiftChangeRequest(row)
     })
 
+    void notify({
+      kind: 'created',
+      resource: 'shift_change_request',
+      requestId: request.id,
+      requesterEmployeeId: employeeId,
+      supervisorEmployeeId: outcome.supervisorEmployeeId,
+    })
+
     const body: ShiftChangeRequestResponse = { request }
     res.status(201).json(body)
   } catch (err) {
@@ -414,9 +423,11 @@ shiftChangeRequestsRouter.post('/shift-change-requests/:id/cancel', async (req: 
       const { rows } = await client.query<{
         employee_id: string
         status: string
+        supervisor_employee_id: string | null
         supervisor_approved_by_oid: string | null
       }>(
-        `SELECT employee_id, status, supervisor_approved_by_oid FROM shift_change_requests WHERE id = $1 FOR UPDATE`,
+        `SELECT employee_id, status, supervisor_employee_id, supervisor_approved_by_oid
+         FROM shift_change_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
@@ -447,11 +458,23 @@ shiftChangeRequestsRouter.post('/shift-change-requests/:id/cancel', async (req: 
       )
       const updated = selectRows[0]
       if (!updated) throw new Error('re-select of shift_change_requests returned no row')
-      return { kind: 'ok' as const, request: rowToShiftChangeRequest(updated) }
+      return {
+        kind: 'ok' as const,
+        request: rowToShiftChangeRequest(updated),
+        supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+      }
     })
 
     if (result.kind === 'not_found') return fail(res, 404, `no shift change request with id ${id}`)
     if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว ไม่สามารถยกเลิกได้')
+
+    void notify({
+      kind: 'cancelled',
+      resource: 'shift_change_request',
+      requestId: id,
+      requesterEmployeeId: employeeId,
+      supervisorEmployeeId: result.supervisorEmployeeId,
+    })
 
     const body: ShiftChangeRequestResponse = { request: result.request }
     res.json(body)
@@ -651,6 +674,25 @@ shiftChangeRequestsRouter.post(
         )
       }
 
+      // status === 'approved' means this was the final decision; anything
+      // else ('pending', now at the hr stage) means a supervisor just
+      // forwarded it.
+      void notify(
+        result.request.status === 'approved'
+          ? {
+              kind: 'approved',
+              resource: 'shift_change_request',
+              requestId: id,
+              requesterEmployeeId: result.request.employeeId,
+            }
+          : {
+              kind: 'supervisor_approved',
+              resource: 'shift_change_request',
+              requestId: id,
+              requesterEmployeeId: result.request.employeeId,
+            }
+      )
+
       const body: ShiftChangeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(body)
     } catch (err) {
@@ -724,6 +766,14 @@ shiftChangeRequestsRouter.post(
       if (result.kind === 'not_found') return fail(res, 404, `no shift change request with id ${id}`)
       if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
       if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
+
+      void notify({
+        kind: 'rejected',
+        resource: 'shift_change_request',
+        requestId: id,
+        requesterEmployeeId: result.request.employeeId,
+        reason,
+      })
 
       const responseBody: ShiftChangeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(responseBody)

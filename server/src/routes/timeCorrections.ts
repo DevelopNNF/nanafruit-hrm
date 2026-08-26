@@ -21,6 +21,7 @@ import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
 import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
+import { notify } from '../notifications/dispatch.js'
 import { addDays, getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { resolveMatchWindow } from '../attendanceMatchingQueries.js'
 import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
@@ -212,6 +213,14 @@ timeCorrectionsRouter.post('/time-corrections', async (req: Request, res: Respon
       const row = selectRows[0]
       if (!row) throw new Error('re-select of time_correction_requests returned no row')
       return rowToTimeCorrection(row)
+    })
+
+    void notify({
+      kind: 'created',
+      resource: 'time_correction_request',
+      requestId: request.id,
+      requesterEmployeeId: employeeId,
+      supervisorEmployeeId,
     })
 
     const body: TimeCorrectionResponse = { request }
@@ -499,6 +508,24 @@ timeCorrectionsRouter.post('/time-corrections/:id/approve', canDecideAsAdminOrEm
     if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์อนุมัติคำขอนี้', 'FORBIDDEN')
     if (result.kind === 'conflict') return fail(res, 409, result.message)
 
+    // status === 'approved' means this was the final decision; anything else
+    // ('pending', now at the hr stage) means a supervisor just forwarded it.
+    void notify(
+      result.request.status === 'approved'
+        ? {
+            kind: 'approved',
+            resource: 'time_correction_request',
+            requestId: id,
+            requesterEmployeeId: result.request.employeeId,
+          }
+        : {
+            kind: 'supervisor_approved',
+            resource: 'time_correction_request',
+            requestId: id,
+            requesterEmployeeId: result.request.employeeId,
+          }
+    )
+
     const body: TimeCorrectionDetailResponse = { request: result.request, canDecide: result.canDecide }
     res.json(body)
   } catch (err) {
@@ -568,6 +595,14 @@ timeCorrectionsRouter.post('/time-corrections/:id/reject', canDecideAsAdminOrEmp
     if (result.kind === 'not_found') return fail(res, 404, `no time correction request with id ${id}`)
     if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
     if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
+
+    void notify({
+      kind: 'rejected',
+      resource: 'time_correction_request',
+      requestId: id,
+      requesterEmployeeId: result.request.employeeId,
+      reason,
+    })
 
     const body2: TimeCorrectionDetailResponse = { request: result.request, canDecide: result.canDecide }
     res.json(body2)

@@ -19,6 +19,7 @@ import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
 import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
+import { notify } from '../notifications/dispatch.js'
 import { getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
 import { resolveSupervisorScope } from '../supervisorScope.js'
@@ -323,6 +324,14 @@ dayOffSwapRequestsRouter.post('/day-off-swap-requests', async (req: Request, res
       return rowToDayOffSwapRequest(row)
     })
 
+    void notify({
+      kind: 'created',
+      resource: 'day_off_swap_request',
+      requestId: request.id,
+      requesterEmployeeId: employeeId,
+      supervisorEmployeeId: outcome.supervisorEmployeeId,
+    })
+
     const body: DayOffSwapRequestResponse = { request }
     res.status(201).json(body)
   } catch (err) {
@@ -442,9 +451,11 @@ dayOffSwapRequestsRouter.post('/day-off-swap-requests/:id/cancel', async (req: R
       const { rows } = await client.query<{
         employee_id: string
         status: string
+        supervisor_employee_id: string | null
         supervisor_approved_by_oid: string | null
       }>(
-        `SELECT employee_id, status, supervisor_approved_by_oid FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
+        `SELECT employee_id, status, supervisor_employee_id, supervisor_approved_by_oid
+         FROM day_off_swap_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
@@ -475,11 +486,23 @@ dayOffSwapRequestsRouter.post('/day-off-swap-requests/:id/cancel', async (req: R
       )
       const updated = selectRows[0]
       if (!updated) throw new Error('re-select of day_off_swap_requests returned no row')
-      return { kind: 'ok' as const, request: rowToDayOffSwapRequest(updated) }
+      return {
+        kind: 'ok' as const,
+        request: rowToDayOffSwapRequest(updated),
+        supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+      }
     })
 
     if (result.kind === 'not_found') return fail(res, 404, `no day off swap request with id ${id}`)
     if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว ไม่สามารถยกเลิกได้')
+
+    void notify({
+      kind: 'cancelled',
+      resource: 'day_off_swap_request',
+      requestId: id,
+      requesterEmployeeId: employeeId,
+      supervisorEmployeeId: result.supervisorEmployeeId,
+    })
 
     const body: DayOffSwapRequestResponse = { request: result.request }
     res.json(body)
@@ -665,6 +688,25 @@ dayOffSwapRequestsRouter.post(
         return fail(res, 409, result.message)
       }
 
+      // status === 'approved' means this was the final decision; anything
+      // else ('pending', now at the hr stage) means a supervisor just
+      // forwarded it.
+      void notify(
+        result.request.status === 'approved'
+          ? {
+              kind: 'approved',
+              resource: 'day_off_swap_request',
+              requestId: id,
+              requesterEmployeeId: result.request.employeeId,
+            }
+          : {
+              kind: 'supervisor_approved',
+              resource: 'day_off_swap_request',
+              requestId: id,
+              requesterEmployeeId: result.request.employeeId,
+            }
+      )
+
       const body: DayOffSwapRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(body)
     } catch (err) {
@@ -738,6 +780,14 @@ dayOffSwapRequestsRouter.post(
       if (result.kind === 'not_found') return fail(res, 404, `no day off swap request with id ${id}`)
       if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
       if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
+
+      void notify({
+        kind: 'rejected',
+        resource: 'day_off_swap_request',
+        requestId: id,
+        requesterEmployeeId: result.request.employeeId,
+        reason,
+      })
 
       const responseBody: DayOffSwapRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(responseBody)

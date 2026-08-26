@@ -19,6 +19,7 @@ import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
 import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
+import { notify } from '../notifications/dispatch.js'
 import { findLeaveTypeById } from '../leaveTypeQueries.js'
 import { listLeaveBalanceSummaries } from '../leaveBalanceQueries.js'
 import { resolveSupervisorScope } from '../supervisorScope.js'
@@ -360,6 +361,14 @@ leaveRequestsRouter.post('/leave-requests', async (req: Request, res: Response) 
       })
     })
 
+    void notify({
+      kind: 'created',
+      resource: 'leave_request',
+      requestId: request.id,
+      requesterEmployeeId: employeeId,
+      supervisorEmployeeId,
+    })
+
     const body: LeaveRequestResponse = { request }
     res.status(201).json(body)
   } catch (err) {
@@ -392,9 +401,11 @@ leaveRequestsRouter.post('/leave-requests/:id/cancel', async (req: Request, res:
       const { rows } = await client.query<{
         employee_id: string
         status: string
+        supervisor_employee_id: string | null
         supervisor_approved_by_oid: string | null
       }>(
-        `SELECT employee_id, status, supervisor_approved_by_oid FROM leave_requests WHERE id = $1 FOR UPDATE`,
+        `SELECT employee_id, status, supervisor_employee_id, supervisor_approved_by_oid
+         FROM leave_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
@@ -428,11 +439,23 @@ leaveRequestsRouter.post('/leave-requests/:id/cancel', async (req: Request, res:
       )
       const updated = updatedRows[0]
       if (!updated) throw new Error('re-select of leave_requests returned no row')
-      return { kind: 'ok' as const, request: rowToLeaveRequest(updated) }
+      return {
+        kind: 'ok' as const,
+        request: rowToLeaveRequest(updated),
+        supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+      }
     })
 
     if (result.kind === 'not_found') return fail(res, 404, `no leave request with id ${id}`)
     if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว ไม่สามารถยกเลิกได้')
+
+    void notify({
+      kind: 'cancelled',
+      resource: 'leave_request',
+      requestId: id,
+      requesterEmployeeId: employeeId,
+      supervisorEmployeeId: result.supervisorEmployeeId,
+    })
 
     const body: LeaveRequestResponse = { request: result.request }
     res.json(body)
@@ -600,6 +623,19 @@ leaveRequestsRouter.post('/leave-requests/:id/approve', canDecideAsAdminOrEmploy
     if (result.kind === 'conflict') return fail(res, 409, result.message)
     if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์อนุมัติคำขอนี้', 'FORBIDDEN')
 
+    // status === 'approved' means this was the final decision; anything else
+    // ('pending', now at the hr stage) means a supervisor just forwarded it.
+    void notify(
+      result.request.status === 'approved'
+        ? { kind: 'approved', resource: 'leave_request', requestId: id, requesterEmployeeId: result.request.employeeId }
+        : {
+            kind: 'supervisor_approved',
+            resource: 'leave_request',
+            requestId: id,
+            requesterEmployeeId: result.request.employeeId,
+          }
+    )
+
     const body: LeaveRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
     res.json(body)
   } catch (err) {
@@ -673,6 +709,14 @@ leaveRequestsRouter.post('/leave-requests/:id/reject', canDecideAsAdminOrEmploye
     if (result.kind === 'not_found') return fail(res, 404, `no leave request with id ${id}`)
     if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
     if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
+
+    void notify({
+      kind: 'rejected',
+      resource: 'leave_request',
+      requestId: id,
+      requesterEmployeeId: result.request.employeeId,
+      reason,
+    })
 
     const responseBody: LeaveRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
     res.json(responseBody)

@@ -41,6 +41,7 @@ import {
   findEmployeeIdByEntraUpn,
   listActiveEmployeesForBulkOt,
 } from '../employeeQueries.js'
+import { notify } from '../notifications/dispatch.js'
 import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
@@ -555,6 +556,14 @@ overtimeRequestsRouter.post('/overtime-requests', async (req: Request, res: Resp
       return rowToOvertimeRequest(row)
     })
 
+    void notify({
+      kind: 'created',
+      resource: 'overtime_request',
+      requestId: request.id,
+      requesterEmployeeId: employeeId,
+      supervisorEmployeeId: snapshot.supervisorEmployeeId,
+    })
+
     const body: OvertimeRequestResponse = { request }
     res.status(201).json(body)
   } catch (err) {
@@ -698,9 +707,11 @@ overtimeRequestsRouter.post('/overtime-requests/:id/cancel', async (req: Request
       const { rows } = await client.query<{
         employee_id: string
         status: string
+        supervisor_employee_id: string | null
         supervisor_approved_by_oid: string | null
       }>(
-        `SELECT employee_id, status, supervisor_approved_by_oid FROM overtime_requests WHERE id = $1 FOR UPDATE`,
+        `SELECT employee_id, status, supervisor_employee_id, supervisor_approved_by_oid
+         FROM overtime_requests WHERE id = $1 FOR UPDATE`,
         [id]
       )
       const row = rows[0]
@@ -731,13 +742,25 @@ overtimeRequestsRouter.post('/overtime-requests/:id/cancel', async (req: Request
       )
       const updated = selectRows[0]
       if (!updated) throw new Error('re-select of overtime_requests returned no row')
-      return { kind: 'ok' as const, request: rowToOvertimeRequest(updated) }
+      return {
+        kind: 'ok' as const,
+        request: rowToOvertimeRequest(updated),
+        supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+      }
     })
 
     if (result.kind === 'not_found') return fail(res, 404, `no overtime request with id ${id}`)
     if (result.kind === 'conflict') {
       return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว ไม่สามารถยกเลิกได้')
     }
+
+    void notify({
+      kind: 'cancelled',
+      resource: 'overtime_request',
+      requestId: id,
+      requesterEmployeeId: employeeId,
+      supervisorEmployeeId: result.supervisorEmployeeId,
+    })
 
     const body: OvertimeRequestResponse = { request: result.request }
     res.json(body)
@@ -1183,6 +1206,25 @@ overtimeRequestsRouter.post(
       if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์อนุมัติคำขอนี้', 'FORBIDDEN')
       if (result.kind === 'stale') return approvalStaleFail(res, result.outcome)
 
+      // status === 'approved' means this was the final decision; anything
+      // else ('pending', now at the hr stage) means a supervisor just
+      // forwarded it.
+      void notify(
+        result.request.status === 'approved'
+          ? {
+              kind: 'approved',
+              resource: 'overtime_request',
+              requestId: id,
+              requesterEmployeeId: result.request.employeeId,
+            }
+          : {
+              kind: 'supervisor_approved',
+              resource: 'overtime_request',
+              requestId: id,
+              requesterEmployeeId: result.request.employeeId,
+            }
+      )
+
       const body: OvertimeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(body)
     } catch (err) {
@@ -1260,6 +1302,14 @@ overtimeRequestsRouter.post(
       if (result.kind === 'not_found') return fail(res, 404, `no overtime request with id ${id}`)
       if (result.kind === 'conflict') return fail(res, 409, 'คำขอนี้ถูกดำเนินการไปแล้ว')
       if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ปฏิเสธคำขอนี้', 'FORBIDDEN')
+
+      void notify({
+        kind: 'rejected',
+        resource: 'overtime_request',
+        requestId: id,
+        requesterEmployeeId: result.request.employeeId,
+        reason,
+      })
 
       const responseBody: OvertimeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
       res.json(responseBody)
