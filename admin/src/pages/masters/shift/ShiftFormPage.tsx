@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
-import { WORKDAYS, formatWorkMinutes, type ShiftInput } from '@hrm/shared'
+import { WORKDAYS, WORKDAYS_MASK, formatWorkMinutes, type ShiftInput } from '@hrm/shared'
 import { createShift, getShift, updateShift } from '../../../api/shifts'
 import { computeWorkMinutes } from '../../../shiftHours'
 import { TimeInput } from '../../../components/TimeInput'
@@ -40,6 +40,31 @@ function toInputTime(time: string | null): string {
   return time ? time.slice(0, 5) : ''
 }
 
+function maskForKeys(keys: readonly (typeof WORKDAYS)[number]['key'][]): number {
+  return WORKDAYS.filter((day) => keys.includes(day.key)).reduce((mask, day) => mask | day.bit, 0)
+}
+
+const WEEKDAYS_MASK = maskForKeys(['mon', 'tue', 'wed', 'thu', 'fri'])
+const MON_SAT_MASK = maskForKeys(['mon', 'tue', 'wed', 'thu', 'fri', 'sat'])
+
+type WorkdayPresetKey = 'none' | 'weekdays' | 'monSat' | 'all' | 'custom'
+
+/** The radio presets shown above the day checkboxes — 'custom' isn't here
+ *  because it has no fixed mask, it just reveals the checkboxes below. */
+const WORKDAY_PRESETS: Array<{ key: Exclude<WorkdayPresetKey, 'custom'>; label: string; mask: number }> = [
+  { key: 'none', label: 'ไม่ระบุ (ค่าเริ่มต้น)', mask: 0 },
+  { key: 'weekdays', label: 'วันทำงาน จันทร์ - ศุกร์', mask: WEEKDAYS_MASK },
+  { key: 'monSat', label: 'วันทำงาน จันทร์ - เสาร์', mask: MON_SAT_MASK },
+  { key: 'all', label: 'ทุกวัน', mask: WORKDAYS_MASK },
+]
+
+/** Which preset a stored mask corresponds to, for binding an existing shift
+ *  back into the radio group. A mask that matches no preset (e.g. only some
+ *  days picked) falls back to 'custom' so the checkboxes show the real bits. */
+function presetKeyForMask(mask: number): WorkdayPresetKey {
+  return WORKDAY_PRESETS.find((preset) => preset.mask === mask)?.key ?? 'custom'
+}
+
 export function ShiftFormPage() {
   const params = useParams()
   const navigate = useNavigate()
@@ -52,6 +77,7 @@ export function ShiftFormPage() {
 
   const [draft, setDraft] = useState<ShiftInput>(emptyDraft)
   const [hasBreak, setHasBreak] = useState(false)
+  const [workdayPreset, setWorkdayPreset] = useState<WorkdayPresetKey>('none')
   const [loading, setLoading] = useState(!isNew)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -75,6 +101,7 @@ export function ShiftFormPage() {
           isActive: shift.isActive,
         })
         setHasBreak(shift.breakStartTime !== null)
+        setWorkdayPreset(presetKeyForMask(shift.workdays))
         setLoading(false)
       })
       .catch((err: unknown) => {
@@ -95,6 +122,14 @@ export function ShiftFormPage() {
       ...prev,
       workdays: (prev.workdays & bit) !== 0 ? prev.workdays & ~bit : prev.workdays | bit,
     }))
+  }
+
+  function selectWorkdayPreset(key: WorkdayPresetKey) {
+    setWorkdayPreset(key)
+    // 'custom' has no fixed mask — it just reveals the checkboxes below,
+    // leaving whatever days were already set for the user to adjust.
+    const preset = WORKDAY_PRESETS.find((p) => p.key === key)
+    if (preset) set('workdays', preset.mask)
   }
 
   function toggleHasBreak(checked: boolean) {
@@ -296,20 +331,48 @@ export function ShiftFormPage() {
                 <span>
                   วันทำงาน <span className={requiredMark}>*</span>
                 </span>
-                <div className="flex flex-wrap gap-3 pt-1">
-                  {WORKDAYS.map((day) => (
+                <div className="flex flex-col gap-2 pt-1">
+                  {WORKDAY_PRESETS.map((preset) => (
                     <label
-                      key={day.key}
+                      key={preset.key}
                       className="flex items-center gap-1.5 text-[0.825rem] font-normal text-slate-700"
                     >
                       <input
-                        type="checkbox"
-                        checked={(draft.workdays & day.bit) !== 0}
-                        onChange={() => toggleWorkday(day.bit)}
+                        type="radio"
+                        name="workdayPreset"
+                        checked={workdayPreset === preset.key}
+                        onChange={() => selectWorkdayPreset(preset.key)}
                       />
-                      <span>{day.label}</span>
+                      <span>{preset.label}</span>
                     </label>
                   ))}
+                  <label className="flex items-center gap-1.5 text-[0.825rem] font-normal text-slate-700">
+                    <input
+                      type="radio"
+                      name="workdayPreset"
+                      checked={workdayPreset === 'custom'}
+                      onChange={() => setWorkdayPreset('custom')}
+                    />
+                    <span>ระบุเอง</span>
+                  </label>
+
+                  {workdayPreset === 'custom' && (
+                    <div className="flex flex-wrap gap-3 pl-5">
+                      {WORKDAYS.map((day) => (
+                        <label
+                          key={day.key}
+                          className="flex items-center gap-1.5 text-[0.825rem] font-normal text-slate-700"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={(draft.workdays & day.bit) !== 0}
+                            onChange={() => toggleWorkday(day.bit)}
+                          />
+                          <span>{day.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 

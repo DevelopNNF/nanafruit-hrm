@@ -148,7 +148,7 @@ const router = createBrowserRouter([
       { path: 'shift-change-requests', element: <ShiftChangeRequestListPage /> },
       { path: 'shift-change-requests/:id', element: <ShiftChangeRequestDetailPage /> },
       { path: 'overtime-requests', element: <OvertimeRequestListPage /> },
-      { path: 'overtime-requests/bulk-request', element: <BulkOvertimeRequestPage /> },
+      { path: 'overtime-bulk-requests', element: <BulkOvertimeRequestPage /> },
       { path: 'overtime-requests/batch/:batchId', element: <OvertimeRequestBatchDetailPage /> },
       { path: 'overtime-requests/:id', element: <OvertimeRequestDetailPage /> },
       { path: 'day-off-swap-requests', element: <DayOffSwapRequestListPage /> },

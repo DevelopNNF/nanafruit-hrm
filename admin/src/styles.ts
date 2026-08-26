@@ -21,7 +21,7 @@ type ButtonVariant = 'default' | 'primary' | 'ghost' | 'danger'
 
 export function button(variant: ButtonVariant = 'default'): string {
   const base =
-    'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-3.5 py-2 text-sm font-medium no-underline shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-55'
+    'cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-3.5 py-2 text-sm font-medium no-underline shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-55'
   switch (variant) {
     case 'primary':
       return `${base} border-navy bg-navy text-white hover:border-navy-hover hover:bg-navy-hover`

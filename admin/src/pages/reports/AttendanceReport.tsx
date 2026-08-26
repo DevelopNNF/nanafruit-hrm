@@ -54,8 +54,8 @@ function defaultRange(): { from: string; to: string } {
   const current_date = new Date()
   const year = current_date.getFullYear()
   const month = current_date.getMonth()
-  const to = new Date(year, month, 25)
-  const from = new Date(year, month - 1, 26)
+  const from = new Date(year, month, 1)
+  const to = new Date(year, month + 1, 0)
   return { from: toDateInput(from), to: toDateInput(to) }
 }
 
@@ -293,7 +293,7 @@ export function AttendanceDailyListPage() {
         <div className="flex items-end">
           <button
             type="button"
-            className={`${button('default')} w-full`}
+            className={`${button('primary')} w-full`}
             disabled={exporting || state.phase !== 'ok' || state.days.length === 0}
             onClick={handleExport}
           >

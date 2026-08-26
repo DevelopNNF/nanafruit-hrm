@@ -263,13 +263,15 @@ export function BulkOvertimeRequestPage() {
             </div>
           )}
 
-          <button
-            className={button('primary')}
-            type="submit"
-            disabled={submitting || eligibleState.phase !== 'ok' || eligibleState.employees.length === 0}
-          >
-            {submitting ? 'กำลังบันทึก…' : 'ส่งคำขอ OT'}
-          </button>
+          <div className='w-full flex justify-end'>
+            <button
+              className={button('primary')}
+              type="submit"
+              disabled={submitting || eligibleState.phase !== 'ok' || selectedEmployeeIds.length === 0}
+              >
+              {submitting ? 'กำลังบันทึก…' : 'ส่งคำขอ OT'}
+            </button>
+          </div>
         </form>
       )}
 

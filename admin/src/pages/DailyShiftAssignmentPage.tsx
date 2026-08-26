@@ -267,13 +267,15 @@ export function DailyShiftAssignmentPage() {
             </div>
           )}
 
-          <button
-            className={button('primary')}
-            type="submit"
-            disabled={submitting || loading || tempWorkers.length === 0}
-          >
-            {submitting ? 'กำลังบันทึก…' : 'บันทึกการมอบหมาย'}
-          </button>
+          <div className='w-full flex justify-end'>
+            <button
+              className={button('primary')}
+              type="submit"
+              disabled={submitting || loading || selectedEmployeeIds.length === 0}
+            >
+              {submitting ? 'กำลังบันทึก…' : 'บันทึกการมอบหมาย'}
+            </button>
+          </div>
         </form>
       )}
 
