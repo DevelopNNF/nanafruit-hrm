@@ -4,7 +4,10 @@ import {
   LEAVE_BALANCE_ENTRY_TYPES,
   ROLES,
   type AuthUser,
+  type BulkCarryOverLeaveResponse,
   type BulkGrantLeaveResponse,
+  type CarryOverLeaveParams,
+  type CarryOverPreviewResponse,
   type LeaveBalanceEntryInput,
   type LeaveBalanceEntryListResponse,
   type LeaveBalanceEntryResponse,
@@ -18,6 +21,8 @@ import { fail, handleUnexpected } from '../http.js'
 import { findEmployeeById } from '../employeeQueries.js'
 import { findLeaveTypeById } from '../leaveTypeQueries.js'
 import {
+  CARRY_OVER_SOURCE_CTE,
+  computeLeaveCarryOverPreview,
   listLeaveBalanceEntries,
   listLeaveBalanceSummaries,
   rowToLeaveBalanceEntry,
@@ -70,6 +75,40 @@ function parseYear(value: unknown): number | null {
     return value
   }
   return null
+}
+
+/** Accepts both query-string values (always string) and JSON body values
+ *  (already number) — the two carry-over endpoints read the same shape from
+ *  different transports. */
+function parsePositiveNumber(value: unknown): number | null {
+  const num = typeof value === 'string' ? Number(value) : value
+  return typeof num === 'number' && Number.isFinite(num) && num > 0 ? num : null
+}
+
+function parseCarryOverParams(source: Record<string, unknown>): ParseResult<CarryOverLeaveParams> {
+  const fromYear = parseYear(source['fromYear'])
+  if (fromYear === null) return { ok: false, message: 'fromYear is required and must be an integer year' }
+
+  const toYear = parseYear(source['toYear'])
+  if (toYear === null) return { ok: false, message: 'toYear is required and must be an integer year' }
+
+  if (toYear <= fromYear) return { ok: false, message: 'toYear must be after fromYear' }
+
+  const leaveTypeIdRaw = source['leaveTypeId']
+  const leaveTypeId = typeof leaveTypeIdRaw === 'string' ? Number(leaveTypeIdRaw) : leaveTypeIdRaw
+  if (typeof leaveTypeId !== 'number' || !Number.isInteger(leaveTypeId) || leaveTypeId <= 0) {
+    return { ok: false, message: 'leaveTypeId is required and must be a positive integer' }
+  }
+
+  const requestedDays = parsePositiveNumber(source['requestedDays'])
+  if (requestedDays === null) {
+    return { ok: false, message: 'requestedDays is required and must be a positive number' }
+  }
+
+  const maxDays = parsePositiveNumber(source['maxDays'])
+  if (maxDays === null) return { ok: false, message: 'maxDays is required and must be a positive number' }
+
+  return { ok: true, value: { fromYear, toYear, leaveTypeId, requestedDays, maxDays } }
 }
 
 const ENTRY_TYPES_CREATABLE_BY_HAND = LEAVE_BALANCE_ENTRY_TYPES.filter(
@@ -330,3 +369,101 @@ leaveBalancesRouter.post('/leave-balances/bulk-grant', canWrite, async (req: Req
     handleUnexpected(res, err)
   }
 })
+
+/** Read-only dry run for bulk carry-over — gated the same as the write
+ *  endpoints (canWrite) since it only makes sense as a step before commit,
+ *  not as general balance browsing. */
+leaveBalancesRouter.get(
+  '/leave-balances/carry-over/preview',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const parsed = parseCarryOverParams(req.query as Record<string, unknown>)
+    if (!parsed.ok) return fail(res, 400, parsed.message)
+
+    try {
+      const leaveType = await findLeaveTypeById(parsed.value.leaveTypeId)
+      if (!leaveType) return fail(res, 400, `no leave type with id ${parsed.value.leaveTypeId}`)
+
+      const rows = await computeLeaveCarryOverPreview(parsed.value)
+      const body: CarryOverPreviewResponse = { rows }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+leaveBalancesRouter.post(
+  '/leave-balances/carry-over/commit',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+
+    const parsed = parseCarryOverParams((req.body ?? {}) as Record<string, unknown>)
+    if (!parsed.ok) return fail(res, 400, parsed.message)
+    const params = parsed.value
+
+    try {
+      const leaveType = await findLeaveTypeById(params.leaveTypeId)
+      if (!leaveType) return fail(res, 400, `no leave type with id ${params.leaveTypeId}`)
+
+      const result = await withTransaction(async (client) => {
+        // Re-derives eligibility/amounts inside this transaction rather than
+        // trusting whatever the client previewed earlier — a balance can
+        // change between preview and commit, and this must reflect the
+        // current state, not a stale one.
+        const { rows: insertedRows } = await client.query<{ employee_id: string }>(
+          `INSERT INTO leave_balance_entries
+             (employee_id, leave_type_id, year, entry_type, amount_days, reason,
+              created_by_oid, created_by_name)
+           SELECT employee_id, $3, $2, 'carry_over', carry_over_amount,
+                  'ยกยอดจากปี ' || $1::text, $6, $7
+           FROM (${CARRY_OVER_SOURCE_CTE}) c
+           WHERE NOT already_carried_over AND carry_over_amount > 0
+           RETURNING employee_id`,
+          [
+            params.fromYear,
+            params.toYear,
+            params.leaveTypeId,
+            params.requestedDays,
+            params.maxDays,
+            actor.oid,
+            actor.name,
+          ]
+        )
+        const carriedOverCount = insertedRows.length
+
+        const { rows: eligibleRows } = await client.query<{ count: string }>(
+          `SELECT count(*) AS count
+           FROM employees e
+           JOIN employment_details d ON d.employee_id = e.id
+           WHERE d.status = 'Active'`
+        )
+        const totalActive = Number(eligibleRows[0]?.count ?? 0)
+
+        await recordAudit(client, {
+          actor,
+          action: 'leave_balance.bulk_carry_over',
+          entityId: params.leaveTypeId,
+          detail: {
+            fromYear: params.fromYear,
+            toYear: params.toYear,
+            leaveTypeId: params.leaveTypeId,
+            requestedDays: params.requestedDays,
+            maxDays: params.maxDays,
+            carriedOverCount,
+            skippedCount: totalActive - carriedOverCount,
+          },
+        })
+
+        return { carriedOverCount, skippedCount: totalActive - carriedOverCount }
+      })
+
+      const body: BulkCarryOverLeaveResponse = result
+      res.status(201).json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)

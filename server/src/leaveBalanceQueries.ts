@@ -3,7 +3,7 @@
 // ledger is the only source of truth (see the migration's comment).
 
 import type pg from 'pg'
-import type { LeaveBalanceEntry, LeaveBalanceSummary } from '@hrm/shared'
+import type { CarryOverLeaveParams, CarryOverPreviewRow, LeaveBalanceEntry, LeaveBalanceSummary } from '@hrm/shared'
 import { pool } from './db.js'
 
 type Queryable = Pick<pg.Pool, 'query'>
@@ -115,4 +115,83 @@ export async function listLeaveBalanceSummaries(
     remainingDays: Number(row.remaining_days),
     pendingDays: Number(row.pending_days),
   }))
+}
+
+/** The join/calc core shared by the carry-over preview (a plain SELECT) and
+ *  commit (an INSERT ... SELECT wrapping this same query) — one source of
+ *  truth for "who's eligible and for how much" so the two can't drift.
+ *  Params: $1 fromYear, $2 toYear, $3 leaveTypeId, $4 requestedDays,
+ *  $5 maxDays. */
+export const CARRY_OVER_SOURCE_CTE = `
+  WITH source AS (
+    SELECT
+      e.id AS employee_id,
+      e.employee_code,
+      (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name,
+      COALESCE(src.remaining, 0) AS source_remaining,
+      COALESCE(dst.remaining, 0) AS dest_remaining_before,
+      EXISTS (
+        SELECT 1 FROM leave_balance_entries co
+        WHERE co.employee_id = e.id AND co.leave_type_id = $3
+          AND co.year = $2 AND co.entry_type = 'carry_over'
+      ) AS already_carried_over
+    FROM employees e
+    JOIN employment_details d ON d.employee_id = e.id AND d.status = 'Active'
+    LEFT JOIN (
+      SELECT employee_id, SUM(amount_days) AS remaining FROM leave_balance_entries
+      WHERE leave_type_id = $3 AND year = $1 GROUP BY employee_id
+    ) src ON src.employee_id = e.id
+    LEFT JOIN (
+      SELECT employee_id, SUM(amount_days) AS remaining FROM leave_balance_entries
+      WHERE leave_type_id = $3 AND year = $2 GROUP BY employee_id
+    ) dst ON dst.employee_id = e.id
+  )
+  SELECT *,
+    -- maxDays ($5) is a ceiling on the DESTINATION total after carry-over,
+    -- not on the carry-over amount itself: someone already sitting close to
+    -- the cap in toYear gets topped up by less than requestedDays, never
+    -- pushed over it. Still never carries more than they have left in
+    -- fromYear (source_remaining) or more than requestedDays asks for.
+    CASE WHEN already_carried_over THEN 0
+         ELSE GREATEST(0, LEAST($4::numeric, source_remaining, $5::numeric - dest_remaining_before))
+    END AS carry_over_amount
+  FROM source
+`
+
+type CarryOverSourceRow = {
+  employee_id: string
+  employee_code: string
+  employee_name: string
+  source_remaining: string
+  dest_remaining_before: string
+  already_carried_over: boolean
+  carry_over_amount: string
+}
+
+function carryOverParams(params: CarryOverLeaveParams): [number, number, number, number, number] {
+  return [params.fromYear, params.toYear, params.leaveTypeId, params.requestedDays, params.maxDays]
+}
+
+export async function computeLeaveCarryOverPreview(
+  params: CarryOverLeaveParams,
+  db: Queryable = pool
+): Promise<CarryOverPreviewRow[]> {
+  const { rows } = await db.query<CarryOverSourceRow>(
+    `${CARRY_OVER_SOURCE_CTE} ORDER BY employee_name`,
+    carryOverParams(params)
+  )
+  return rows.map((row) => {
+    const carryOverAmount = Number(row.carry_over_amount)
+    const destRemainingBeforeDays = Number(row.dest_remaining_before)
+    return {
+      employeeId: Number(row.employee_id),
+      employeeCode: row.employee_code,
+      employeeName: row.employee_name,
+      sourceRemainingDays: Number(row.source_remaining),
+      destRemainingBeforeDays,
+      carryOverAmount,
+      destRemainingAfterDays: destRemainingBeforeDays + carryOverAmount,
+      alreadyCarriedOver: row.already_carried_over,
+    }
+  })
 }

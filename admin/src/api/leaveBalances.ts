@@ -1,6 +1,9 @@
 import type {
+  BulkCarryOverLeaveResponse,
   BulkGrantLeaveRequest,
   BulkGrantLeaveResponse,
+  CarryOverLeaveParams,
+  CarryOverPreviewResponse,
   LeaveBalanceEntry,
   LeaveBalanceEntryInput,
   LeaveBalanceEntryListResponse,
@@ -57,4 +60,36 @@ export async function bulkGrantLeave(
     body: JSON.stringify(input),
   })
   return unwrap<BulkGrantLeaveResponse>(res)
+}
+
+function carryOverQueryString(params: CarryOverLeaveParams): string {
+  return new URLSearchParams({
+    fromYear: String(params.fromYear),
+    toYear: String(params.toYear),
+    leaveTypeId: String(params.leaveTypeId),
+    requestedDays: String(params.requestedDays),
+    maxDays: String(params.maxDays),
+  }).toString()
+}
+
+export async function previewLeaveCarryOver(
+  params: CarryOverLeaveParams,
+  signal?: AbortSignal
+): Promise<CarryOverPreviewResponse['rows']> {
+  const res = await apiFetch(`/api/leave-balances/carry-over/preview?${carryOverQueryString(params)}`, {
+    signal,
+  })
+  const body = await unwrap<CarryOverPreviewResponse>(res)
+  return body.rows
+}
+
+export async function commitLeaveCarryOver(
+  params: CarryOverLeaveParams
+): Promise<BulkCarryOverLeaveResponse> {
+  const res = await apiFetch('/api/leave-balances/carry-over/commit', {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(params),
+  })
+  return unwrap<BulkCarryOverLeaveResponse>(res)
 }

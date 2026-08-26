@@ -837,6 +837,58 @@ export type BulkGrantLeaveResponse = {
   skippedCount: number
 }
 
+/** Shared params for both carry-over endpoints — preview reads with these,
+ *  commit writes with the same shape, so the two can never drift apart on
+ *  what "this batch" means. requestedDays is the flat amount HR wants to
+ *  carry per person; maxDays is a ceiling on the employee's toYear balance
+ *  AFTER carry-over (not on the carry-over amount itself) — e.g. 6 days
+ *  already granted for toYear + 5 requested, capped at maxDays=10, carries
+ *  only 4. Per employee, the actual carried amount is also capped at their
+ *  own remaining balance in fromYear — carry-over can never manufacture days
+ *  nobody has left. */
+export type CarryOverLeaveParams = {
+  fromYear: number
+  toYear: number
+  leaveTypeId: number
+  requestedDays: number
+  maxDays: number
+}
+
+/** One active employee's row in the carry-over preview/commit table. */
+export type CarryOverPreviewRow = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  /** SUM(amountDays) for this leaveType/fromYear — same "remaining" the
+   *  balance summary computes, just for the source year. */
+  sourceRemainingDays: number
+  /** SUM(amountDays) for this leaveType/toYear, before this batch runs. */
+  destRemainingBeforeDays: number
+  /** min(requestedDays, sourceRemainingDays, maxDays - destRemainingBeforeDays),
+   *  floored at 0, or 0 if alreadyCarriedOver. What commit will actually
+   *  insert as a 'carry_over' entry for this employee — destRemainingBeforeDays
+   *  + carryOverAmount never exceeds maxDays. */
+  carryOverAmount: number
+  destRemainingAfterDays: number
+  /** True when this employee already has a 'carry_over' entry for
+   *  (leaveTypeId, toYear) — commit skips them, same idempotency shape as
+   *  bulk-grant's skippedCount. */
+  alreadyCarriedOver: boolean
+}
+
+/** GET /api/leave-balances/carry-over/preview */
+export type CarryOverPreviewResponse = { rows: CarryOverPreviewRow[] }
+
+/** POST /api/leave-balances/carry-over/commit — inserts one 'carry_over'
+ *  entry per active employee whose row wasn't alreadyCarriedOver and whose
+ *  carryOverAmount was greater than 0. Re-derives the same rows the preview
+ *  showed inside its own transaction rather than trusting the client's copy,
+ *  so a balance change between preview and commit can't be carried past. */
+export type BulkCarryOverLeaveResponse = {
+  carriedOverCount: number
+  skippedCount: number
+}
+
 /* Leave Requests -------------------------------------------------------------- */
 
 /**

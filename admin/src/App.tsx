@@ -31,6 +31,7 @@ import { PayrollEntryDetailPage } from './pages/payroll/PayrollEntryDetailPage'
 import { FinanceItemListPage } from './pages/masters/finance_item/FinanceItemListPage'
 import { FinanceItemFormPage } from './pages/masters/finance_item/FinanceItemFormPage'
 import { LeaveBalanceBulkGrantPage } from './pages/LeaveBalanceBulkGrantPage'
+import { LeaveBalanceCarryOverPage } from './pages/LeaveBalanceCarryOverPage'
 import { DailyShiftAssignmentPage } from './pages/DailyShiftAssignmentPage'
 import { WorkSchedulePage } from './pages/WorkSchedulePage'
 import { AttendanceListPage } from './pages/AttendanceListPage'
@@ -157,6 +158,7 @@ const router = createBrowserRouter([
         element: <RequireRole role={['HRM.Admin', 'HRM.HR']} />,
         children: [
           { path: 'leave-balances/bulk-grant', element: <LeaveBalanceBulkGrantPage /> },
+          { path: 'leave-balances/carry-over', element: <LeaveBalanceCarryOverPage /> },
           { path: 'master/jobs', element: <JobListPage /> },
           { path: 'master/jobs/new', element: <KeyedJobForm /> },
           { path: 'master/jobs/:id', element: <KeyedJobForm /> },

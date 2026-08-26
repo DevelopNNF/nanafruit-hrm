@@ -77,6 +77,7 @@ const NAV: NavItem[] = [
     children: [
       { to: '/leave-requests', label: 'คำขอลา'},
       { to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา', role: ['HRM.Admin', 'HRM.HR']},
+      { to: '/leave-balances/carry-over', label: 'ยกยอดวันลา', role: ['HRM.Admin', 'HRM.HR']},
     ],
   },
   {

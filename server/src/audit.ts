@@ -61,6 +61,7 @@ export type AuditAction =
   | 'leave_balance.grant'
   | 'leave_balance.adjust'
   | 'leave_balance.bulk_grant'
+  | 'leave_balance.bulk_carry_over'
   | 'leave_request.create'
   | 'leave_request.cancel'
   | 'leave_request.supervisor_approve'
