@@ -3,6 +3,7 @@
 // the exact wording yet (see notification-system-plan memory), so treat
 // these strings as placeholders likely to be revised before Phase 5 rollout.
 
+import type { AttendanceIssue } from '../attendanceDailyQueries.js'
 import type { RequestResourceType } from './types.js'
 
 const RESOURCE_LABELS: Record<RequestResourceType, string> = {
@@ -46,5 +47,34 @@ export function hrPendingApprovalEmail(
   return {
     subject: `[HRM] ${label}รออนุมัติ — ${requesterName}`,
     bodyHtml: `<p>${requesterName} ส่ง${label} (เลขที่ ${requestId}) และรอการอนุมัติขั้นสุดท้ายจาก HR</p>`,
+  }
+}
+
+/** 'ขาดงาน' for an absent day; otherwise whichever of late/early-leave
+ *  applied (computeAttendanceDay lets both happen the same day — checked in
+ *  late AND left early is one row with both minute counts set). */
+function describeAttendanceIssue(issue: AttendanceIssue): string {
+  if (issue.attendanceStatus === 'absent') return 'ขาดงาน'
+  const parts: string[] = []
+  if (issue.lateMinutes > 0) parts.push(`สาย ${issue.lateMinutes} นาที`)
+  if (issue.earlyLeaveMinutes > 0) parts.push(`ออกก่อนเวลา ${issue.earlyLeaveMinutes} นาที`)
+  return parts.join(', ')
+}
+
+export function attendanceDigestLineText(workDate: string, issues: AttendanceIssue[]): string {
+  const lines = issues.map((issue) => `- ${issue.employeeName}: ${describeAttendanceIssue(issue)}`)
+  return `สรุปการเข้างานทีมของคุณ วันที่ ${workDate}\n${lines.join('\n')}`
+}
+
+export function attendanceDigestHrEmail(
+  workDate: string,
+  issues: AttendanceIssue[]
+): { subject: string; bodyHtml: string } {
+  const rows = issues
+    .map((issue) => `<tr><td>${issue.employeeName}</td><td>${describeAttendanceIssue(issue)}</td></tr>`)
+    .join('')
+  return {
+    subject: `[HRM] สรุปการขาด/สาย/ออกก่อนเวลา วันที่ ${workDate} (${issues.length} คน)`,
+    bodyHtml: `<table><thead><tr><th>พนักงาน</th><th>รายการ</th></tr></thead><tbody>${rows}</tbody></table>`,
   }
 }

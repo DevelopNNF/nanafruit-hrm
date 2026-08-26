@@ -1,6 +1,7 @@
-// The one entry point route handlers call: notify(event). Resolves who
-// should hear about a RequestActionEvent, sends it on the right channel, and
-// logs the outcome — never throwing, per the fire-and-forget MVP decision.
+// The one entry point route handlers (and attendanceDigest.ts) call:
+// notify(event). Resolves who should hear about a NotificationEvent, sends
+// it on the right channel, and logs the outcome — never throwing, per the
+// fire-and-forget MVP decision.
 //
 // Call this AFTER the transaction that made the change has committed, with
 // the default pool (not the transaction's client): an outbound HTTP call has
@@ -13,19 +14,25 @@ import { findEmployeeDisplayName, findLineUserIdForEmployee } from './recipients
 import { sendLinePush } from './channels/line.js'
 import { sendEmailViaPowerAutomate } from './channels/email.js'
 import { logNotificationAttempt } from './log.js'
-import { pendingApprovalLineText, decisionLineText, cancelledLineText, hrPendingApprovalEmail } from './templates.js'
-import type { RequestActionEvent } from './types.js'
+import {
+  attendanceDigestHrEmail,
+  attendanceDigestLineText,
+  cancelledLineText,
+  decisionLineText,
+  hrPendingApprovalEmail,
+  pendingApprovalLineText,
+} from './templates.js'
+import type { NotificationEvent } from './types.js'
 
 type Queryable = Pick<pg.Pool, 'query'>
 
-export async function notify(event: RequestActionEvent, db: Queryable = pool): Promise<void> {
+export async function notify(event: NotificationEvent, db: Queryable = pool): Promise<void> {
   if (!notificationsConfig.enabled) return
-
-  const eventType = `${event.resource}.${event.kind}`
 
   try {
     switch (event.kind) {
       case 'created': {
+        const eventType = `${event.resource}.${event.kind}`
         if (event.supervisorEmployeeId !== null) {
           const requesterName = await resolveRequesterName(db, event.requesterEmployeeId)
           await dispatchLine(
@@ -47,6 +54,7 @@ export async function notify(event: RequestActionEvent, db: Queryable = pool): P
         return
       }
       case 'supervisor_approved': {
+        const eventType = `${event.resource}.${event.kind}`
         const requesterName = await resolveRequesterName(db, event.requesterEmployeeId)
         await dispatchHrEmail(
           db,
@@ -56,6 +64,7 @@ export async function notify(event: RequestActionEvent, db: Queryable = pool): P
         return
       }
       case 'approved': {
+        const eventType = `${event.resource}.${event.kind}`
         await dispatchLine(
           db,
           eventType,
@@ -65,6 +74,7 @@ export async function notify(event: RequestActionEvent, db: Queryable = pool): P
         return
       }
       case 'rejected': {
+        const eventType = `${event.resource}.${event.kind}`
         await dispatchLine(
           db,
           eventType,
@@ -77,6 +87,7 @@ export async function notify(event: RequestActionEvent, db: Queryable = pool): P
         // Nothing was actually waiting on anyone — skip without logging a
         // notification that was never going to have a recipient.
         if (event.supervisorEmployeeId === null) return
+        const eventType = `${event.resource}.${event.kind}`
         const requesterName = await resolveRequesterName(db, event.requesterEmployeeId)
         await dispatchLine(
           db,
@@ -86,12 +97,25 @@ export async function notify(event: RequestActionEvent, db: Queryable = pool): P
         )
         return
       }
+      case 'attendance_digest_supervisor': {
+        await dispatchLine(
+          db,
+          event.kind,
+          event.supervisorEmployeeId,
+          attendanceDigestLineText(event.workDate, event.issues)
+        )
+        return
+      }
+      case 'attendance_digest_hr': {
+        await dispatchHrEmail(db, event.kind, attendanceDigestHrEmail(event.workDate, event.issues))
+        return
+      }
     }
   } catch (err) {
     // Should be unreachable — dispatchLine/dispatchHrEmail catch their own
     // failures — but notify() must never throw regardless of what changes
     // underneath it later.
-    console.error('notification dispatch crashed unexpectedly', eventType, err)
+    console.error('notification dispatch crashed unexpectedly', event.kind, err)
   }
 }
 

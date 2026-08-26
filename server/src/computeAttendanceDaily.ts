@@ -14,6 +14,7 @@ import 'dotenv/config'
 import { pool } from './db.js'
 import { DEFAULT_WINDOW_DAYS, defaultRange, runAttendanceCompute, withAttendanceJobLock } from './attendanceDailyJob.js'
 import { addDays } from './shiftAssignmentQueries.js'
+import { sendAttendanceDigest } from './notifications/attendanceDigest.js'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -31,10 +32,12 @@ function parseDateArg(argv: string[], name: string): string | null {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2)
+  const toArg = parseDateArg(argv, 'to')
+  const fromArg = parseDateArg(argv, 'from')
   // --to alone still means "the 7 days ending there", same as no args at all
   // means "the 7 days ending yesterday".
-  const toDate = parseDateArg(argv, 'to') ?? defaultRange().toDate
-  const fromDate = parseDateArg(argv, 'from') ?? addDays(toDate, -(DEFAULT_WINDOW_DAYS - 1))
+  const toDate = toArg ?? defaultRange().toDate
+  const fromDate = fromArg ?? addDays(toDate, -(DEFAULT_WINDOW_DAYS - 1))
 
   if (fromDate > toDate) {
     throw new Error(`--from (${fromDate}) must not be after --to (${toDate})`)
@@ -61,6 +64,16 @@ async function main(): Promise<void> {
     `Done in ${(result.durationMs / 1000).toFixed(1)}s. ` +
       `${result.rows} rows across ${result.employees - result.failed}/${result.employees} employees.`
   )
+
+  // Only on the plain default-window call (no explicit --from/--to) — same
+  // reasoning as the cron route. Awaited, unlike the route's fire-and-forget:
+  // this process exits (and closes the pool) right after main() returns, so
+  // an un-awaited notify() here would race that shutdown instead of just
+  // running alongside a server that stays up.
+  if (toArg === null && fromArg === null) {
+    await sendAttendanceDigest(toDate)
+  }
+
   // A partial run is a failed run as far as a cron wrapper is concerned — it
   // should be visible in the exit code, not just the log.
   if (result.failed > 0) process.exitCode = 1

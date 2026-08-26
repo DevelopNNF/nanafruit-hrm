@@ -542,3 +542,63 @@ export async function listAttendanceDailyForExport(
     endWorkingDate: row.end_working_date,
   }))
 }
+
+/* The daily notification digest ---------------------------------------------
+ * One row per employee whose day is worth flagging — absent, or present/
+ * incomplete but late or left early past grace. Deliberately narrower than
+ * FILTER_SQL's 'absent'/'late'/'early_leave': this feeds a notification, not
+ * an admin report, so it only reads attendance_daily's own columns (no join
+ * for department/job that a report would want) and skips 'incomplete' as its
+ * own status — an incomplete day already surfaces here whenever it's also
+ * late or early, and one still mid-shift with neither is not yet actionable.
+ */
+
+export type AttendanceIssue = {
+  employeeId: number
+  employeeName: string
+  /** Null when the employee has no supervisor set on employment_details —
+   *  notifications/attendanceDigest.ts still includes them in the HR-wide
+   *  digest, just not in any supervisor's. */
+  supervisorEmployeeId: number | null
+  attendanceStatus: AttendanceDayStatus
+  lateMinutes: number
+  earlyLeaveMinutes: number
+}
+
+type AttendanceIssueRow = {
+  employee_id: string
+  employee_name: string
+  supervisor_employee_id: string | null
+  attendance_status: string
+  late_minutes: number
+  early_leave_minutes: number
+}
+
+/** Every attendance_daily row for one work_date worth flagging in the daily
+ *  digest: absent outright, or late/left-early past grace (computeAttendanceDay
+ *  already nets grace out of late_minutes/early_leave_minutes, so a plain
+ *  "> 0" here is exactly "past grace", not "any lateness at all"). */
+export async function listAttendanceIssuesForDate(
+  workDate: string,
+  db: Queryable = pool
+): Promise<AttendanceIssue[]> {
+  const { rows } = await db.query<AttendanceIssueRow>(
+    `SELECT d.employee_id, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name,
+            ed.supervisor_employee_id, d.attendance_status, d.late_minutes, d.early_leave_minutes
+     FROM attendance_daily d
+     JOIN employees e ON e.id = d.employee_id
+     JOIN employment_details ed ON ed.employee_id = d.employee_id
+     WHERE d.work_date = $1
+       AND (d.attendance_status = 'absent' OR d.late_minutes > 0 OR d.early_leave_minutes > 0)
+     ORDER BY ed.supervisor_employee_id NULLS LAST, e.employee_code`,
+    [workDate]
+  )
+  return rows.map((row) => ({
+    employeeId: Number(row.employee_id),
+    employeeName: row.employee_name,
+    supervisorEmployeeId: row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+    attendanceStatus: row.attendance_status as AttendanceDayStatus,
+    lateMinutes: row.late_minutes,
+    earlyLeaveMinutes: row.early_leave_minutes,
+  }))
+}

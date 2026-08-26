@@ -1,7 +1,10 @@
-// One event per approval-workflow transition, symmetric across all five
-// request types — mirrors AuditAction in audit.ts one level up, but as a
-// discriminated union of payloads instead of a string, since dispatch.ts
-// needs to branch on shape, not just log a label.
+// Two families of event. RequestActionEvent is one event per approval-
+// workflow transition, symmetric across all five request types — mirrors
+// AuditAction in audit.ts one level up, but as a discriminated union of
+// payloads instead of a string, since dispatch.ts needs to branch on shape,
+// not just log a label. AttendanceDigestEvent is the once-a-day summary from
+// notifications/attendanceDigest.ts instead — see there for why it's a
+// digest rather than a per-event push.
 //
 // Deliberately carries only IDs, not resolved identities: every field here
 // (an employee id, a resource, a reason) is something the route handler
@@ -9,6 +12,8 @@
 // id, a line_user_id from an employee, the HR channel, all of that happens
 // inside dispatch.ts/recipients.ts. That keeps a route's only job "describe
 // what happened", never "look up who should hear about it".
+
+import type { AttendanceIssue } from '../attendanceDailyQueries.js'
 
 export type RequestResourceType =
   | 'leave_request'
@@ -58,4 +63,11 @@ export type RequestActionEvent =
       supervisorEmployeeId: number | null
     }
 
-export type NotificationEvent = RequestActionEvent
+/** One supervisor's own team, for the LINE digest — see attendanceDigest.ts,
+ *  which groups listAttendanceIssuesForDate's flat list by
+ *  supervisorEmployeeId before building one of these per group. */
+export type AttendanceDigestEvent =
+  | { kind: 'attendance_digest_supervisor'; workDate: string; supervisorEmployeeId: number; issues: AttendanceIssue[] }
+  | { kind: 'attendance_digest_hr'; workDate: string; issues: AttendanceIssue[] }
+
+export type NotificationEvent = RequestActionEvent | AttendanceDigestEvent

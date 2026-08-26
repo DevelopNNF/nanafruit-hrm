@@ -25,6 +25,7 @@ import {
   withAttendanceJobLock,
 } from '../attendanceDailyJob.js'
 import { addDays } from '../shiftAssignmentQueries.js'
+import { sendAttendanceDigest } from '../notifications/attendanceDigest.js'
 
 export const cronRouter = Router()
 
@@ -99,6 +100,14 @@ cronRouter.post('/cron/attendance-daily', cronLimiter, async (req: Request, res:
         `${result.rows} rows, ${result.employees - result.failed}/${result.employees} employees, ` +
         `${(result.durationMs / 1000).toFixed(1)}s`
     )
+
+    // Only on the plain daily call (no explicit ?from=/?to=) — an ad-hoc
+    // backfill or re-run over an arbitrary range must not re-send a digest
+    // for days that already had one. See attendanceDigest.ts's header comment
+    // on why this isn't otherwise guarded against duplicate sends.
+    if (toParam === null && fromParam === null) {
+      void sendAttendanceDigest(toDate)
+    }
 
     // A partial run answers 500: the scheduler should show it as failed and
     // alert, the same way the CLI exits non-zero. The body still reports what
