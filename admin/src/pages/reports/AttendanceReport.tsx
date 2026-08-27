@@ -12,6 +12,7 @@ import {
 } from '@hrm/shared'
 import { exportAttendanceDaily, listAttendanceDaily } from '../../api/attendanceDaily'
 import { listDepartments } from '../../api/departments'
+import { Pagination } from '../../components/Pagination'
 import { notify } from '../../notifications/notify'
 import {
   alert,
@@ -33,11 +34,9 @@ type State =
   | { phase: 'ok'; days: AttendanceDailyItem[]; summary: AttendanceDailySummary }
   | { phase: 'error'; message: string }
 
-/** Rows-per-page choices offered in the UI, and the one selected by default.
- *  The default matches the server's own default in attendanceDailyQueries.ts —
- *  passed explicitly anyway so a server-side change can't silently desync the
- *  page-count math here. The top end stays at the server's MAX_PAGE_SIZE. */
-const PAGE_SIZE_OPTIONS = [20, 50, 100, 200] as const
+/** Matches the server's own default in attendanceDailyQueries.ts — passed
+ *  explicitly anyway so a server-side change can't silently desync the
+ *  page-count math in <Pagination>. */
 const DEFAULT_PAGE_SIZE = 50
 
 type Filters = {
@@ -219,7 +218,6 @@ export function AttendanceDailyListPage() {
   }, [applied, page, pageSize])
 
   const summary = state.phase === 'ok' ? state.summary : null
-  const totalPages = summary ? Math.max(1, Math.ceil(summary.total / pageSize)) : 1
 
   function handleSearch(e: FormEvent) {
     e.preventDefault()
@@ -403,28 +401,8 @@ export function AttendanceDailyListPage() {
 
       {state.phase === 'ok' && state.days.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
-            <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-              {state.summary.total} รายการ (หน้า {page} จาก {totalPages})
-            </p>
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 text-[0.775rem] whitespace-nowrap text-slate-500">
-                <span>แสดงต่อหน้า</span>
-                <select
-                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[0.775rem] text-slate-900 hover:enabled:border-slate-500"
-                  value={pageSize}
-                  disabled={fetching}
-                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                >
-                  {PAGE_SIZE_OPTIONS.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="text-[0.775rem] whitespace-nowrap text-slate-500">เรียงตามรหัสพนักงาน แล้วจึงตามวันที่</p>
-            </div>
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3.5">
+            <p className="text-[0.775rem] whitespace-nowrap text-slate-500">เรียงตามรหัสพนักงาน แล้วจึงตามวันที่</p>
           </div>
 
           <div className="overflow-x-auto">
@@ -503,29 +481,14 @@ export function AttendanceDailyListPage() {
             </table>
           </div>
 
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3">
-              <button
-                type="button"
-                className={button('default')}
-                disabled={page <= 1 || fetching}
-                onClick={() => goToPage(Math.max(1, page - 1))}
-              >
-                ก่อนหน้า
-              </button>
-              <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-                หน้า {page} จาก {totalPages}
-              </p>
-              <button
-                type="button"
-                className={button('default')}
-                disabled={page >= totalPages || fetching}
-                onClick={() => goToPage(Math.min(totalPages, page + 1))}
-              >
-                ถัดไป
-              </button>
-            </div>
-          )}
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            totalItems={state.summary.total}
+            onPageChange={goToPage}
+            onPageSizeChange={handlePageSizeChange}
+            disabled={fetching}
+          />
         </div>
       )}
     </>
