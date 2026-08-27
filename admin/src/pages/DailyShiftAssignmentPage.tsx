@@ -39,10 +39,11 @@ function today(): string {
 
 /**
  * Assigns a shift to several temporary daily workers (employmentType
- * 'ชั่วคราว') for one calendar date at once. These employees have no
- * fixed/recurring shift — a supervisor or HR picks it fresh each day, unlike
- * the permanent/temporary-swap model on the employee's own shift history
- * (ShiftHistoryCard), which assumes a baseline shift exists to swap around.
+ * 'ชั่วคราว') for every date in a From–To range at once. These employees
+ * have no fixed/recurring shift — a supervisor or HR picks it fresh each
+ * day, unlike the permanent/temporary-swap model on the employee's own
+ * shift history (ShiftHistoryCard), which assumes a baseline shift exists
+ * to swap around.
  *
  * The employee pool is scoped the same way Bulk OT Request's is
  * (resolveSupervisorScope, server-side): every active employee for HR/Admin,
@@ -51,7 +52,9 @@ function today(): string {
  * filtered client-side on top of that scope, same as before.
  */
 export function DailyShiftAssignmentPage() {
-  const [date, setDate] = useState(today())
+  const [dateFrom, setDateFrom] = useState(today())
+  /** '' means unset — a single-day assignment on dateFrom alone. */
+  const [dateTo, setDateTo] = useState('')
   const [employeesState, setEmployeesState] = useState<EmployeesState>({ phase: 'loading' })
   const [shiftsState, setShiftsState] = useState<LoadState<Shift[]>>({ phase: 'loading' })
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<number[]>([])
@@ -120,12 +123,17 @@ export function DailyShiftAssignmentPage() {
     if (!outcome) return null
     if (outcome.kind === 'ok') return <span className={badge('active')}>สำเร็จ</span>
     if (outcome.kind === 'conflict') {
+      const ranges = Array.from(
+        new Set(
+          outcome.conflicts.map((c) => `${c.existingEffectiveFrom} – ${c.existingEffectiveTo ?? 'ปัจจุบัน'}`)
+        )
+      )
       return (
         <span
           className={badge('pending')}
-          title={`ทับกับช่วงเดิม (${outcome.existingEffectiveFrom} – ${outcome.existingEffectiveTo ?? 'ปัจจุบัน'})`}
+          title={`ทับกับช่วงเดิม ${outcome.conflicts.length} วัน (${ranges.join(', ')})`}
         >
-          ทับกับกะเดิม
+          ทับกับกะเดิม {outcome.conflicts.length} วัน
         </span>
       )
     }
@@ -152,7 +160,7 @@ export function DailyShiftAssignmentPage() {
     setError(null)
     setOutcomes(null)
     try {
-      const result = await assignDailyShifts({ date, assignments })
+      const result = await assignDailyShifts({ dateFrom, dateTo: dateTo || null, assignments })
       setOutcomes(result)
       const okCount = result.filter((o) => o.kind === 'ok').length
       const problemCount = result.length - okCount
@@ -179,7 +187,8 @@ export function DailyShiftAssignmentPage() {
           <p className={eyebrow}>จัดการเวลา</p>
           <h1>มอบหมายกะรายวัน</h1>
           <p className={subtitle}>
-            สำหรับพนักงานรายวันชั่วคราว (ไม่มีกะตายตัว) — เลือกกะ แล้วย้ายพนักงานที่จะมอบหมายกะนั้นไปฝั่งขวา บันทึกได้ครั้งละหนึ่งกะ
+            สำหรับพนักงานรายวันชั่วคราว (ไม่มีกะตายตัว) — เลือกกะและช่วงวันที่ แล้วย้ายพนักงานที่จะมอบหมายกะนั้นไปฝั่งขวา
+            พนักงานที่เลือกจะได้รับกะเดียวกันทุกวันในช่วงที่กำหนด
           </p>
         </div>
       </header>
@@ -217,8 +226,12 @@ export function DailyShiftAssignmentPage() {
         <form className={`${card} mb-4`} onSubmit={(e) => void handleSubmit(e)}>
           <div className="mb-4 flex flex-wrap items-end gap-3">
             <label className="flex min-w-0 flex-col gap-1.5 text-xs font-medium text-slate-600">
-              <span>วันที่</span>
-              <DatePicker required value={date} onChange={setDate} />
+              <span>จากวันที่</span>
+              <DatePicker required value={dateFrom} onChange={setDateFrom} max={dateTo || undefined} />
+            </label>
+            <label className="flex min-w-0 flex-col gap-1.5 text-xs font-medium text-slate-600">
+              <span>ถึงวันที่ (เว้นว่าง = วันเดียว)</span>
+              <DatePicker value={dateTo} onChange={setDateTo} min={dateFrom || undefined} />
             </label>
             <label className="flex min-w-0 flex-col gap-1.5 text-xs font-medium text-slate-600">
               <span>
@@ -287,7 +300,7 @@ export function DailyShiftAssignmentPage() {
               .filter((o): o is Extract<DailyShiftAssignmentOutcome, { kind: 'conflict' }> => o.kind === 'conflict')
               .map((o) => employeeById.get(o.employeeId)?.employeeCode ?? o.employeeId)
               .join(', ')}
-            {' '}มีช่วงกะที่กำหนดไว้แล้วครอบวันนี้อยู่ — ไปแก้ไขที่หน้าประวัติกะของพนักงานคนนั้นแทน
+            {' '}มีช่วงกะที่กำหนดไว้แล้วครอบบางวันในช่วงที่เลือกอยู่ (วันอื่นในช่วงมอบหมายให้แล้ว) — ไปแก้ไขที่หน้าประวัติกะของพนักงานคนนั้นแทน
           </p>
         </div>
       )}

@@ -56,7 +56,7 @@ import {
   type EmployeeFinanceRow,
 } from '../employeeFinanceQueries.js'
 import {
-  assignSingleDayShift,
+  assignShiftForDateRange,
   createShiftChange,
   listShiftAssignments,
   toThailandDateString,
@@ -1239,6 +1239,12 @@ employeesRouter.post(
   }
 )
 
+/** Upper bound on the [dateFrom, dateTo] span POST daily-bulk accepts —
+ *  guards against a fat-fingered year turning one request into thousands of
+ *  per-date writes per employee. Same style as overtimeReport.ts's
+ *  MAX_RANGE_DAYS. */
+const DAILY_SHIFT_ASSIGNMENT_MAX_RANGE_DAYS = 62
+
 /** Body of POST /employees/shift-assignments/daily-bulk. */
 function parseDailyShiftAssignmentInput(body: unknown): ParseResult<DailyShiftAssignmentInput> {
   if (typeof body !== 'object' || body === null) {
@@ -1246,9 +1252,28 @@ function parseDailyShiftAssignmentInput(body: unknown): ParseResult<DailyShiftAs
   }
   const raw = body as Record<string, unknown>
 
-  const date = requiredString(raw, 'date')
-  if (date === null || !isCalendarDate(date)) {
-    return { ok: false, message: 'date must be a date as YYYY-MM-DD' }
+  const dateFrom = requiredString(raw, 'dateFrom')
+  if (dateFrom === null || !isCalendarDate(dateFrom)) {
+    return { ok: false, message: 'dateFrom must be a date as YYYY-MM-DD' }
+  }
+  const dateToRaw = raw['dateTo']
+  let dateTo: string | null = null
+  if (dateToRaw !== null && dateToRaw !== undefined) {
+    if (typeof dateToRaw !== 'string' || !isCalendarDate(dateToRaw)) {
+      return { ok: false, message: 'dateTo must be a date as YYYY-MM-DD, or null' }
+    }
+    dateTo = dateToRaw
+  }
+  if (dateTo !== null && dateTo < dateFrom) {
+    return { ok: false, message: 'dateTo must not be before dateFrom' }
+  }
+  const toUtcMillis = (value: string) => {
+    const [year, month, day] = value.split('-').map(Number) as [number, number, number]
+    return Date.UTC(year, month - 1, day)
+  }
+  const rangeDays = Math.round((toUtcMillis(dateTo ?? dateFrom) - toUtcMillis(dateFrom)) / 86_400_000) + 1
+  if (rangeDays > DAILY_SHIFT_ASSIGNMENT_MAX_RANGE_DAYS) {
+    return { ok: false, message: `ช่วงวันที่ต้องไม่เกิน ${DAILY_SHIFT_ASSIGNMENT_MAX_RANGE_DAYS} วัน` }
   }
 
   const assignmentsRaw = raw['assignments']
@@ -1270,7 +1295,7 @@ function parseDailyShiftAssignmentInput(body: unknown): ParseResult<DailyShiftAs
     assignments.push({ employeeId, shiftId })
   }
 
-  return { ok: true, value: { date, assignments } }
+  return { ok: true, value: { dateFrom, dateTo, assignments } }
 }
 
 // Employees a supervisor/HR/Admin may assign a daily shift to — same scope
@@ -1311,13 +1336,15 @@ employeesRouter.get(
   }
 )
 
-// Assigns a shift to several employees for one calendar date at once — the
-// admin "มอบหมายกะรายวัน" screen for temporary daily workers, who have no
-// fixed shift (see assignSingleDayShift's own comment for why this can't
-// reuse createShiftChange/POST /employees/:id/shift-changes). Each row runs
-// in its own SAVEPOINT so one bad row (or a genuine conflict) can't roll back
-// the rest of an otherwise-successful batch. Guarded by resolveSupervisorScope
-// rather than canWrite for the same reason the GET above is — see its comment.
+// Assigns a shift to several employees for every date in [dateFrom, dateTo]
+// at once — the admin "มอบหมายกะรายวัน" screen for temporary daily workers,
+// who have no fixed shift (see assignSingleDayShift's own comment for why
+// this can't reuse createShiftChange/POST /employees/:id/shift-changes).
+// Each employee runs in its own SAVEPOINT (covering every date in the range
+// for that employee) so one bad employee (or a genuine conflict) can't roll
+// back the rest of an otherwise-successful batch. Guarded by
+// resolveSupervisorScope rather than canWrite for the same reason the GET
+// above is — see its comment.
 employeesRouter.post(
   '/employees/shift-assignments/daily-bulk',
   async (req: Request, res: Response) => {
@@ -1350,10 +1377,12 @@ employeesRouter.post(
 
           await client.query('SAVEPOINT daily_shift_assignment')
           try {
-            const outcome = await assignSingleDayShift(client, {
+            const dateTo = input.dateTo ?? input.dateFrom
+            const outcome = await assignShiftForDateRange(client, {
               employeeId: assignment.employeeId,
               shiftId: assignment.shiftId,
-              date: input.date,
+              dateFrom: input.dateFrom,
+              dateTo,
               note: 'มอบหมายกะรายวัน',
               createdByKind: actor.kind,
               createdById: actor.oid,
@@ -1363,15 +1392,14 @@ employeesRouter.post(
                 actor,
                 action: 'employee.daily_shift_assign',
                 entityId: assignment.employeeId,
-                detail: { date: input.date, shiftId: outcome.assignment.shiftId },
+                detail: { dateFrom: input.dateFrom, dateTo, shiftId: assignment.shiftId },
               })
               results.push({ employeeId: assignment.employeeId, kind: 'ok' })
             } else {
               results.push({
                 employeeId: assignment.employeeId,
                 kind: 'conflict',
-                existingEffectiveFrom: outcome.existing.effectiveFrom,
-                existingEffectiveTo: outcome.existing.effectiveTo,
+                conflicts: outcome.conflicts,
               })
             }
             await client.query('RELEASE SAVEPOINT daily_shift_assignment')

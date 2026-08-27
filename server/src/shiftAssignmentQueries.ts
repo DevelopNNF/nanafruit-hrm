@@ -314,3 +314,60 @@ export async function assignSingleDayShift(
   if (!inserted) throw new Error('insert into employee_shift_assignments returned no id')
   return { kind: 'ok', assignment: rowToShiftAssignment(inserted) }
 }
+
+export type AssignShiftForDateRangeParams = {
+  employeeId: number
+  shiftId: number | null
+  /** 'YYYY-MM-DD', inclusive range start. */
+  dateFrom: string
+  /** 'YYYY-MM-DD', inclusive range end — same as dateFrom for a single day. */
+  dateTo: string
+  note: string | null
+  createdByKind: string
+  createdById: string
+}
+
+export type AssignShiftForDateRangeResult =
+  | { kind: 'ok' }
+  | {
+      kind: 'conflict'
+      /** One entry per date in [dateFrom, dateTo] that assignSingleDayShift
+       *  refused — every other date in the range was still written. */
+      conflicts: { date: string; existingEffectiveFrom: string; existingEffectiveTo: string | null }[]
+    }
+
+/**
+ * Calls assignSingleDayShift once for every date in [dateFrom, dateTo]
+ * (inclusive), so a supervisor can hand a temporary daily worker the same
+ * shift across several days at once instead of one day at a time. Dates are
+ * independent: a date already covered by something wider than a single day
+ * is skipped and reported back as a conflict, while the rest of the range
+ * still gets written.
+ */
+export async function assignShiftForDateRange(
+  client: pg.PoolClient,
+  params: AssignShiftForDateRangeParams
+): Promise<AssignShiftForDateRangeResult> {
+  const { employeeId, shiftId, dateFrom, dateTo, note, createdByKind, createdById } = params
+  const conflicts: { date: string; existingEffectiveFrom: string; existingEffectiveTo: string | null }[] = []
+
+  for (let date = dateFrom; date <= dateTo; date = addDays(date, 1)) {
+    const outcome = await assignSingleDayShift(client, {
+      employeeId,
+      shiftId,
+      date,
+      note,
+      createdByKind,
+      createdById,
+    })
+    if (outcome.kind === 'conflict') {
+      conflicts.push({
+        date,
+        existingEffectiveFrom: outcome.existing.effectiveFrom,
+        existingEffectiveTo: outcome.existing.effectiveTo,
+      })
+    }
+  }
+
+  return conflicts.length === 0 ? { kind: 'ok' } : { kind: 'conflict', conflicts }
+}

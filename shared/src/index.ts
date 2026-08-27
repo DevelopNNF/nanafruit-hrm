@@ -336,30 +336,35 @@ export type ShiftHistoryResponse = { assignments: ShiftAssignment[] }
 
 /**
  * Body of POST /api/employees/shift-assignments/daily-bulk — assigns a shift
- * to several employees for exactly one calendar date at once. For employees
- * with no fixed/recurring shift (temporary daily workers), whose shift a
- * supervisor picks day by day rather than through
- * POST /api/employees/:id/shift-changes' permanent/temporary-swap model.
+ * to several employees for every calendar date in [dateFrom, dateTo ?? dateFrom]
+ * (inclusive) at once. For employees with no fixed/recurring shift
+ * (temporary daily workers), whose shift a supervisor picks day by day
+ * rather than through POST /api/employees/:id/shift-changes'
+ * permanent/temporary-swap model.
  */
 export type DailyShiftAssignmentInput = {
   /** 'YYYY-MM-DD'. */
-  date: string
+  dateFrom: string
+  /** 'YYYY-MM-DD', >= dateFrom. null means "just dateFrom" — a single day. */
+  dateTo: string | null
   assignments: { employeeId: number; shiftId: number }[]
 }
 
-/** One row's result. `conflict` means something wider than a single day
- *  already covers that employee's date (an open-ended baseline, or a
- *  multi-day swap) — nothing was written for that employee; resolve it via
- *  their own shift history instead. `error` is anything unexpected (e.g. a
- *  stale employeeId) — each row runs in its own savepoint, so one row's
+/** One employee's result across the whole [dateFrom, dateTo] range.
+ *  `conflict` means at least one date in the range was already covered by
+ *  something wider than a single day (an open-ended baseline, or a
+ *  multi-day swap) — nothing was written for those specific dates, listed in
+ *  `conflicts`, but the rest of the range for this employee was still
+ *  assigned; resolve the conflicting dates via that employee's own shift
+ *  history instead. `error` is anything unexpected (e.g. a stale
+ *  employeeId) — each employee runs in its own savepoint, so one employee's
  *  error never rolls back the rest of the batch. */
 export type DailyShiftAssignmentOutcome =
   | { employeeId: number; kind: 'ok' }
   | {
       employeeId: number
       kind: 'conflict'
-      existingEffectiveFrom: string
-      existingEffectiveTo: string | null
+      conflicts: { date: string; existingEffectiveFrom: string; existingEffectiveTo: string | null }[]
     }
   | { employeeId: number; kind: 'error'; message: string }
 
