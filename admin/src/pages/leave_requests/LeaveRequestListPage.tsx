@@ -2,16 +2,23 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { LeaveRequestListItem, LeaveRequestStage, LeaveRequestStatus } from '@hrm/shared'
 import { listLeaveRequests, listLeaveRequestsPendingApproval } from '../../api/leaveRequests'
+import { Pagination } from '../../components/Pagination'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; requests: LeaveRequestListItem[] }
+  | { phase: 'ok'; requests: LeaveRequestListItem[]; total: number }
   | { phase: 'error'; message: string }
+
+/** Matches the server's own default in leaveRequestQueries.ts. */
+const DEFAULT_PAGE_SIZE = 50
 
 // 'mine' is not a LeaveRequestStatus — it's the caller's own supervisor
 // inbox, fetched from a different endpoint entirely (see the effect below).
+// It stays unpaginated: that inbox is naturally bounded to whatever is
+// currently pending on this account, unlike the other tabs which accumulate
+// every request ever decided.
 type TabValue = LeaveRequestStatus | 'all' | 'mine'
 
 const TABS: { value: TabValue; label: string }[] = [
@@ -63,7 +70,13 @@ function formatDateRange(request: LeaveRequestListItem): string {
 
 export function LeaveRequestListPage() {
   const [tab, setTab] = useState<TabValue>('pending')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [state, setState] = useState<State>({ phase: 'loading' })
+  // True while a tab/page/page-size request is in flight — mirrors
+  // AttendanceDailyListPage's `fetching`, used to disable <Pagination>
+  // rather than resetting `state` to 'loading'.
+  const [fetching, setFetching] = useState(true)
   const navigate = useNavigate()
 
   // No setState({ phase: 'loading' }) at the top: switching tabs leaves the
@@ -74,21 +87,45 @@ export function LeaveRequestListPage() {
 
     const fetchRequests =
       tab === 'mine'
-        ? listLeaveRequestsPendingApproval(controller.signal)
-        : listLeaveRequests(tab === 'all' ? undefined : tab, controller.signal)
+        ? listLeaveRequestsPendingApproval(controller.signal).then((requests) => ({
+            requests,
+            total: requests.length,
+          }))
+        : listLeaveRequests(tab === 'all' ? undefined : tab, { page, pageSize }, controller.signal)
 
     fetchRequests
-      .then((requests) => setState({ phase: 'ok', requests }))
+      .then((body) => {
+        setState({ phase: 'ok', requests: body.requests, total: body.total })
+        setFetching(false)
+      })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({
           phase: 'error',
           message: err instanceof Error ? err.message : 'request failed',
         })
+        setFetching(false)
       })
 
     return () => controller.abort()
-  }, [tab])
+  }, [tab, page, pageSize])
+
+  function handleTabChange(next: string) {
+    setFetching(true)
+    setTab(next as TabValue)
+    setPage(1)
+  }
+
+  function goToPage(next: number) {
+    setFetching(true)
+    setPage(next)
+  }
+
+  function handlePageSizeChange(next: number) {
+    setFetching(true)
+    setPageSize(next)
+    setPage(1)
+  }
 
   return (
     <>
@@ -100,7 +137,7 @@ export function LeaveRequestListPage() {
         </div>
       </header>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
+      <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList>
           {TABS.map((t) => (
             <TabsTrigger key={t.value} value={t.value}>
@@ -129,10 +166,7 @@ export function LeaveRequestListPage() {
           {state.phase === 'ok' && state.requests.length > 0 && (
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
               <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
-                <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-                  {state.requests.length} รายการ
-                  {state.requests.length === 500 && ' (แสดงล่าสุด 500 รายการ)'}
-                </p>
+                <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">{state.total} รายการ</p>
               </div>
 
               <div className="overflow-x-auto">
@@ -192,6 +226,17 @@ export function LeaveRequestListPage() {
                   </tbody>
                 </table>
               </div>
+
+              {tab !== 'mine' && (
+                <Pagination
+                  page={page}
+                  pageSize={pageSize}
+                  totalItems={state.total}
+                  onPageChange={goToPage}
+                  onPageSizeChange={handlePageSizeChange}
+                  disabled={fetching}
+                />
+              )}
             </div>
           )}
         </TabsContent>

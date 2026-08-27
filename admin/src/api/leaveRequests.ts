@@ -2,18 +2,23 @@ import type {
   LeaveRequestDetailResponse,
   LeaveRequestListItem,
   LeaveRequestListResponse,
+  LeaveRequestPendingApprovalResponse,
   LeaveRequestStatus,
 } from '@hrm/shared'
 import { apiFetch, jsonHeaders, unwrap } from './client'
 
 export async function listLeaveRequests(
   status?: LeaveRequestStatus,
+  pagination: { page?: number; pageSize?: number } = {},
   signal?: AbortSignal
-): Promise<LeaveRequestListItem[]> {
-  const query = status ? `?status=${status}` : ''
-  const res = await apiFetch(`/api/leave-requests${query}`, { signal })
-  const body = await unwrap<LeaveRequestListResponse>(res)
-  return body.requests
+): Promise<LeaveRequestListResponse> {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (pagination.page !== undefined) params.set('page', String(pagination.page))
+  if (pagination.pageSize !== undefined) params.set('pageSize', String(pagination.pageSize))
+  const qs = params.toString()
+  const res = await apiFetch(`/api/leave-requests${qs ? `?${qs}` : ''}`, { signal })
+  return unwrap<LeaveRequestListResponse>(res)
 }
 
 /** The caller's own inbox: requests currently waiting on them as a
@@ -22,7 +27,7 @@ export async function listLeaveRequests(
  *  supervisor. */
 export async function listLeaveRequestsPendingApproval(signal?: AbortSignal): Promise<LeaveRequestListItem[]> {
   const res = await apiFetch(`/api/leave-requests/pending-approval`, { signal })
-  const body = await unwrap<LeaveRequestListResponse>(res)
+  const body = await unwrap<LeaveRequestPendingApprovalResponse>(res)
   return body.requests
 }
 

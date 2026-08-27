@@ -8,6 +8,7 @@ import {
   type LeaveRequestDetailResponse,
   type LeaveRequestInput,
   type LeaveRequestListResponse,
+  type LeaveRequestPendingApprovalResponse,
   type LeaveRequestMineResponse,
   type LeaveRequestRejectRequest,
   type LeaveRequestResponse,
@@ -17,7 +18,7 @@ import {
 import { pool, withTransaction } from '../db.js'
 import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
-import { fail, handleUnexpected } from '../http.js'
+import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
 import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { notify } from '../notifications/dispatch.js'
 import { findLeaveTypeById } from '../leaveTypeQueries.js'
@@ -468,9 +469,18 @@ leaveRequestsRouter.get('/leave-requests', canReadAdmin, async (req: Request, re
   const statusResult = parseStatusFilter(req.query['status'] as string | string[] | undefined)
   if (!statusResult.ok) return fail(res, 400, statusResult.message)
 
+  const page = parseOptionalPositiveInt(req.query['page'])
+  if (page === undefined) return fail(res, 400, 'page must be a positive integer')
+
+  const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
+  if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
+
   try {
-    const requests = await listLeaveRequests({ status: statusResult.value })
-    const body: LeaveRequestListResponse = { requests }
+    const result = await listLeaveRequests(
+      { status: statusResult.value },
+      { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
+    )
+    const body: LeaveRequestListResponse = result
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
@@ -489,14 +499,14 @@ leaveRequestsRouter.get('/leave-requests/pending-approval', canReadAdmin, async 
     // 'none' isn't an error here the way it is for Bulk OT — it just means
     // this account isn't anyone's supervisor, so their inbox is empty.
     if (scope.kind === 'none') {
-      const body: LeaveRequestListResponse = { requests: [] }
+      const body: LeaveRequestPendingApprovalResponse = { requests: [] }
       return res.json(body)
     }
 
     const requests = await listLeaveRequestsPendingApproval(
       scope.kind === 'all' ? null : scope.supervisorEmployeeId
     )
-    const body: LeaveRequestListResponse = { requests }
+    const body: LeaveRequestPendingApprovalResponse = { requests }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)

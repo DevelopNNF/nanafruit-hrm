@@ -2,18 +2,23 @@ import type {
   TimeCorrectionDetailResponse,
   TimeCorrectionListItem,
   TimeCorrectionListResponse,
+  TimeCorrectionPendingApprovalResponse,
   TimeCorrectionStatus,
 } from '@hrm/shared'
 import { apiFetch, jsonHeaders, unwrap } from './client'
 
 export async function listTimeCorrections(
   status?: TimeCorrectionStatus,
+  pagination: { page?: number; pageSize?: number } = {},
   signal?: AbortSignal
-): Promise<TimeCorrectionListItem[]> {
-  const query = status ? `?status=${status}` : ''
-  const res = await apiFetch(`/api/time-corrections${query}`, { signal })
-  const body = await unwrap<TimeCorrectionListResponse>(res)
-  return body.requests
+): Promise<TimeCorrectionListResponse> {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (pagination.page !== undefined) params.set('page', String(pagination.page))
+  if (pagination.pageSize !== undefined) params.set('pageSize', String(pagination.pageSize))
+  const qs = params.toString()
+  const res = await apiFetch(`/api/time-corrections${qs ? `?${qs}` : ''}`, { signal })
+  return unwrap<TimeCorrectionListResponse>(res)
 }
 
 /** The caller's own inbox — mirrors listLeaveRequestsPendingApproval. */
@@ -21,7 +26,7 @@ export async function listTimeCorrectionsPendingApproval(
   signal?: AbortSignal
 ): Promise<TimeCorrectionListItem[]> {
   const res = await apiFetch(`/api/time-corrections/pending-approval`, { signal })
-  const body = await unwrap<TimeCorrectionListResponse>(res)
+  const body = await unwrap<TimeCorrectionPendingApprovalResponse>(res)
   return body.requests
 }
 

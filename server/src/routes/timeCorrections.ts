@@ -10,6 +10,7 @@ import {
   type TimeCorrectionDetailResponse,
   type TimeCorrectionInput,
   type TimeCorrectionListResponse,
+  type TimeCorrectionPendingApprovalResponse,
   type TimeCorrectionMineResponse,
   type TimeCorrectionRejectRequest,
   type TimeCorrectionResponse,
@@ -19,7 +20,7 @@ import {
 import { pool, withTransaction } from '../db.js'
 import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
-import { fail, handleUnexpected } from '../http.js'
+import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
 import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { notify } from '../notifications/dispatch.js'
 import { addDays, getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
@@ -247,9 +248,18 @@ timeCorrectionsRouter.get('/time-corrections', canReadAdmin, async (req: Request
   const statusResult = parseStatusFilter(req.query['status'] as string | string[] | undefined)
   if (!statusResult.ok) return fail(res, 400, statusResult.message)
 
+  const page = parseOptionalPositiveInt(req.query['page'])
+  if (page === undefined) return fail(res, 400, 'page must be a positive integer')
+
+  const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
+  if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
+
   try {
-    const requests = await listTimeCorrections({ status: statusResult.value })
-    const body: TimeCorrectionListResponse = { requests }
+    const result = await listTimeCorrections(
+      { status: statusResult.value },
+      { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
+    )
+    const body: TimeCorrectionListResponse = result
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
@@ -269,14 +279,14 @@ timeCorrectionsRouter.get(
     try {
       const scope = await resolveSupervisorScope(auth)
       if (scope.kind === 'none') {
-        const body: TimeCorrectionListResponse = { requests: [] }
+        const body: TimeCorrectionPendingApprovalResponse = { requests: [] }
         return res.json(body)
       }
 
       const requests = await listTimeCorrectionsPendingApproval(
         scope.kind === 'all' ? null : scope.supervisorEmployeeId
       )
-      const body: TimeCorrectionListResponse = { requests }
+      const body: TimeCorrectionPendingApprovalResponse = { requests }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)

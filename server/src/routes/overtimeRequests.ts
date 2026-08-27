@@ -23,6 +23,7 @@ import {
   type OvertimeRequestDetailResponse,
   type OvertimeRequestInput,
   type OvertimeRequestListResponse,
+  type OvertimeRequestPendingApprovalResponse,
   type OvertimeRequestMineResponse,
   type OvertimeRequestRejectRequest,
   type OvertimeRequestResponse,
@@ -34,7 +35,7 @@ import type pg from 'pg'
 import { pool, withTransaction } from '../db.js'
 import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
-import { fail, handleUnexpected } from '../http.js'
+import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
 import {
   describeActor,
   findEmployeeById,
@@ -975,9 +976,18 @@ overtimeRequestsRouter.get(
     const statusResult = parseStatusFilter(req.query['status'] as string | string[] | undefined)
     if (!statusResult.ok) return fail(res, 400, statusResult.message)
 
+    const page = parseOptionalPositiveInt(req.query['page'])
+    if (page === undefined) return fail(res, 400, 'page must be a positive integer')
+
+    const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
+    if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
+
     try {
-      const requests = await listOvertimeRequests({ status: statusResult.value })
-      const body: OvertimeRequestListResponse = { requests }
+      const result = await listOvertimeRequests(
+        { status: statusResult.value },
+        { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
+      )
+      const body: OvertimeRequestListResponse = result
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
@@ -998,14 +1008,14 @@ overtimeRequestsRouter.get(
     try {
       const scope = await resolveSupervisorScope(auth)
       if (scope.kind === 'none') {
-        const body: OvertimeRequestListResponse = { requests: [] }
+        const body: OvertimeRequestPendingApprovalResponse = { requests: [] }
         return res.json(body)
       }
 
       const requests = await listOvertimeRequestsPendingApproval(
         scope.kind === 'all' ? null : scope.supervisorEmployeeId
       )
-      const body: OvertimeRequestListResponse = { requests }
+      const body: OvertimeRequestPendingApprovalResponse = { requests }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)

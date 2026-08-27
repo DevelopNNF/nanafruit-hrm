@@ -19,3 +19,13 @@ export function handleUnexpected(res: Response, err: unknown): void {
   console.error(err)
   fail(res, 500, err instanceof Error ? err.message : 'unexpected database error')
 }
+
+/** A query param that's either absent or a positive integer — `page`/`pageSize`,
+ *  same shape as an id. undefined means "reject with 400", null means "absent,
+ *  use the caller's default". */
+export function parseOptionalPositiveInt(value: unknown): number | null | undefined {
+  if (value === undefined) return null
+  if (typeof value !== 'string') return undefined
+  const n = Number(value)
+  return Number.isInteger(n) && n > 0 ? n : undefined
+}

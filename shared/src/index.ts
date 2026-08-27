@@ -1001,7 +1001,19 @@ export type LeaveRequestResponse = { request: LeaveRequest }
 export type LeaveRequestMineResponse = { requests: LeaveRequest[] }
 
 /** GET /api/leave-requests */
-export type LeaveRequestListResponse = { requests: LeaveRequestListItem[] }
+export type LeaveRequestListResponse = {
+  requests: LeaveRequestListItem[]
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** Total rows matching the filter, across all pages. */
+  total: number
+}
+
+/** GET /api/leave-requests/pending-approval — unpaginated, unlike
+ *  LeaveRequestListResponse: a supervisor's inbox stays naturally bounded to
+ *  whatever is currently pending on them. */
+export type LeaveRequestPendingApprovalResponse = { requests: LeaveRequestListItem[] }
 
 /** GET /api/leave-requests/:id, POST .../approve, POST .../reject.
  *  canDecide is caller-relative, not a property of the request — the same
@@ -2050,7 +2062,18 @@ export type TimeCorrectionResponse = { request: TimeCorrectionRequest }
 export type TimeCorrectionMineResponse = { requests: TimeCorrectionRequest[] }
 
 /** GET /api/time-corrections */
-export type TimeCorrectionListResponse = { requests: TimeCorrectionListItem[] }
+export type TimeCorrectionListResponse = {
+  requests: TimeCorrectionListItem[]
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** Total rows matching the filter, across all pages. */
+  total: number
+}
+
+/** GET /api/time-corrections/pending-approval — unpaginated, see
+ *  LeaveRequestPendingApprovalResponse's comment. */
+export type TimeCorrectionPendingApprovalResponse = { requests: TimeCorrectionListItem[] }
 
 /** GET /api/time-corrections/:id, POST .../approve, POST .../reject.
  *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,
@@ -2151,7 +2174,18 @@ export type ShiftChangeRequestResponse = { request: ShiftChangeRequest }
 export type ShiftChangeRequestMineResponse = { requests: ShiftChangeRequest[] }
 
 /** GET /api/shift-change-requests */
-export type ShiftChangeRequestListResponse = { requests: ShiftChangeRequestListItem[] }
+export type ShiftChangeRequestListResponse = {
+  requests: ShiftChangeRequestListItem[]
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** Total rows matching the filter, across all pages. */
+  total: number
+}
+
+/** GET /api/shift-change-requests/pending-approval — unpaginated, see
+ *  LeaveRequestPendingApprovalResponse's comment. */
+export type ShiftChangeRequestPendingApprovalResponse = { requests: ShiftChangeRequestListItem[] }
 
 /** GET /api/shift-change-requests/:id, POST .../approve, POST .../reject.
  *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,
@@ -2287,7 +2321,18 @@ export type DayOffSwapRequestResponse = { request: DayOffSwapRequest }
 export type DayOffSwapRequestMineResponse = { requests: DayOffSwapRequest[] }
 
 /** GET /api/day-off-swap-requests */
-export type DayOffSwapRequestListResponse = { requests: DayOffSwapRequestListItem[] }
+export type DayOffSwapRequestListResponse = {
+  requests: DayOffSwapRequestListItem[]
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** Total rows matching the filter, across all pages. */
+  total: number
+}
+
+/** GET /api/day-off-swap-requests/pending-approval — unpaginated, see
+ *  LeaveRequestPendingApprovalResponse's comment. */
+export type DayOffSwapRequestPendingApprovalResponse = { requests: DayOffSwapRequestListItem[] }
 
 /** GET /api/day-off-swap-requests/:id, POST .../approve, POST .../reject.
  *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,
@@ -2549,7 +2594,18 @@ export type OvertimeRequestResponse = { request: OvertimeRequest }
 export type OvertimeRequestMineResponse = { requests: OvertimeRequest[] }
 
 /** GET /api/overtime-requests */
-export type OvertimeRequestListResponse = { requests: OvertimeRequestListItem[] }
+export type OvertimeRequestListResponse = {
+  requests: OvertimeRequestListItem[]
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** Total rows matching the filter, across all pages. */
+  total: number
+}
+
+/** GET /api/overtime-requests/pending-approval — unpaginated, see
+ *  LeaveRequestPendingApprovalResponse's comment. */
+export type OvertimeRequestPendingApprovalResponse = { requests: OvertimeRequestListItem[] }
 
 /** GET /api/overtime-requests/:id, POST .../approve, POST .../reject.
  *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,

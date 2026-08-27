@@ -10,6 +10,7 @@ import {
   type ShiftChangeRequestDetailResponse,
   type ShiftChangeRequestInput,
   type ShiftChangeRequestListResponse,
+  type ShiftChangeRequestPendingApprovalResponse,
   type ShiftChangeRequestMineResponse,
   type ShiftChangeRequestRejectRequest,
   type ShiftChangeRequestResponse,
@@ -19,7 +20,7 @@ import {
 import { pool, withTransaction } from '../db.js'
 import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
-import { fail, handleUnexpected } from '../http.js'
+import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
 import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { notify } from '../notifications/dispatch.js'
 import { findShiftById } from '../shiftQueries.js'
@@ -487,9 +488,18 @@ shiftChangeRequestsRouter.get('/shift-change-requests', canReadAdmin, async (req
   const statusResult = parseStatusFilter(req.query['status'] as string | string[] | undefined)
   if (!statusResult.ok) return fail(res, 400, statusResult.message)
 
+  const page = parseOptionalPositiveInt(req.query['page'])
+  if (page === undefined) return fail(res, 400, 'page must be a positive integer')
+
+  const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
+  if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
+
   try {
-    const requests = await listShiftChangeRequests({ status: statusResult.value })
-    const body: ShiftChangeRequestListResponse = { requests }
+    const result = await listShiftChangeRequests(
+      { status: statusResult.value },
+      { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
+    )
+    const body: ShiftChangeRequestListResponse = result
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
@@ -509,14 +519,14 @@ shiftChangeRequestsRouter.get(
     try {
       const scope = await resolveSupervisorScope(auth)
       if (scope.kind === 'none') {
-        const body: ShiftChangeRequestListResponse = { requests: [] }
+        const body: ShiftChangeRequestPendingApprovalResponse = { requests: [] }
         return res.json(body)
       }
 
       const requests = await listShiftChangeRequestsPendingApproval(
         scope.kind === 'all' ? null : scope.supervisorEmployeeId
       )
-      const body: ShiftChangeRequestListResponse = { requests }
+      const body: ShiftChangeRequestPendingApprovalResponse = { requests }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)

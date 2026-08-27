@@ -136,19 +136,49 @@ export async function listLeaveRequestsForEmployee(
   return rows.map(rowToLeaveRequest)
 }
 
+/** Default and max rows per page for listLeaveRequests — same numbers as
+ *  listAttendanceDaily's. */
+const DEFAULT_PAGE_SIZE = 50
+const MAX_PAGE_SIZE = 200
+
+export type LeaveRequestsPagination = {
+  /** 1-based. Clamped to >= 1. */
+  page?: number
+  /** Clamped to [1, MAX_PAGE_SIZE]. */
+  pageSize?: number
+}
+
 /** Admin's review queue across every employee, most recent first, optionally
  *  filtered to one status. */
 export async function listLeaveRequests(
   filter: { status?: LeaveRequestStatus },
+  pagination: LeaveRequestsPagination = {},
   db: Queryable = pool
-): Promise<LeaveRequestListItem[]> {
+): Promise<{ requests: LeaveRequestListItem[]; page: number; pageSize: number; total: number }> {
+  const page = pagination.page !== undefined && pagination.page > 1 ? Math.floor(pagination.page) : 1
+  const pageSize =
+    pagination.pageSize !== undefined && pagination.pageSize > 0
+      ? Math.min(Math.floor(pagination.pageSize), MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE
+  const offset = (page - 1) * pageSize
+
   const where = filter.status !== undefined ? 'WHERE lr.status = $1' : ''
   const params = filter.status !== undefined ? [filter.status] : []
-  const { rows } = await db.query<LeaveRequestListRow>(
-    `${SELECT_LEAVE_REQUEST_LIST} ${where} ORDER BY lr.created_at DESC LIMIT 500`,
-    params
-  )
-  return rows.map(rowToLeaveRequestListItem)
+
+  const [listResult, countResult] = await Promise.all([
+    db.query<LeaveRequestListRow>(
+      `${SELECT_LEAVE_REQUEST_LIST} ${where} ORDER BY lr.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, pageSize, offset]
+    ),
+    db.query<{ total: string }>(`SELECT count(*) AS total FROM leave_requests lr ${where}`, params),
+  ])
+
+  return {
+    requests: listResult.rows.map(rowToLeaveRequestListItem),
+    page,
+    pageSize,
+    total: Number(countResult.rows[0]?.total ?? 0),
+  }
 }
 
 /** A supervisor's inbox: requests currently waiting on them specifically, or

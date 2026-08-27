@@ -10,18 +10,23 @@ import type {
   OvertimeRequestDetailResponse,
   OvertimeRequestListItem,
   OvertimeRequestListResponse,
+  OvertimeRequestPendingApprovalResponse,
   OvertimeRequestStatus,
 } from '@hrm/shared'
 import { apiFetch, jsonHeaders, unwrap } from './client'
 
 export async function listOvertimeRequests(
   status?: OvertimeRequestStatus,
+  pagination: { page?: number; pageSize?: number } = {},
   signal?: AbortSignal
-): Promise<OvertimeRequestListItem[]> {
-  const query = status ? `?status=${status}` : ''
-  const res = await apiFetch(`/api/overtime-requests${query}`, { signal })
-  const body = await unwrap<OvertimeRequestListResponse>(res)
-  return body.requests
+): Promise<OvertimeRequestListResponse> {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (pagination.page !== undefined) params.set('page', String(pagination.page))
+  if (pagination.pageSize !== undefined) params.set('pageSize', String(pagination.pageSize))
+  const qs = params.toString()
+  const res = await apiFetch(`/api/overtime-requests${qs ? `?${qs}` : ''}`, { signal })
+  return unwrap<OvertimeRequestListResponse>(res)
 }
 
 /** The caller's own inbox — mirrors listLeaveRequestsPendingApproval. */
@@ -29,7 +34,7 @@ export async function listOvertimeRequestsPendingApproval(
   signal?: AbortSignal
 ): Promise<OvertimeRequestListItem[]> {
   const res = await apiFetch(`/api/overtime-requests/pending-approval`, { signal })
-  const body = await unwrap<OvertimeRequestListResponse>(res)
+  const body = await unwrap<OvertimeRequestPendingApprovalResponse>(res)
   return body.requests
 }
 

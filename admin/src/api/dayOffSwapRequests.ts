@@ -2,18 +2,23 @@ import type {
   DayOffSwapRequestDetailResponse,
   DayOffSwapRequestListItem,
   DayOffSwapRequestListResponse,
+  DayOffSwapRequestPendingApprovalResponse,
   DayOffSwapRequestStatus,
 } from '@hrm/shared'
 import { apiFetch, jsonHeaders, unwrap } from './client'
 
 export async function listDayOffSwapRequests(
   status?: DayOffSwapRequestStatus,
+  pagination: { page?: number; pageSize?: number } = {},
   signal?: AbortSignal
-): Promise<DayOffSwapRequestListItem[]> {
-  const query = status ? `?status=${status}` : ''
-  const res = await apiFetch(`/api/day-off-swap-requests${query}`, { signal })
-  const body = await unwrap<DayOffSwapRequestListResponse>(res)
-  return body.requests
+): Promise<DayOffSwapRequestListResponse> {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (pagination.page !== undefined) params.set('page', String(pagination.page))
+  if (pagination.pageSize !== undefined) params.set('pageSize', String(pagination.pageSize))
+  const qs = params.toString()
+  const res = await apiFetch(`/api/day-off-swap-requests${qs ? `?${qs}` : ''}`, { signal })
+  return unwrap<DayOffSwapRequestListResponse>(res)
 }
 
 /** The caller's own inbox — mirrors listLeaveRequestsPendingApproval. */
@@ -21,7 +26,7 @@ export async function listDayOffSwapRequestsPendingApproval(
   signal?: AbortSignal
 ): Promise<DayOffSwapRequestListItem[]> {
   const res = await apiFetch(`/api/day-off-swap-requests/pending-approval`, { signal })
-  const body = await unwrap<DayOffSwapRequestListResponse>(res)
+  const body = await unwrap<DayOffSwapRequestPendingApprovalResponse>(res)
   return body.requests
 }
 
