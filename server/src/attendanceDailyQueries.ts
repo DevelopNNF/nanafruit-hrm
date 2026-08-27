@@ -397,15 +397,31 @@ function buildAttendanceDailyConditions(filter: AttendanceDailyFilterInput): {
   return { conditions, params }
 }
 
-/** How many rows one request will return. The summary is computed over the
- *  whole filtered range regardless, so truncation never skews the figures.
- *  The export endpoint bypasses this — see listAttendanceDailyForExport. */
-const LIST_LIMIT = 1000
+/** Default and max rows per page. The summary is computed over the whole
+ *  filtered range regardless of page, so its figures never skew with paging.
+ *  The export endpoint has no such cap — see listAttendanceDailyForExport. */
+const DEFAULT_PAGE_SIZE = 50
+const MAX_PAGE_SIZE = 200
+
+export type AttendanceDailyPagination = {
+  /** 1-based. Clamped to >= 1. */
+  page?: number
+  /** Clamped to [1, MAX_PAGE_SIZE]. */
+  pageSize?: number
+}
 
 export async function listAttendanceDaily(
   filter: AttendanceDailyFilterInput,
+  pagination: AttendanceDailyPagination = {},
   db: Queryable = pool
-): Promise<{ days: AttendanceDailyItem[]; summary: AttendanceDailySummary; truncated: boolean }> {
+): Promise<{ days: AttendanceDailyItem[]; summary: AttendanceDailySummary; page: number; pageSize: number }> {
+  const page = pagination.page !== undefined && pagination.page > 1 ? Math.floor(pagination.page) : 1
+  const pageSize =
+    pagination.pageSize !== undefined && pagination.pageSize > 0
+      ? Math.min(Math.floor(pagination.pageSize), MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE
+  const offset = (page - 1) * pageSize
+
   const { conditions, params } = buildAttendanceDailyConditions(filter)
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
@@ -433,8 +449,8 @@ export async function listAttendanceDaily(
               d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.computed_at
        ${from}
        ORDER BY e.employee_code, d.work_date
-       LIMIT ${LIST_LIMIT + 1}`,
-      params
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, pageSize, offset]
     ),
     db.query<{
       total: string
@@ -457,11 +473,10 @@ export async function listAttendanceDaily(
     ),
   ])
 
-  const truncated = listResult.rows.length > LIST_LIMIT
   const s = summaryResult.rows[0]
 
   return {
-    days: listResult.rows.slice(0, LIST_LIMIT).map(rowToAttendanceDailyItem),
+    days: listResult.rows.map(rowToAttendanceDailyItem),
     summary: {
       total: Number(s?.total ?? 0),
       present: Number(s?.present ?? 0),
@@ -471,7 +486,8 @@ export async function listAttendanceDaily(
       incomplete: Number(s?.incomplete ?? 0),
       lastComputedAt: s?.last_computed_at ? new Date(s.last_computed_at).toISOString() : null,
     },
-    truncated,
+    page,
+    pageSize,
   }
 }
 

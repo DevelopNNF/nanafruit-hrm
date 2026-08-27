@@ -23,9 +23,13 @@ function buildParams(query: AttendanceDailyQuery): URLSearchParams {
 
 export async function listAttendanceDaily(
   query: AttendanceDailyQuery,
+  pagination: { page?: number; pageSize?: number } = {},
   signal?: AbortSignal
 ): Promise<AttendanceDailyListResponse> {
-  const qs = buildParams(query).toString()
+  const params = buildParams(query)
+  if (pagination.page !== undefined) params.set('page', String(pagination.page))
+  if (pagination.pageSize !== undefined) params.set('pageSize', String(pagination.pageSize))
+  const qs = params.toString()
   const res = await apiFetch(`/api/attendance/daily${qs ? `?${qs}` : ''}`, { signal })
   return unwrap<AttendanceDailyListResponse>(res)
 }

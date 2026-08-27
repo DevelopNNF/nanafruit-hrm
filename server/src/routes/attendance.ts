@@ -337,15 +337,27 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
     return fail(res, 400, `workLocation must be one of: ${WORK_LOCATIONS.join(', ')}`)
   }
 
+  const page = parseOptionalId(req.query['page'])
+  if (page === undefined) return fail(res, 400, 'page must be a positive integer')
+
+  const pageSize = parseOptionalId(req.query['pageSize'])
+  if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
+
   try {
-    const result = await listAttendanceDaily({
-      ...(employeeId !== null && { employeeId }),
-      ...(departmentId !== null && { departmentId }),
-      ...(fromDate !== null && { fromDate }),
-      ...(toDate !== null && { toDate }),
-      ...(statusRaw !== undefined && { status: statusRaw as AttendanceDailyFilter }),
-      ...(workLocation !== null && { workLocation }),
-    })
+    const result = await listAttendanceDaily(
+      {
+        ...(employeeId !== null && { employeeId }),
+        ...(departmentId !== null && { departmentId }),
+        ...(fromDate !== null && { fromDate }),
+        ...(toDate !== null && { toDate }),
+        ...(statusRaw !== undefined && { status: statusRaw as AttendanceDailyFilter }),
+        ...(workLocation !== null && { workLocation }),
+      },
+      {
+        ...(page !== null && { page }),
+        ...(pageSize !== null && { pageSize }),
+      }
+    )
     const body: AttendanceDailyListResponse = result
     res.json(body)
   } catch (err) {

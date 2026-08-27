@@ -1896,9 +1896,9 @@ export type AttendanceDailyFilter = (typeof ATTENDANCE_DAILY_FILTERS)[number]
 export type AttendanceDailyListResponse = {
   days: AttendanceDailyItem[]
   summary: AttendanceDailySummary
-  /** True when the range held more rows than were returned — the summary still
-   *  counts all of them. */
-  truncated: boolean
+  /** 1-based. */
+  page: number
+  pageSize: number
 }
 
 /** 'X ชม.' or 'X ชม. Y นาที' — shared by the shift master forms and the

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   ATTENDANCE_DAILY_FILTERS,
   WORK_LOCATIONS,
@@ -30,8 +30,23 @@ import {
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; days: AttendanceDailyItem[]; summary: AttendanceDailySummary; truncated: boolean }
+  | { phase: 'ok'; days: AttendanceDailyItem[]; summary: AttendanceDailySummary }
   | { phase: 'error'; message: string }
+
+/** Rows-per-page choices offered in the UI, and the one selected by default.
+ *  The default matches the server's own default in attendanceDailyQueries.ts —
+ *  passed explicitly anyway so a server-side change can't silently desync the
+ *  page-count math here. The top end stays at the server's MAX_PAGE_SIZE. */
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200] as const
+const DEFAULT_PAGE_SIZE = 50
+
+type Filters = {
+  fromDate: string
+  toDate: string
+  departmentId: number | ''
+  status: AttendanceDailyFilter | ''
+  workLocation: WorkLocation | ''
+}
 
 const FILTER_LABEL: Record<AttendanceDailyFilter, string> = {
   present: 'ปกติ',
@@ -138,14 +153,27 @@ function TimeRange({
 }
 
 export function AttendanceDailyListPage() {
-  const initial = useMemo(defaultRange, [])
-  const [fromDate, setFromDate] = useState(initial.from)
-  const [toDate, setToDate] = useState(initial.to)
-  const [departmentId, setDepartmentId] = useState<number | ''>('')
-  const [status, setStatus] = useState<AttendanceDailyFilter | ''>('')
-  const [workLocation, setWorkLocation] = useState<WorkLocation | ''>('')
+  const initial = useMemo(() => defaultRange(), [])
+  const initialFilters: Filters = {
+    fromDate: initial.from,
+    toDate: initial.to,
+    departmentId: '',
+    status: '',
+    workLocation: '',
+  }
+  // `draft` tracks the form fields as the user edits them; `applied` is what
+  // was last submitted and is the only thing the fetch effect depends on —
+  // so changing a filter no longer fires a request until ค้นหา is pressed.
+  const [draft, setDraft] = useState<Filters>(initialFilters)
+  const [applied, setApplied] = useState<Filters>(initialFilters)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [departments, setDepartments] = useState<Department[]>([])
   const [state, setState] = useState<State>({ phase: 'loading' })
+  // True while a search/page request is in flight — set by the action that
+  // triggers it (handleSearch, the pagination buttons) and cleared once the
+  // fetch effect below settles, so the effect itself never sets it directly.
+  const [fetching, setFetching] = useState(true)
   const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
@@ -159,47 +187,72 @@ export function AttendanceDailyListPage() {
     return () => controller.abort()
   }, [])
 
-  // No reset to 'loading' when the filters change: the previous table stays up
-  // until the new one lands, rather than flashing blank — same reasoning as
-  // LeaveRequestListPage's tab effect.
+  // No reset to 'loading' when the page/filters change: the previous table
+  // stays up until the new one lands, rather than flashing blank — same
+  // reasoning as LeaveRequestListPage's tab effect. `fetching` drives a
+  // lighter-weight indicator instead.
   useEffect(() => {
     const controller = new AbortController()
 
     listAttendanceDaily(
       {
-        fromDate,
-        toDate,
-        ...(departmentId !== '' && { departmentId }),
-        ...(status !== '' && { status }),
-        ...(workLocation !== '' && { workLocation }),
+        fromDate: applied.fromDate,
+        toDate: applied.toDate,
+        ...(applied.departmentId !== '' && { departmentId: applied.departmentId }),
+        ...(applied.status !== '' && { status: applied.status }),
+        ...(applied.workLocation !== '' && { workLocation: applied.workLocation }),
       },
+      { page, pageSize },
       controller.signal
     )
-      .then((body) => setState({ phase: 'ok', ...body }))
+      .then((body) => {
+        setState({ phase: 'ok', days: body.days, summary: body.summary })
+        setFetching(false)
+      })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({ phase: 'error', message: err instanceof Error ? err.message : 'request failed' })
+        setFetching(false)
       })
 
     return () => controller.abort()
-  }, [fromDate, toDate, departmentId, status, workLocation])
+  }, [applied, page, pageSize])
 
   const summary = state.phase === 'ok' ? state.summary : null
+  const totalPages = summary ? Math.max(1, Math.ceil(summary.total / pageSize)) : 1
+
+  function handleSearch(e: FormEvent) {
+    e.preventDefault()
+    setFetching(true)
+    setApplied(draft)
+    setPage(1)
+  }
+
+  function goToPage(next: number) {
+    setFetching(true)
+    setPage(next)
+  }
+
+  function handlePageSizeChange(next: number) {
+    setFetching(true)
+    setPageSize(next)
+    setPage(1)
+  }
 
   async function handleExport() {
     setExporting(true)
     try {
       const blob = await exportAttendanceDaily({
-        fromDate,
-        toDate,
-        ...(departmentId !== '' && { departmentId }),
-        ...(status !== '' && { status }),
-        ...(workLocation !== '' && { workLocation }),
+        fromDate: applied.fromDate,
+        toDate: applied.toDate,
+        ...(applied.departmentId !== '' && { departmentId: applied.departmentId }),
+        ...(applied.status !== '' && { status: applied.status }),
+        ...(applied.workLocation !== '' && { workLocation: applied.workLocation }),
       })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `attendance-${fromDate}-to-${toDate}.xlsx`
+      link.download = `attendance-${applied.fromDate}-to-${applied.toDate}.xlsx`
       link.click()
       URL.revokeObjectURL(url)
     } catch (err) {
@@ -224,15 +277,18 @@ export function AttendanceDailyListPage() {
         )}
       </header>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <form
+        onSubmit={handleSearch}
+        className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7"
+      >
         <label className={fieldLabel}>
           <span>ตั้งแต่วันที่</span>
           <input
             type="date"
             className={fieldControl}
-            value={fromDate}
-            max={toDate}
-            onChange={(e) => setFromDate(e.target.value)}
+            value={draft.fromDate}
+            max={draft.toDate}
+            onChange={(e) => setDraft({ ...draft, fromDate: e.target.value })}
           />
         </label>
         <label className={fieldLabel}>
@@ -240,17 +296,17 @@ export function AttendanceDailyListPage() {
           <input
             type="date"
             className={fieldControl}
-            value={toDate}
-            min={fromDate}
-            onChange={(e) => setToDate(e.target.value)}
+            value={draft.toDate}
+            min={draft.fromDate}
+            onChange={(e) => setDraft({ ...draft, toDate: e.target.value })}
           />
         </label>
         <label className={fieldLabel}>
           <span>แผนก</span>
           <select
             className={fieldControl}
-            value={departmentId}
-            onChange={(e) => setDepartmentId(e.target.value === '' ? '' : Number(e.target.value))}
+            value={draft.departmentId}
+            onChange={(e) => setDraft({ ...draft, departmentId: e.target.value === '' ? '' : Number(e.target.value) })}
           >
             <option value="">ทุกแผนก</option>
             {departments.map((d) => (
@@ -264,8 +320,8 @@ export function AttendanceDailyListPage() {
           <span>สถานะ</span>
           <select
             className={fieldControl}
-            value={status}
-            onChange={(e) => setStatus(e.target.value as AttendanceDailyFilter | '')}
+            value={draft.status}
+            onChange={(e) => setDraft({ ...draft, status: e.target.value as AttendanceDailyFilter | '' })}
           >
             <option value="">ทุกสถานะ</option>
             {ATTENDANCE_DAILY_FILTERS.map((f) => (
@@ -279,8 +335,8 @@ export function AttendanceDailyListPage() {
           <span>สถานที่ปฏิบัติงาน</span>
           <select
             className={fieldControl}
-            value={workLocation}
-            onChange={(e) => setWorkLocation(e.target.value as WorkLocation | '')}
+            value={draft.workLocation}
+            onChange={(e) => setDraft({ ...draft, workLocation: e.target.value as WorkLocation | '' })}
           >
             <option value="">ทุกสถานที่</option>
             {WORK_LOCATIONS.map((loc) => (
@@ -291,16 +347,21 @@ export function AttendanceDailyListPage() {
           </select>
         </label>
         <div className="flex items-end">
+          <button type="submit" className={`${button('primary')} w-full`} disabled={fetching}>
+            {fetching ? 'กำลังค้นหา…' : 'ค้นหา'}
+          </button>
+        </div>
+        <div className="flex items-end">
           <button
             type="button"
-            className={`${button('primary')} w-full`}
+            className={`${button('default')} w-full`}
             disabled={exporting || state.phase !== 'ok' || state.days.length === 0}
             onClick={handleExport}
           >
             {exporting ? 'กำลังสร้างไฟล์…' : 'ดาวน์โหลด Excel'}
           </button>
         </div>
-      </div>
+      </form>
 
       {summary && (
         <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -342,12 +403,28 @@ export function AttendanceDailyListPage() {
 
       {state.phase === 'ok' && state.days.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
             <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-              {state.summary.total} รายการ
-              {state.truncated && ` (แสดง ${state.days.length} รายการแรก)`}
+              {state.summary.total} รายการ (หน้า {page} จาก {totalPages})
             </p>
-            <p className="text-[0.775rem] whitespace-nowrap text-slate-500">เรียงตามรหัสพนักงาน แล้วจึงตามวันที่</p>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 text-[0.775rem] whitespace-nowrap text-slate-500">
+                <span>แสดงต่อหน้า</span>
+                <select
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[0.775rem] text-slate-900 hover:enabled:border-slate-500"
+                  value={pageSize}
+                  disabled={fetching}
+                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="text-[0.775rem] whitespace-nowrap text-slate-500">เรียงตามรหัสพนักงาน แล้วจึงตามวันที่</p>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -425,6 +502,30 @@ export function AttendanceDailyListPage() {
               </tbody>
             </table>
           </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <button
+                type="button"
+                className={button('default')}
+                disabled={page <= 1 || fetching}
+                onClick={() => goToPage(Math.max(1, page - 1))}
+              >
+                ก่อนหน้า
+              </button>
+              <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
+                หน้า {page} จาก {totalPages}
+              </p>
+              <button
+                type="button"
+                className={button('default')}
+                disabled={page >= totalPages || fetching}
+                onClick={() => goToPage(Math.min(totalPages, page + 1))}
+              >
+                ถัดไป
+              </button>
+            </div>
+          )}
         </div>
       )}
     </>
