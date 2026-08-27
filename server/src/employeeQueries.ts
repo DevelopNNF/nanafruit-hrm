@@ -185,6 +185,84 @@ export async function findEmployeeIdByEntraUpn(
   return row ? Number(row.id) : null
 }
 
+/** Default and max rows per page for searchEmployees — same numbers as every
+ *  other paginated list in this codebase. */
+const DEFAULT_PAGE_SIZE = 50
+const MAX_PAGE_SIZE = 200
+
+export type EmployeeSearchFilter = {
+  /** Matched against employee_code, both Thai/English names, nickname, and
+   *  job title — the same fields EmployeeListPage's client-side search used
+   *  to check before this moved server-side. */
+  query?: string
+  /** A specific payroll group's id, or 'none' for payroll_group_id IS NULL. */
+  payrollGroupId?: number | 'none'
+}
+
+export type EmployeeSearchPagination = {
+  /** 1-based. Clamped to >= 1. */
+  page?: number
+  /** Clamped to [1, MAX_PAGE_SIZE]. */
+  pageSize?: number
+}
+
+/** The admin employee list's search — every employee is a candidate row, so
+ *  unlike findEmployeeById this paginates rather than returning them all.
+ *  GET /employees (listEmployees on the client) stays separate and unbounded
+ *  for the several `<select>` pickers that need the whole roster in one
+ *  shot — this is additive, not a replacement. */
+export async function searchEmployees(
+  filter: EmployeeSearchFilter,
+  pagination: EmployeeSearchPagination = {},
+  db: Queryable = pool
+): Promise<{ employees: Employee[]; page: number; pageSize: number; total: number }> {
+  const page = pagination.page !== undefined && pagination.page > 1 ? Math.floor(pagination.page) : 1
+  const pageSize =
+    pagination.pageSize !== undefined && pagination.pageSize > 0
+      ? Math.min(Math.floor(pagination.pageSize), MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE
+  const offset = (page - 1) * pageSize
+
+  const conditions: string[] = []
+  const params: unknown[] = []
+
+  const query = filter.query?.trim()
+  if (query) {
+    params.push(`%${query}%`)
+    const n = params.length
+    conditions.push(
+      `(e.employee_code ILIKE $${n} OR e.first_name_th ILIKE $${n} OR e.last_name_th ILIKE $${n} OR ` +
+        `e.first_name_en ILIKE $${n} OR e.last_name_en ILIKE $${n} OR e.nickname ILIKE $${n} OR mj.job_title ILIKE $${n})`
+    )
+  }
+  if (filter.payrollGroupId === 'none') {
+    conditions.push(`d.payroll_group_id IS NULL`)
+  } else if (filter.payrollGroupId !== undefined) {
+    params.push(filter.payrollGroupId)
+    conditions.push(`d.payroll_group_id = $${params.length}`)
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+  const [listResult, countResult] = await Promise.all([
+    db.query<EmployeeRow>(
+      `${SELECT_EMPLOYEE} ${where} ORDER BY e.employee_code LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, pageSize, offset]
+    ),
+    db.query<{ total: string }>(
+      `SELECT count(*) AS total FROM employees e LEFT JOIN employment_details d ON d.employee_id = e.id LEFT JOIN master_jobs mj ON mj.id = d.job_id ${where}`,
+      params
+    ),
+  ])
+
+  return {
+    employees: listResult.rows.map(rowToEmployee),
+    page,
+    pageSize,
+    total: Number(countResult.rows[0]?.total ?? 0),
+  }
+}
+
 /** Active employees this employee supervises, for the Bulk OT Request
  *  picker's 'team' scope. Inactive direct reports are excluded for the same
  *  reason every other employee dropdown in this codebase filters to Active —

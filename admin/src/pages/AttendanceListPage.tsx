@@ -6,6 +6,7 @@ import { listAttendance } from '../api/attendance'
 import { listEmployees } from '../api/employees'
 import { useCanWrite } from '../auth/meContext'
 import { DatePicker } from '../components/DatePicker'
+import { Pagination } from '../components/Pagination'
 import {
   alert,
   alertDetail,
@@ -22,12 +23,16 @@ import {
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; events: AttendanceListItem[] }
+  | { phase: 'ok'; events: AttendanceListItem[]; total: number }
   | { phase: 'error'; message: string }
 
+/** Matches the server's own default in attendanceQueries.ts. */
+const DEFAULT_PAGE_SIZE = 50
+
 /** Today, local time, as 'YYYY-MM-DD' — the default window is "today" rather
- *  than "everything", since the unfiltered table only keeps the 500 most
- *  recent rows and that fills up fast across a whole company. */
+ *  than "everything": the unfiltered table now paginates instead of just
+ *  truncating at 500, but a whole company's history is still not what this
+ *  page is for browsing day-to-day. */
 function today(): string {
   const now = new Date()
   const offsetMs = now.getTimezoneOffset() * 60_000
@@ -54,6 +59,11 @@ export function AttendanceListPage() {
   const [employeeId, setEmployeeId] = useState<string>('')
   const [fromDate, setFromDate] = useState(today())
   const [toDate, setToDate] = useState(today())
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
+  // True while a filter/page/page-size request is in flight — used to
+  // disable <Pagination> rather than resetting `state` to 'loading'.
+  const [fetching, setFetching] = useState(true)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -78,19 +88,56 @@ export function AttendanceListPage() {
         ...(fromDate !== '' && { fromDate }),
         ...(toDate !== '' && { toDate }),
       },
+      { page, pageSize },
       controller.signal
     )
-      .then((events) => setState({ phase: 'ok', events }))
+      .then((body) => {
+        setState({ phase: 'ok', events: body.events, total: body.total })
+        setFetching(false)
+      })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({
           phase: 'error',
           message: err instanceof Error ? err.message : 'request failed',
         })
+        setFetching(false)
       })
 
     return () => controller.abort()
-  }, [employeeId, fromDate, toDate])
+  }, [employeeId, fromDate, toDate, page, pageSize])
+
+  // Every filter change resets back to page 1 — a new filter means a new
+  // result set, and staying on e.g. page 4 of it would likely just be past
+  // the end.
+  function handleEmployeeChange(next: string) {
+    setFetching(true)
+    setEmployeeId(next)
+    setPage(1)
+  }
+
+  function handleFromDateChange(next: string) {
+    setFetching(true)
+    setFromDate(next)
+    setPage(1)
+  }
+
+  function handleToDateChange(next: string) {
+    setFetching(true)
+    setToDate(next)
+    setPage(1)
+  }
+
+  function goToPage(next: number) {
+    setFetching(true)
+    setPage(next)
+  }
+
+  function handlePageSizeChange(next: number) {
+    setFetching(true)
+    setPageSize(next)
+    setPage(1)
+  }
 
   return (
     <>
@@ -118,7 +165,7 @@ export function AttendanceListPage() {
           <select
             className={selectClass}
             value={employeeId}
-            onChange={(e) => setEmployeeId(e.target.value)}
+            onChange={(e) => handleEmployeeChange(e.target.value)}
           >
             <option value="">ทั้งหมด</option>
             {employees.map((emp) => (
@@ -132,12 +179,12 @@ export function AttendanceListPage() {
 
         <label className="flex min-w-0 flex-col gap-1.5 text-xs font-medium text-slate-600">
           จากวันที่
-          <DatePicker value={fromDate} onChange={setFromDate} max={toDate || undefined} />
+          <DatePicker value={fromDate} onChange={handleFromDateChange} max={toDate || undefined} />
         </label>
 
         <label className="flex min-w-0 flex-col gap-1.5 text-xs font-medium text-slate-600">
           ถึงวันที่
-          <DatePicker value={toDate} onChange={setToDate} min={fromDate || undefined} />
+          <DatePicker value={toDate} onChange={handleToDateChange} min={fromDate || undefined} />
         </label>
       </div>
 
@@ -160,10 +207,7 @@ export function AttendanceListPage() {
       {state.phase === 'ok' && state.events.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
-            <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-              {state.events.length} รายการ
-              {state.events.length === 500 && ' (แสดงล่าสุด 500 รายการ)'}
-            </p>
+            <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">{state.total} รายการ</p>
           </div>
 
           <div className="overflow-x-auto">
@@ -222,6 +266,15 @@ export function AttendanceListPage() {
               </tbody>
             </table>
           </div>
+
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            totalItems={state.total}
+            onPageChange={goToPage}
+            onPageSizeChange={handlePageSizeChange}
+            disabled={fetching}
+          />
         </div>
       )}
     </>

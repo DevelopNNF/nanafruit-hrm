@@ -15,6 +15,7 @@ import type {
   EmployeePhotoPresignResponse,
   EmployeePhotoResponse,
   EmployeeResponse,
+  EmployeeSearchResponse,
   EmploymentInput,
   LinkCodeResponse,
   ShiftAssignment,
@@ -32,6 +33,30 @@ export async function listEmployees(signal?: AbortSignal): Promise<Employee[]> {
   const res = await apiFetch('/api/employees', { signal })
   const body = await unwrap<EmployeeListResponse>(res)
   return body.employees
+}
+
+export type EmployeeSearchFilter = {
+  query?: string
+  /** A specific payroll group's id, or 'none' for "not in any group". */
+  payrollGroupId?: number | 'none'
+}
+
+/** The admin employee list's paginated, server-filtered search — see
+ *  listEmployees' doc for why that stays a separate, unbounded endpoint. */
+export async function searchEmployees(
+  filter: EmployeeSearchFilter,
+  pagination: { page?: number; pageSize?: number } = {},
+  signal?: AbortSignal
+): Promise<EmployeeSearchResponse> {
+  const params = new URLSearchParams()
+  if (filter.query) params.set('q', filter.query)
+  if (filter.payrollGroupId !== undefined) params.set('payrollGroupId', String(filter.payrollGroupId))
+  if (pagination.page !== undefined) params.set('page', String(pagination.page))
+  if (pagination.pageSize !== undefined) params.set('pageSize', String(pagination.pageSize))
+
+  const query = params.toString()
+  const res = await apiFetch(`/api/employees/search${query ? `?${query}` : ''}`, { signal })
+  return unwrap<EmployeeSearchResponse>(res)
 }
 
 export async function getEmployee(id: number, signal?: AbortSignal): Promise<Employee> {

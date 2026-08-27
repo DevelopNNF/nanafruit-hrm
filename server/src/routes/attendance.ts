@@ -297,13 +297,22 @@ attendanceRouter.get('/attendance', canReadAdmin, async (req: Request, res: Resp
   const toDate = parseOptionalDate(req.query['toDate'])
   if (toDate === undefined) return fail(res, 400, 'toDate must be YYYY-MM-DD')
 
+  const page = parseOptionalId(req.query['page'])
+  if (page === undefined) return fail(res, 400, 'page must be a positive integer')
+
+  const pageSize = parseOptionalId(req.query['pageSize'])
+  if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
+
   try {
-    const events = await listAttendanceEvents({
-      ...(employeeId !== null && { employeeId }),
-      ...(fromDate !== null && { fromDate }),
-      ...(toDate !== null && { toDate }),
-    })
-    const body: AttendanceListResponse = { events }
+    const result = await listAttendanceEvents(
+      {
+        ...(employeeId !== null && { employeeId }),
+        ...(fromDate !== null && { fromDate }),
+        ...(toDate !== null && { toDate }),
+      },
+      { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
+    )
+    const body: AttendanceListResponse = result
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)

@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Download, Plus, Search, Upload } from 'lucide-react'
-import type { Employee, PayrollGroup } from '@hrm/shared'
-import { exportEmployees, exportTempWorkerEmployees, listEmployees } from '../../api/employees'
+import type { PayrollGroup, Employee } from '@hrm/shared'
+import { exportEmployees, exportTempWorkerEmployees, searchEmployees } from '../../api/employees'
 import { listPayrollGroups } from '../../api/payrollGroups'
 import { useCanWrite } from '../../auth/meContext'
 import { notify } from '../../notifications/notify'
 import { DropdownMenuButton } from '../../components/DropdownMenuButton'
+import { Pagination } from '../../components/Pagination'
 import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, fieldControl, muted, pageHead, subtitle } from '../../styles'
 
 type ExportKind = 'standard' | 'temp_worker'
@@ -18,30 +19,26 @@ type GroupFilter = 'all' | 'none' | number
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; employees: Employee[] }
+  | { phase: 'ok'; employees: Employee[]; total: number }
   | { phase: 'error'; message: string }
 
-/** Every field a person might type into the box, as one lowercased haystack. */
-function haystack(employee: Employee): string {
-  return [
-    employee.employeeCode,
-    employee.firstNameTh,
-    employee.lastNameTh,
-    employee.firstNameEn,
-    employee.lastNameEn,
-    employee.nickname,
-    employee.employment.jobTitle,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
-}
+/** Matches the server's own default in employeeQueries.ts. */
+const DEFAULT_PAGE_SIZE = 50
 
 export function EmployeeListPage() {
   const [state, setState] = useState<State>({ phase: 'loading' })
+  // `query` tracks the search box as the user types; `appliedQuery` is what
+  // was last submitted and is the only one the fetch effect depends on — so
+  // typing no longer fires a request until ค้นหา is pressed (or Enter).
   const [query, setQuery] = useState('')
+  const [appliedQuery, setAppliedQuery] = useState('')
   const [payrollGroups, setPayrollGroups] = useState<PayrollGroup[]>([])
   const [groupFilter, setGroupFilter] = useState<GroupFilter>('all')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
+  // True while a search/filter/page request is in flight — used to disable
+  // <Pagination> rather than resetting `state` to 'loading'.
+  const [fetching, setFetching] = useState(true)
   const navigate = useNavigate()
   const canWrite = useCanWrite()
   const [exporting, setExporting] = useState(false)
@@ -66,22 +63,6 @@ export function EmployeeListPage() {
 
   useEffect(() => {
     const controller = new AbortController()
-
-    listEmployees(controller.signal)
-      .then((employees) => setState({ phase: 'ok', employees }))
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return
-        setState({
-          phase: 'error',
-          message: err instanceof Error ? err.message : 'request failed',
-        })
-      })
-
-    return () => controller.abort()
-  }, [])
-
-  useEffect(() => {
-    const controller = new AbortController()
     listPayrollGroups(controller.signal)
       .then(setPayrollGroups)
       .catch(() => {
@@ -90,20 +71,61 @@ export function EmployeeListPage() {
     return () => controller.abort()
   }, [])
 
-  // Filtered in the browser against the list already fetched — the same reason
-  // the dashboard counts here rather than asking the server.
-  const visible = useMemo(() => {
-    if (state.phase !== 'ok') return []
-    const needle = query.trim().toLowerCase()
-    return state.employees.filter((employee) => {
-      if (needle && !haystack(employee).includes(needle)) return false
-      if (groupFilter === 'all') return true
-      if (groupFilter === 'none') return employee.employment.payrollGroupId === null
-      return employee.employment.payrollGroupId === groupFilter
-    })
-  }, [state, query, groupFilter])
+  // No setState({ phase: 'loading' }) at the top: a search/filter/page change
+  // just leaves the old table in place until the new one is ready, rather
+  // than flashing blank — same reasoning as every other paginated list page.
+  useEffect(() => {
+    const controller = new AbortController()
 
-  const filtering = query.trim() !== '' || groupFilter !== 'all'
+    searchEmployees(
+      {
+        ...(appliedQuery.trim() !== '' && { query: appliedQuery.trim() }),
+        ...(groupFilter !== 'all' && { payrollGroupId: groupFilter }),
+      },
+      { page, pageSize },
+      controller.signal
+    )
+      .then((body) => {
+        setState({ phase: 'ok', employees: body.employees, total: body.total })
+        setFetching(false)
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setState({
+          phase: 'error',
+          message: err instanceof Error ? err.message : 'request failed',
+        })
+        setFetching(false)
+      })
+
+    return () => controller.abort()
+  }, [appliedQuery, groupFilter, page, pageSize])
+
+  function handleSearchSubmit(e: FormEvent) {
+    e.preventDefault()
+    setFetching(true)
+    setAppliedQuery(query)
+    setPage(1)
+  }
+
+  function handleGroupFilterChange(value: GroupFilter) {
+    setFetching(true)
+    setGroupFilter(value)
+    setPage(1)
+  }
+
+  function goToPage(next: number) {
+    setFetching(true)
+    setPage(next)
+  }
+
+  function handlePageSizeChange(next: number) {
+    setFetching(true)
+    setPageSize(next)
+    setPage(1)
+  }
+
+  const filtering = appliedQuery.trim() !== '' || groupFilter !== 'all'
 
   return (
     <>
@@ -155,7 +177,7 @@ export function EmployeeListPage() {
         </div>
       )}
 
-      {state.phase === 'ok' && state.employees.length === 0 && (
+      {state.phase === 'ok' && state.total === 0 && !filtering && (
         <div className={`rounded-lg border border-slate-200 bg-white shadow-sm ${cardEmpty}`}>
           <p className="mb-1.5 font-semibold text-slate-900">ยังไม่มีพนักงานในระบบ</p>
           <p className={muted}>
@@ -164,20 +186,25 @@ export function EmployeeListPage() {
         </div>
       )}
 
-      {state.phase === 'ok' && state.employees.length > 0 && (
+      {state.phase === 'ok' && (state.total > 0 || filtering) && (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
-            <div className="relative flex max-w-88 min-w-0 flex-1 items-center">
-              <Search size={15} className="pointer-events-none absolute left-2.5 text-slate-500" />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="ค้นหา รหัส ชื่อ ชื่อเล่น หรือตำแหน่ง"
-                aria-label="ค้นหาพนักงาน"
-                className="w-full rounded-md border border-slate-200 bg-white py-2 pr-3 pl-9 text-[0.825rem] text-slate-900 placeholder:text-slate-500"
-              />
-            </div>
+            <form onSubmit={handleSearchSubmit} className="flex max-w-108 min-w-0 flex-1 items-center gap-2">
+              <div className="relative flex min-w-0 flex-1 items-center">
+                <Search size={15} className="pointer-events-none absolute left-2.5 text-slate-500" />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="ค้นหา รหัส ชื่อ ชื่อเล่น หรือตำแหน่ง"
+                  aria-label="ค้นหาพนักงาน"
+                  className="w-full rounded-md border border-slate-200 bg-white py-2 pr-3 pl-9 text-[0.825rem] text-slate-900 placeholder:text-slate-500"
+                />
+              </div>
+              <button type="submit" className={button('default')} disabled={fetching}>
+                ค้นหา
+              </button>
+            </form>
             <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
               <span className="whitespace-nowrap">กลุ่มเงินเดือน</span>
               <select
@@ -185,7 +212,7 @@ export function EmployeeListPage() {
                 value={typeof groupFilter === 'number' ? String(groupFilter) : groupFilter}
                 onChange={(e) => {
                   const value = e.target.value
-                  setGroupFilter(value === 'all' || value === 'none' ? value : Number(value))
+                  handleGroupFilterChange(value === 'all' || value === 'none' ? value : Number(value))
                 }}
               >
                 <option value="all">— ทั้งหมด —</option>
@@ -198,13 +225,11 @@ export function EmployeeListPage() {
               </select>
             </label>
             <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-              {filtering
-                ? `พบ ${visible.length} จาก ${state.employees.length} คน`
-                : `ทั้งหมด ${state.employees.length} คน`}
+              {filtering ? `พบ ${state.total} คน` : `ทั้งหมด ${state.total} คน`}
             </p>
           </div>
 
-          {visible.length === 0 ? (
+          {state.employees.length === 0 ? (
             // Not a bordered card: this already sits inside the bordered
             // container above — a second border would box the message twice.
             <div className={cardEmpty}>
@@ -212,60 +237,71 @@ export function EmployeeListPage() {
               <p className={muted}>ลองใช้คำอื่น ล้างช่องค้นหา หรือเปลี่ยนตัวกรองกลุ่มเงินเดือน</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
-                <thead>
-                  <tr>
-                    {['รหัส', 'ชื่อ-นามสกุล', 'ชื่อเล่น', 'ตำแหน่ง', 'ประเภท', 'สถานะ'].map((h) => (
-                      <th
-                        key={h}
-                        className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((employee) => (
-                    <tr
-                      key={employee.id}
-                      onClick={() => void navigate(`/employees/${employee.id}`)}
-                      className="cursor-pointer hover:bg-slate-50"
-                    >
-                      <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-600">
-                        {employee.employeeCode}
-                      </td>
-                      <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
-                        {employee.title}
-                        {employee.firstNameTh} {employee.lastNameTh}
-                        <span className="block text-xs text-slate-500">
-                          {employee.firstNameEn} {employee.lastNameEn}
-                        </span>
-                      </td>
-                      <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
-                        {employee.nickname ?? '—'}
-                      </td>
-                      <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
-                        {employee.employment.jobTitle}
-                      </td>
-                      <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
-                        {employee.employment.employmentType}
-                      </td>
-                      <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
-                        <span
-                          className={badge(
-                            employee.employment.status === 'Active' ? 'active' : 'inactive'
-                          )}
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
+                  <thead>
+                    <tr>
+                      {['รหัส', 'ชื่อ-นามสกุล', 'ชื่อเล่น', 'ตำแหน่ง', 'ประเภท', 'สถานะ'].map((h) => (
+                        <th
+                          key={h}
+                          className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
                         >
-                          {employee.employment.status}
-                        </span>
-                      </td>
+                          {h}
+                        </th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {state.employees.map((employee) => (
+                      <tr
+                        key={employee.id}
+                        onClick={() => void navigate(`/employees/${employee.id}`)}
+                        className="cursor-pointer hover:bg-slate-50"
+                      >
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-600">
+                          {employee.employeeCode}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
+                          {employee.title}
+                          {employee.firstNameTh} {employee.lastNameTh}
+                          <span className="block text-xs text-slate-500">
+                            {employee.firstNameEn} {employee.lastNameEn}
+                          </span>
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
+                          {employee.nickname ?? '—'}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
+                          {employee.employment.jobTitle}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
+                          {employee.employment.employmentType}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
+                          <span
+                            className={badge(
+                              employee.employment.status === 'Active' ? 'active' : 'inactive'
+                            )}
+                          >
+                            {employee.employment.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <Pagination
+                page={page}
+                pageSize={pageSize}
+                totalItems={state.total}
+                onPageChange={goToPage}
+                onPageSizeChange={handlePageSizeChange}
+                disabled={fetching}
+              />
+            </>
           )}
         </div>
       )}

@@ -15,6 +15,7 @@ import {
   WORK_LOCATIONS,
   type EmployeeInput,
   type EmployeeListResponse,
+  type EmployeeSearchResponse,
   type AuthUser,
   type DailyShiftAssignmentEligibleResponse,
   type DailyShiftAssignmentInput,
@@ -43,11 +44,12 @@ import { LINK_CODE_TTL_MS, generateLinkCode, hashLinkCode } from '../auth/linkCo
 import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
-import { fail, handleUnexpected } from '../http.js'
+import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
 import {
   SELECT_EMPLOYEE,
   findEmployeeById,
   rowToEmployee,
+  searchEmployees,
   type EmployeeRow,
 } from '../employeeQueries.js'
 import {
@@ -698,6 +700,49 @@ employeesRouter.get('/employees', canRead, async (_req: Request, res: Response) 
       `${SELECT_EMPLOYEE} ORDER BY e.employee_code`
     )
     const body: EmployeeListResponse = { employees: rows.map(rowToEmployee) }
+    res.json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
+
+/** A parsed and validated q/payrollGroupId/page/pageSize for
+ *  GET /employees/search — see searchEmployees' own doc for what each of
+ *  these does. Mounted ahead of GET /employees/:id so 'search' is never
+ *  parsed as an id. */
+function parseOptionalPayrollGroupFilter(
+  value: string | string[] | undefined
+): number | 'none' | null | undefined {
+  if (value === undefined) return null
+  if (typeof value !== 'string') return undefined
+  if (value === 'none') return 'none'
+  const id = Number(value)
+  return Number.isInteger(id) && id > 0 ? id : undefined
+}
+
+employeesRouter.get('/employees/search', canRead, async (req: Request, res: Response) => {
+  const q = req.query['q']
+  if (q !== undefined && typeof q !== 'string') return fail(res, 400, 'q must be a string')
+
+  const payrollGroupId = parseOptionalPayrollGroupFilter(
+    req.query['payrollGroupId'] as string | string[] | undefined
+  )
+  if (payrollGroupId === undefined) {
+    return fail(res, 400, `payrollGroupId must be 'none' or a positive integer`)
+  }
+
+  const page = parseOptionalPositiveInt(req.query['page'])
+  if (page === undefined) return fail(res, 400, 'page must be a positive integer')
+
+  const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
+  if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
+
+  try {
+    const result = await searchEmployees(
+      { ...(q !== undefined && q !== '' && { query: q }), ...(payrollGroupId !== null && { payrollGroupId }) },
+      { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
+    )
+    const body: EmployeeSearchResponse = result
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)

@@ -121,13 +121,33 @@ export type AttendanceListFilter = {
   toDate?: string
 }
 
+/** Default and max rows per page for listAttendanceEvents — same numbers as
+ *  listAttendanceDaily's. */
+const DEFAULT_PAGE_SIZE = 50
+const MAX_PAGE_SIZE = 200
+
+export type AttendanceListPagination = {
+  /** 1-based. Clamped to >= 1. */
+  page?: number
+  /** Clamped to [1, MAX_PAGE_SIZE]. */
+  pageSize?: number
+}
+
 /** Admin listing across employees, most recent first, filtered in SQL rather
  *  than fetched-then-filtered so a wide date range doesn't ship every row to
  *  the browser just to throw most of them away. */
 export async function listAttendanceEvents(
   filter: AttendanceListFilter,
+  pagination: AttendanceListPagination = {},
   db: Queryable = pool
-): Promise<AttendanceListItem[]> {
+): Promise<{ events: AttendanceListItem[]; page: number; pageSize: number; total: number }> {
+  const page = pagination.page !== undefined && pagination.page > 1 ? Math.floor(pagination.page) : 1
+  const pageSize =
+    pagination.pageSize !== undefined && pagination.pageSize > 0
+      ? Math.min(Math.floor(pagination.pageSize), MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE
+  const offset = (page - 1) * pageSize
+
   const conditions: string[] = []
   const params: unknown[] = []
 
@@ -147,9 +167,19 @@ export async function listAttendanceEvents(
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-  const { rows } = await db.query<AttendanceListRow>(
-    `${SELECT_ATTENDANCE_LIST} ${where} ORDER BY a.event_time DESC LIMIT 500`,
-    params
-  )
-  return rows.map(rowToAttendanceListItem)
+
+  const [listResult, countResult] = await Promise.all([
+    db.query<AttendanceListRow>(
+      `${SELECT_ATTENDANCE_LIST} ${where} ORDER BY a.event_time DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, pageSize, offset]
+    ),
+    db.query<{ total: string }>(`SELECT count(*) AS total FROM attendance_events a ${where}`, params),
+  ])
+
+  return {
+    events: listResult.rows.map(rowToAttendanceListItem),
+    page,
+    pageSize,
+    total: Number(countResult.rows[0]?.total ?? 0),
+  }
 }

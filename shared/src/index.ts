@@ -260,8 +260,22 @@ export type EmployeeBasicInput = Omit<Employee, 'id' | 'employment'>
  *  the only writer of "current shift". */
 export type EmploymentInput = Omit<EmploymentDetailsInput, 'shiftId'>
 
-/** GET /api/employees */
+/** GET /api/employees — every employee, unfiltered and unpaginated. Feeds the
+ *  several `<select>` pickers that need the whole roster in one shot; see
+ *  EmployeeSearchResponse for the paginated admin list page. */
 export type EmployeeListResponse = { employees: Employee[] }
+
+/** GET /api/employees/search — the admin employee list's paginated,
+ *  server-filtered search. Separate from EmployeeListResponse: this never
+ *  hands back the whole roster, so it carries page/pageSize/total instead. */
+export type EmployeeSearchResponse = {
+  employees: Employee[]
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** Total rows matching the filter, across all pages. */
+  total: number
+}
 
 /** GET /api/employees/:id, POST, PATCH */
 export type EmployeeResponse = { employee: Employee }
@@ -1619,7 +1633,14 @@ export type AttendanceListItem = AttendanceEvent & {
 }
 
 /** GET /api/attendance */
-export type AttendanceListResponse = { events: AttendanceListItem[] }
+export type AttendanceListResponse = {
+  events: AttendanceListItem[]
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** Total rows matching the filter, across all pages. */
+  total: number
+}
 
 /* Attendance Import ----------------------------------------------------------
  *
