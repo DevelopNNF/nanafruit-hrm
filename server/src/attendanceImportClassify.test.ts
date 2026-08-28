@@ -158,6 +158,27 @@ describe('classifyImportedPunches — overnight shift', () => {
   })
 })
 
+describe('classifyImportedPunches — overtime past the match buffer', () => {
+  it('reads a departure that misses the buffer as a check-out, not a fresh check-in', () => {
+    // Shift ends 17:00, buffer is 120 minutes, so 19:30 falls outside the
+    // session and is picked up by the calendar-day fallback below. It must
+    // still continue the day's in/out/in count rather than restart from zero.
+    const punches = cell('2026-08-20', ['07:49', '12:01', '12:46', '19:30'])
+    const result = classifyImportedPunches(punches, [workday('2026-08-20', '08:00:00', '17:00:00')])
+
+    assert.deepEqual(summarise(result), [
+      '2026-08-20 07:49 check_in → 2026-08-20',
+      '2026-08-20 12:01 check_out → 2026-08-20',
+      '2026-08-20 12:46 check_in → 2026-08-20',
+      '2026-08-20 19:30 check_out → 2026-08-20',
+    ])
+    assert.deepEqual(
+      result.map((punch) => punch.matchedShift),
+      [true, true, true, false]
+    )
+  })
+})
+
 describe('classifyImportedPunches — punches no shift claims', () => {
   it('still imports them, alternating within the calendar day and saying so', () => {
     // Someone who came in on a rest day. The events are raw facts and belong

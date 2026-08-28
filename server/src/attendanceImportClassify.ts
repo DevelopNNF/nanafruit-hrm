@@ -108,6 +108,14 @@ export function classifyImportedPunches(
   const claimed = new Set<number>() // indices into `instants`
   const classified: ClassifiedPunch[] = []
 
+  // Next alternate() index for a work-date, shared between the matched-session
+  // loop and the calendar-day fallback below. A late punch that misses the
+  // match buffer (overtime past MATCH_BUFFER_MINUTES) still belongs to the
+  // same work-date its session already claimed three punches for — without
+  // this, the fallback would start counting that work-date from zero again
+  // and read the overtime departure as a fresh check-in.
+  const nextIndexByWorkDate = new Map<string, number>()
+
   // Chronological by when each work-date's punches could start, so an earlier
   // work-date claims a contested punch first — that ordering is what sends the
   // 02:00 punch to the night shift that started the evening before rather than
@@ -141,17 +149,19 @@ export function classifyImportedPunches(
         matchedShift: true,
       })
     })
+    nextIndexByWorkDate.set(workDate, offset + session.length)
   }
 
-  // Whatever no window wanted, alternated within its own calendar day.
-  const perCalendarDay = new Map<string, number>()
+  // Whatever no window wanted, alternated within its own calendar day —
+  // continuing from any matched session's count above for that same
+  // work-date, rather than starting over at zero.
   for (let i = 0; i < instants.length; i++) {
     if (claimed.has(i)) continue
     const entry = instants[i]
     if (!entry) continue
     const workDate = toThailandDateString(entry.at)
-    const index = perCalendarDay.get(workDate) ?? 0
-    perCalendarDay.set(workDate, index + 1)
+    const index = nextIndexByWorkDate.get(workDate) ?? 0
+    nextIndexByWorkDate.set(workDate, index + 1)
     classified.push({
       eventTime: entry.at.toISOString(),
       eventType: alternate(index),
