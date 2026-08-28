@@ -1,11 +1,11 @@
-// The admin "ตารางการทำงาน" grid: every Active employee's month at once.
-// Reuses buildMonthCalendar (the same per-employee cascade GET /calendar/me
-// answers with) rather than re-deriving the workday/weekly_off/holiday/leave/
-// swap classification, so the grid can never disagree with an employee's own
-// calendar view. This costs one buildMonthCalendar call per employee instead
-// of a single batched query, but the codebase has no pagination anywhere in
-// its employee endpoints (small headcount), so that is not a real concern —
-// see employees.ts's GET /employees, which already fetches everyone unfiltered.
+// The admin "ตารางการทำงาน" grid: one page of Active employees' month at a
+// time. Reuses buildMonthCalendar (the same per-employee cascade GET
+// /calendar/me answers with) rather than re-deriving the
+// workday/weekly_off/holiday/leave/swap classification, so the grid can
+// never disagree with an employee's own calendar view. This costs one
+// buildMonthCalendar call per employee instead of a single batched query —
+// paginating below (rather than just truncating the response) keeps that
+// cost bounded by pageSize instead of total headcount.
 
 import type pg from 'pg'
 import type { EmployeeWorkSchedule, WorkScheduleDay } from '@hrm/shared'
@@ -27,22 +27,46 @@ type ShiftCodeRow = {
   shift_code: string
 }
 
+const DEFAULT_PAGE_SIZE = 20
+const MAX_PAGE_SIZE = 200
+
+export type WorkSchedulePagination = {
+  /** 1-based. Clamped to >= 1. */
+  page?: number
+  /** Clamped to [1, MAX_PAGE_SIZE]. */
+  pageSize?: number
+}
+
 export async function buildMonthScheduleForAllEmployees(
   year: number,
   month: number,
+  pagination: WorkSchedulePagination = {},
   db: Queryable = pool
-): Promise<EmployeeWorkSchedule[]> {
+): Promise<{ employees: EmployeeWorkSchedule[]; page: number; pageSize: number; total: number }> {
+  const page = pagination.page !== undefined && pagination.page > 1 ? Math.floor(pagination.page) : 1
+  const pageSize =
+    pagination.pageSize !== undefined && pagination.pageSize > 0
+      ? Math.min(Math.floor(pagination.pageSize), MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE
+  const offset = (page - 1) * pageSize
+
   // Sequential, not Promise.all: db may be a single transaction client (the
   // pattern this codebase verifies queries with — a client, not the pool,
-  // cannot run overlapping queries), and a handful of employees does not
-  // make this a real cost either way.
+  // cannot run overlapping queries).
   const { rows: employeeRows } = await db.query<ActiveEmployeeRow>(
     `SELECT e.id, e.employee_code, e.title, e.first_name_th, e.last_name_th
      FROM employees e
      JOIN employment_details d ON d.employee_id = e.id
      WHERE d.status = 'Active'
-     ORDER BY e.employee_code`
+     ORDER BY e.employee_code
+     LIMIT $1 OFFSET $2`,
+    [pageSize, offset]
   )
+  const { rows: countRows } = await db.query<{ total: string }>(
+    `SELECT count(*) AS total FROM employees e JOIN employment_details d ON d.employee_id = e.id WHERE d.status = 'Active'`
+  )
+  const total = Number(countRows[0]?.total ?? 0)
+
   // Fetched once for every employee's cells, rather than re-joined per
   // buildMonthCalendar call — CalendarDay carries shiftId/shiftName but not
   // the short shift_code a grid cell needs to show.
@@ -65,5 +89,5 @@ export async function buildMonthScheduleForAllEmployees(
       days,
     })
   }
-  return schedules
+  return { employees: schedules, page, pageSize, total }
 }

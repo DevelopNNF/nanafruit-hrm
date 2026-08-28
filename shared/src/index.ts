@@ -2568,9 +2568,18 @@ export type EmployeeWorkSchedule = {
   days: WorkScheduleDay[]
 }
 
-/** GET /api/schedule?year=YYYY&month=MM — every Active employee, in
+/** GET /api/schedule?year=YYYY&month=MM — a page of Active employees, in
  *  employee_code order. */
-export type WorkScheduleResponse = { year: number; month: number; employees: EmployeeWorkSchedule[] }
+export type WorkScheduleResponse = {
+  year: number
+  month: number
+  employees: EmployeeWorkSchedule[]
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** Total Active employees, across all pages. */
+  total: number
+}
 
 /* Overtime Requests ------------------------------------------------------
  *

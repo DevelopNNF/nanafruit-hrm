@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
 import { CALENDAR_DAY_STATUSES, type CalendarDayStatus, type EmployeeWorkSchedule, type WorkScheduleDay } from '@hrm/shared'
 import { getWorkSchedule } from '../api/schedule'
+import { Pagination } from '../components/Pagination'
 import { alert, alertDetail, alertTitle, eyebrow, fieldControl, fieldLabel, muted, pageHead, subtitle } from '../styles'
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; employees: EmployeeWorkSchedule[] }
+  | { phase: 'ok'; employees: EmployeeWorkSchedule[]; total: number }
   | { phase: 'error'; message: string }
+
+/** Matches the server's own default in scheduleQueries.ts. */
+const DEFAULT_PAGE_SIZE = 20
 
 const MONTH_LABELS = [
   'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
@@ -69,21 +73,53 @@ export function WorkSchedulePage() {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [state, setState] = useState<State>({ phase: 'loading' })
+  // True while a month/page/page-size change is in flight — used to disable
+  // <Pagination> rather than resetting `state` to 'loading'.
+  const [fetching, setFetching] = useState(true)
 
-  // No reset to 'loading' when year/month changes: the previous month's
+  // No reset to 'loading' when year/month/page changes: the previous month's
   // table stays up until the new one lands, rather than flashing blank —
   // same reasoning as AttendanceReport.tsx's filter effect.
   useEffect(() => {
     const controller = new AbortController()
-    getWorkSchedule(year, month, controller.signal)
-      .then((body) => setState({ phase: 'ok', employees: body.employees }))
+    getWorkSchedule(year, month, { page, pageSize }, controller.signal)
+      .then((body) => {
+        setState({ phase: 'ok', employees: body.employees, total: body.total })
+        setFetching(false)
+      })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({ phase: 'error', message: err instanceof Error ? err.message : 'request failed' })
+        setFetching(false)
       })
     return () => controller.abort()
-  }, [year, month])
+  }, [year, month, page, pageSize])
+
+  function handleMonthChange(next: number) {
+    setFetching(true)
+    setMonth(next)
+    setPage(1)
+  }
+
+  function handleYearChange(next: number) {
+    setFetching(true)
+    setYear(next)
+    setPage(1)
+  }
+
+  function goToPage(next: number) {
+    setFetching(true)
+    setPage(next)
+  }
+
+  function handlePageSizeChange(next: number) {
+    setFetching(true)
+    setPageSize(next)
+    setPage(1)
+  }
 
   const dayCount = daysInMonth(year, month)
   const dayNumbers = Array.from({ length: dayCount }, (_, i) => i + 1)
@@ -105,7 +141,7 @@ export function WorkSchedulePage() {
           <select
             className={fieldControl}
             value={month}
-            onChange={(e) => setMonth(Number(e.target.value))}
+            onChange={(e) => handleMonthChange(Number(e.target.value))}
           >
             {MONTH_LABELS.map((label, i) => (
               <option key={label} value={i + 1}>
@@ -119,7 +155,7 @@ export function WorkSchedulePage() {
           <select
             className={fieldControl}
             value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
+            onChange={(e) => handleYearChange(Number(e.target.value))}
           >
             {yearOptions.map((y) => (
               <option key={y} value={y}>
@@ -184,8 +220,18 @@ export function WorkSchedulePage() {
             </table>
           </div>
 
-          {state.employees.length === 0 && (
+          {state.total === 0 ? (
             <p className={`${muted} p-6 text-center`}>ไม่พบพนักงานสถานะ Active</p>
+          ) : (
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              totalItems={state.total}
+              onPageChange={goToPage}
+              onPageSizeChange={handlePageSizeChange}
+              pageSizeOptions={[10, 20, 50, 100]}
+              disabled={fetching}
+            />
           )}
         </div>
       )}
