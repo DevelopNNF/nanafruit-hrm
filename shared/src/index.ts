@@ -1043,6 +1043,121 @@ export type LeaveRequestDetailResponse = { request: LeaveRequestListItem; canDec
  *  time, never optional. */
 export type LeaveRequestRejectRequest = { reason: string }
 
+/* Off-Site Work Requests ------------------------------------------------------
+ *
+ * The employee-initiated "คำขอทำงานนอกสถานที่" request: work at placeName
+ * (latitude/longitude) instead of any master_locations geofence, for
+ * [startDate, endDate]. Same two-stage decision workflow as LeaveRequest
+ * (ผู้ขอ → หัวหน้างาน → HR/Admin), but always both stages — HR confirmed this
+ * request type never skips the supervisor, so there is no
+ * requiresSupervisorApproval flag: supervisorEmployeeId is simply null for an
+ * employee with no supervisor, same as currentStage starting at 'hr' in that
+ * case.
+ *
+ * Approval alone does not relax the employee's shift start/end times — see
+ * ATTENDANCE_DAY_STATUSES: an approved day still expects the same
+ * expectedWorkMinutes as an ordinary workday, so a missed check-in/check-out
+ * still comes out 'incomplete'/'absent'. What approval changes is *where* a
+ * clock event may be validated (the request's own point, via
+ * OFF_SITE_DEFAULT_RADIUS_METERS below, instead of master_locations) and
+ * whether being outside master_shifts' late/early-leave grace still counts as
+ * late — see computeAttendanceDay's isOffSiteDay handling.
+ */
+
+export const OFF_SITE_WORK_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
+export type OffSiteWorkRequestStatus = (typeof OFF_SITE_WORK_REQUEST_STATUSES)[number]
+
+/** Who needs to act next — same shape and reasons as LeaveRequestStage. */
+export const OFF_SITE_WORK_REQUEST_STAGES = ['supervisor', 'hr'] as const
+export type OffSiteWorkRequestStage = (typeof OFF_SITE_WORK_REQUEST_STAGES)[number]
+
+/** The single geofence radius every approved off-site request uses, applied
+ *  uniformly rather than letting the employee or HR set one per request (HR's
+ *  confirmed decision — see off-site-work-request-feature-plan memory). Not a
+ *  master_locations.radiusMeters, which is per-location; this is the one
+ *  system-wide number used only for off-site punches. */
+export const OFF_SITE_DEFAULT_RADIUS_METERS = 100
+
+export type OffSiteWorkRequest = {
+  id: number
+  employeeId: number
+  placeName: string
+  latitude: number
+  longitude: number
+  /** Calendar date, `YYYY-MM-DD`. */
+  startDate: string
+  endDate: string
+  reason: string
+  status: OffSiteWorkRequestStatus
+  /** Snapshot of employment_details.supervisor_employee_id at submission
+   *  time — same snapshot reasoning as LeaveRequest.supervisorEmployeeId.
+   *  Null when the employee had no supervisor, in which case the request
+   *  skips straight to the HR/Admin stage. */
+  supervisorEmployeeId: number | null
+  /** Joined in for display, same reasoning as LeaveRequest.supervisorEmployeeName. */
+  supervisorEmployeeName: string | null
+  /** Who must act next; null once the request is no longer pending. */
+  currentStage: OffSiteWorkRequestStage | null
+  supervisorApprovedByName: string | null
+  supervisorApprovedAt: string | null
+  /** The final decision maker — a supervisor (if they rejected), or HR/Admin. */
+  decidedByName: string | null
+  decidedAt: string | null
+  /** Required when status is 'rejected', null otherwise. */
+  decisionReason: string | null
+  /** ISO 8601. */
+  createdAt: string
+}
+
+/** A request as admin/ sees it: the employee joined in for display, same
+ *  shape as LeaveRequestListItem. */
+export type OffSiteWorkRequestListItem = OffSiteWorkRequest & {
+  employeeCode: string
+  employeeName: string
+}
+
+/** Body of POST /api/off-site-work-requests. employeeId is not an input —
+ *  the server derives it from the caller's employee session, never the
+ *  client. */
+export type OffSiteWorkRequestInput = {
+  placeName: string
+  latitude: number
+  longitude: number
+  startDate: string
+  endDate: string
+  reason: string
+}
+
+/** POST /api/off-site-work-requests */
+export type OffSiteWorkRequestResponse = { request: OffSiteWorkRequest }
+
+/** GET /api/off-site-work-requests/me — an employee's own requests, no
+ *  employee join needed since it's implicitly them. */
+export type OffSiteWorkRequestMineResponse = { requests: OffSiteWorkRequest[] }
+
+/** GET /api/off-site-work-requests */
+export type OffSiteWorkRequestListResponse = {
+  requests: OffSiteWorkRequestListItem[]
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** Total rows matching the filter, across all pages. */
+  total: number
+}
+
+/** GET /api/off-site-work-requests/pending-approval — unpaginated, see
+ *  LeaveRequestPendingApprovalResponse's comment. */
+export type OffSiteWorkRequestPendingApprovalResponse = { requests: OffSiteWorkRequestListItem[] }
+
+/** GET /api/off-site-work-requests/:id, POST .../approve, POST .../reject.
+ *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,
+ *  which applies unchanged here. */
+export type OffSiteWorkRequestDetailResponse = { request: OffSiteWorkRequestListItem; canDecide: boolean }
+
+/** Body of POST /api/off-site-work-requests/:id/reject — a reason is
+ *  required every time, never optional. */
+export type OffSiteWorkRequestRejectRequest = { reason: string }
+
 /* Holiday Group Master ------------------------------------------------------- */
 
 /** A row in master_holiday_groups: which holiday calendar an employee is
@@ -1556,9 +1671,17 @@ export type AttendanceEvent = {
   /** master_locations.location_name as of now, joined in for display. Null
    *  exactly when matchedLocationId is null. */
   matchedLocationName: string | null
-  /** Distance in meters from the matched location at clock time. Null
-   *  exactly when matchedLocationId is null. */
+  /** Distance in meters from the matched location at clock time. Null unless
+   *  exactly one of matchedLocationId/matchedOffSiteRequestId is set. */
   distanceMeters: number | null
+  /** FK to off_site_work_requests.id — set instead of matchedLocationId when
+   *  this event was validated against an approved off-site request's own
+   *  point rather than a master_locations geofence. Mutually exclusive with
+   *  matchedLocationId: never both set on the same event. */
+  matchedOffSiteRequestId: number | null
+  /** off_site_work_requests.place_name as of now, joined in for display. Null
+   *  exactly when matchedOffSiteRequestId is null. */
+  matchedOffSitePlaceName: string | null
   /** OS/client info from the LIFF app, e.g. "ios inClient=true ua=...".
    *  Debugging aid, not shown to the employee — see e.g. the LINE in-app
    *  browser silently declining a geolocation permission it was never asked
@@ -1891,6 +2014,12 @@ export type AttendanceDailyItem = {
   /** Working minutes excused by approved leave. */
   leaveMinutes: number
   isOvernight: boolean
+  /** Set when this day fell inside an approved off_site_work_requests date
+   *  range — the shift's late/early-leave grace was not enforced (see
+   *  computeAttendanceDay's isOffSiteDay handling), though the same
+   *  expectedWorkMinutes still applied, so a missed punch still reads
+   *  'incomplete'/'absent' exactly as on any other workday. */
+  offSiteRequestId: number | null
   /** ISO 8601 — when the batch job last recomputed this row. */
   computedAt: string
 }
@@ -2730,20 +2859,22 @@ export const APPROVAL_RESOURCE_TYPES = [
   'shiftChange',
   'dayOffSwap',
   'timeCorrection',
+  'offSite',
 ] as const
 export type ApprovalResourceType = (typeof APPROVAL_RESOURCE_TYPES)[number]
 
 /** One item in a supervisor's aggregated LIFF inbox — a discriminated union
- *  over the 5 existing *ListItem shapes rather than a flattened generic
+ *  over the 6 existing *ListItem shapes rather than a flattened generic
  *  shape, so the client keeps every resource-specific field (dates,
  *  attachmentKey, ...) it needs to render the card and route a decision to
- *  the correct one of the 5 real per-resource endpoints. */
+ *  the correct one of the 6 real per-resource endpoints. */
 export type PendingApprovalItem =
   | { resourceType: 'leave'; request: LeaveRequestListItem }
   | { resourceType: 'overtime'; request: OvertimeRequestListItem }
   | { resourceType: 'shiftChange'; request: ShiftChangeRequestListItem }
   | { resourceType: 'dayOffSwap'; request: DayOffSwapRequestListItem }
   | { resourceType: 'timeCorrection'; request: TimeCorrectionListItem }
+  | { resourceType: 'offSite'; request: OffSiteWorkRequestListItem }
 
 /** GET /api/approvals/pending-for-me — both tabs of the inbox screen in one
  *  call, since it shows both tabs' counts on a segmented control at once.

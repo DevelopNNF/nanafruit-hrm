@@ -26,6 +26,8 @@ function workday(workDate: string, startTime: string, endTime: string): Expected
     isOvernight,
     lateGraceMinutes: 0,
     earlyLeaveGraceMinutes: 0,
+    isOffSiteDay: false,
+    offSiteRequestId: null,
   }
 }
 
@@ -49,6 +51,8 @@ function dayOff(workDate: string): ExpectedShiftWindow {
     isOvernight: false,
     lateGraceMinutes: null,
     earlyLeaveGraceMinutes: null,
+    isOffSiteDay: false,
+    offSiteRequestId: null,
   }
 }
 

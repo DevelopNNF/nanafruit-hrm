@@ -156,6 +156,45 @@ async function loadLeaveByDate(
   return byDate
 }
 
+/**
+ * Approved off_site_work_requests covering [minDate, maxDate], grouped by
+ * calendar date — same shape and re-query reasoning as loadLeaveByDate: a
+ * date's off-site status is a fact about that specific date, not something
+ * buildCalendarDaysForDates' CalendarDayStatus needs to carry, since it
+ * doesn't change which calendar-day bucket (workday/weekly_off/holiday/...)
+ * the date falls in, only how strictly its punches are judged.
+ *
+ * Only 'approved' rows count — a pending request must not relax grace
+ * enforcement before HR has actually signed off on it.
+ */
+async function loadOffSiteByDate(
+  employeeId: number,
+  minDate: string,
+  maxDate: string,
+  db: Queryable
+): Promise<Map<string, number>> {
+  const { rows } = await db.query<{ id: string; start_date: string; end_date: string }>(
+    `SELECT id, start_date, end_date
+     FROM off_site_work_requests
+     WHERE employee_id = $1 AND status = 'approved'
+       AND start_date <= $3 AND end_date >= $2`,
+    [employeeId, minDate, maxDate]
+  )
+
+  const byDate = new Map<string, number>()
+  for (const row of rows) {
+    const from = row.start_date < minDate ? minDate : row.start_date
+    const to = row.end_date > maxDate ? maxDate : row.end_date
+    for (let d = parseDateOnlyUtc(from); toDateOnlyString(d) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+      // hasOverlappingOffSiteWorkRequest keeps a single employee from ever
+      // holding two approved requests over the same date, so last-write-wins
+      // here is only a formality, never an actual conflict.
+      byDate.set(toDateOnlyString(d), Number(row.id))
+    }
+  }
+  return byDate
+}
+
 /** One approved overtime block, resolved to real instants. */
 export type OvertimeInterval = { requestId: number; startAt: string; endAt: string }
 
@@ -259,6 +298,13 @@ export type ExpectedShiftWindow = {
   /** Null exactly when shiftId is null. */
   lateGraceMinutes: number | null
   earlyLeaveGraceMinutes: number | null
+  /** Set when this work-date falls inside an approved off_site_work_requests
+   *  date range. Does not change expectedWorkIntervals/expectedWorkMinutes —
+   *  the shift still owes the same hours — only tells computeAttendanceDay to
+   *  skip late/early-leave measurement for the day, per the confirmed
+   *  "flexible check-in/out, but still must check-in" rule. */
+  isOffSiteDay: boolean
+  offSiteRequestId: number | null
 }
 
 /** The per-shift bits of master_shifts that CalendarDay doesn't carry but
@@ -329,9 +375,11 @@ export async function resolveExpectedShiftWindows(
   const policyByShiftId = await loadShiftPolicy(shiftIds, db)
   const leaveByDate = await loadLeaveByDate(employeeId, sorted[0]!, sorted[sorted.length - 1]!, db)
   const overtimeByDate = await loadOvertimeByDate(employeeId, dates, db)
+  const offSiteByDate = await loadOffSiteByDate(employeeId, sorted[0]!, sorted[sorted.length - 1]!, db)
 
   return calendarDays.map((day) => {
     const overtimeIntervals = overtimeByDate.get(day.date) ?? []
+    const offSiteRequestId = offSiteByDate.get(day.date) ?? null
 
     if (day.shiftId === null || day.shiftStartTime === null || day.shiftEndTime === null) {
       return {
@@ -352,6 +400,8 @@ export async function resolveExpectedShiftWindows(
         isOvernight: false,
         lateGraceMinutes: null,
         earlyLeaveGraceMinutes: null,
+        isOffSiteDay: offSiteRequestId !== null,
+        offSiteRequestId,
       }
     }
 
@@ -433,6 +483,8 @@ export async function resolveExpectedShiftWindows(
       isOvernight,
       lateGraceMinutes: policy?.lateGraceMinutes ?? 0,
       earlyLeaveGraceMinutes: policy?.earlyLeaveGraceMinutes ?? 0,
+      isOffSiteDay: offSiteRequestId !== null,
+      offSiteRequestId,
     }
   })
 }
@@ -502,6 +554,15 @@ async function loadEventsInRange(
  * use the same span as matchAttendanceForDates or the two disagree about who
  * owns an overnight shift's 02:00 punch — the import would write it as one
  * day's check-out and the matcher would then look for it on another.
+ *
+ * On an approved off-site day, the shift's own hours are widened to the full
+ * calendar day rather than used as-is: the confirmed "flexible check-in/out"
+ * rule means a punch can land anywhere in the day, not just within the
+ * ordinary buffer around shift start/end, or it would go unmatched and the
+ * day would read 'absent' despite genuine (just untimed) presence — the
+ * opposite of what flexibility is supposed to buy. This only widens which
+ * punches get *found*; expectedWorkIntervals/expectedWorkMinutes (what late/
+ * early and payroll measure against) are untouched.
  */
 export function matchSpanOf(window: ExpectedShiftWindow): { start: Date; end: Date } | null {
   const starts: number[] = []
@@ -514,6 +575,10 @@ export function matchSpanOf(window: ExpectedShiftWindow): { start: Date; end: Da
   for (const ot of window.overtimeIntervals) {
     starts.push(Date.parse(ot.startAt))
     ends.push(Date.parse(ot.endAt))
+  }
+  if (window.isOffSiteDay) {
+    starts.push(thailandDateTime(window.workDate, '00:00:00').getTime())
+    ends.push(thailandDateTime(addDays(window.workDate, 1), '00:00:00').getTime())
   }
   if (starts.length === 0) return null
 

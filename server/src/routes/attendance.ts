@@ -3,6 +3,7 @@ import type { Request, Response } from 'express'
 import {
   ATTENDANCE_DAILY_FILTERS,
   ATTENDANCE_EVENT_TYPES,
+  OFF_SITE_DEFAULT_RADIUS_METERS,
   ROLES,
   WORK_LOCATIONS,
   type AttendanceClockResponse,
@@ -19,7 +20,8 @@ import { requireRole } from '../auth/middleware.js'
 import { fail, handleUnexpected } from '../http.js'
 import { findEmployeeById } from '../employeeQueries.js'
 import { findActiveLocations } from '../locationQueries.js'
-import { nearestLocation } from '../geo.js'
+import { findApprovedOffSiteRequestForDate } from '../offSiteRequestQueries.js'
+import { distanceMeters, nearestLocation } from '../geo.js'
 import {
   findLastAttendanceEvent,
   listAttendanceEvents,
@@ -172,16 +174,36 @@ attendanceRouter.post('/attendance/clock', async (req: Request, res: Response) =
     if (input.latitude === null || input.longitude === null) {
       return fail(res, 409, 'ไม่พบพิกัด GPS กรุณาเปิดสิทธิ์ตำแหน่งที่ตั้งแล้วลองลงเวลาอีกครั้ง')
     }
-    const activeLocations = await findActiveLocations()
-    const nearest = nearestLocation(input.latitude, input.longitude, activeLocations)
-    if (nearest === null || nearest.distanceMeters > nearest.location.radiusMeters) {
-      const message =
-        nearest === null
-          ? 'ยังไม่มีการตั้งค่าพิกัดที่อนุญาตให้ลงเวลาในระบบ กรุณาติดต่อฝ่ายบุคคล'
-          : `อยู่นอกพื้นที่ที่อนุญาตให้ลงเวลา (ห่างจาก "${nearest.location.locationName}" ประมาณ ${Math.round(nearest.distanceMeters)} ม. ขอบเขตที่อนุญาต ${nearest.location.radiusMeters} ม.)`
-      return fail(res, 409, message)
+
+    // An approved off-site request for today takes priority over
+    // master_locations entirely — checked first, not merged into
+    // nearestLocation's candidate set, since HR confirmed a single system-wide
+    // radius (OFF_SITE_DEFAULT_RADIUS_METERS) applies here, not each
+    // location's own radiusMeters.
+    const offSitePoint = await findApprovedOffSiteRequestForDate(employeeId, todayDate)
+    let matched: { locationId: number | null; offSiteRequestId: number | null; distanceMeters: number }
+    if (offSitePoint !== null) {
+      const distance = distanceMeters(input.latitude, input.longitude, offSitePoint.latitude, offSitePoint.longitude)
+      if (distance > OFF_SITE_DEFAULT_RADIUS_METERS) {
+        return fail(
+          res,
+          409,
+          `อยู่นอกพื้นที่ทำงานนอกสถานที่ที่ได้รับอนุมัติ (ห่างจาก "${offSitePoint.placeName}" ประมาณ ${Math.round(distance)} ม. ขอบเขตที่อนุญาต ${OFF_SITE_DEFAULT_RADIUS_METERS} ม.)`
+        )
+      }
+      matched = { locationId: null, offSiteRequestId: offSitePoint.id, distanceMeters: distance }
+    } else {
+      const activeLocations = await findActiveLocations()
+      const nearest = nearestLocation(input.latitude, input.longitude, activeLocations)
+      if (nearest === null || nearest.distanceMeters > nearest.location.radiusMeters) {
+        const message =
+          nearest === null
+            ? 'ยังไม่มีการตั้งค่าพิกัดที่อนุญาตให้ลงเวลาในระบบ กรุณาติดต่อฝ่ายบุคคล'
+            : `อยู่นอกพื้นที่ที่อนุญาตให้ลงเวลา (ห่างจาก "${nearest.location.locationName}" ประมาณ ${Math.round(nearest.distanceMeters)} ม. ขอบเขตที่อนุญาต ${nearest.location.radiusMeters} ม.)`
+        return fail(res, 409, message)
+      }
+      matched = { locationId: nearest.location.id, offSiteRequestId: null, distanceMeters: nearest.distanceMeters }
     }
-    const matched = { locationId: nearest.location.id, distanceMeters: nearest.distanceMeters }
 
     const employee = await findEmployeeById(employeeId)
     if (!employee) return fail(res, 404, 'employee record not found')
@@ -190,16 +212,18 @@ attendanceRouter.post('/attendance/clock', async (req: Request, res: Response) =
       `WITH inserted AS (
          INSERT INTO attendance_events
            (employee_id, event_type, source, latitude, longitude, accuracy_meters, shift_id,
-            device_info, matched_location_id, distance_meters)
-         VALUES ($1, $2, 'liff_gps', $3, $4, $5, $6, $7, $8, $9)
+            device_info, matched_location_id, matched_off_site_request_id, distance_meters)
+         VALUES ($1, $2, 'liff_gps', $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id, employee_id, event_type, event_time, source,
                    latitude, longitude, accuracy_meters, shift_id, device_info,
-                   matched_location_id, distance_meters
+                   matched_location_id, matched_off_site_request_id, distance_meters
        )
-       SELECT inserted.*, ms.shift_name, ml.location_name AS matched_location_name
+       SELECT inserted.*, ms.shift_name, ml.location_name AS matched_location_name,
+              osr.place_name AS matched_off_site_place_name
        FROM inserted
        LEFT JOIN master_shifts ms ON ms.id = inserted.shift_id
-       LEFT JOIN master_locations ml ON ml.id = inserted.matched_location_id`,
+       LEFT JOIN master_locations ml ON ml.id = inserted.matched_location_id
+       LEFT JOIN off_site_work_requests osr ON osr.id = inserted.matched_off_site_request_id`,
       [
         employeeId,
         input.eventType,
@@ -208,8 +232,9 @@ attendanceRouter.post('/attendance/clock', async (req: Request, res: Response) =
         input.accuracyMeters,
         employee.employment.shiftId,
         input.deviceInfo,
-        matched?.locationId ?? null,
-        matched?.distanceMeters ?? null,
+        matched.locationId,
+        matched.offSiteRequestId,
+        matched.distanceMeters,
       ]
     )
     const row = rows[0]

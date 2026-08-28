@@ -43,6 +43,8 @@ import { TimeCorrectionListPage } from './pages/time_correction/TimeCorrectionLi
 import { TimeCorrectionDetailPage } from './pages/time_correction/TimeCorrectionDetailPage'
 import { LeaveRequestListPage } from './pages/leave_requests/LeaveRequestListPage'
 import { LeaveRequestDetailPage } from './pages/leave_requests/LeaveRequestDetailPage'
+import { OffSiteRequestListPage } from './pages/off_site_requests/OffSiteRequestListPage'
+import { OffSiteRequestDetailPage } from './pages/off_site_requests/OffSiteRequestDetailPage'
 import { ShiftChangeRequestListPage } from './pages/shift_change_requests/ShiftChangeRequestListPage'
 import { ShiftChangeRequestDetailPage } from './pages/shift_change_requests/ShiftChangeRequestDetailPage'
 import { OvertimeRequestListPage } from './pages/overtime_requests/OvertimeRequestListPage'
@@ -146,6 +148,8 @@ const router = createBrowserRouter([
       { path: 'time-corrections/:id', element: <TimeCorrectionDetailPage /> },
       { path: 'leave-requests', element: <LeaveRequestListPage /> },
       { path: 'leave-requests/:id', element: <LeaveRequestDetailPage /> },
+      { path: 'off-site-work-requests', element: <OffSiteRequestListPage /> },
+      { path: 'off-site-work-requests/:id', element: <OffSiteRequestDetailPage /> },
       { path: 'shift-change-requests', element: <ShiftChangeRequestListPage /> },
       { path: 'shift-change-requests/:id', element: <ShiftChangeRequestDetailPage /> },
       { path: 'overtime-requests', element: <OvertimeRequestListPage /> },

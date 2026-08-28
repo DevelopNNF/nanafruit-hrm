@@ -25,6 +25,7 @@ const TYPE_LABEL: Record<ApprovalResourceType, string> = {
   shiftChange: 'เปลี่ยนกะ',
   dayOffSwap: 'สลับวันหยุด',
   timeCorrection: 'แก้ไขเวลา',
+  offSite: 'นอกสถานที่',
 }
 
 function messageFor(err: unknown): string {
@@ -100,6 +101,14 @@ function titleAndMeta(item: PendingApprovalItem): { title: string; meta: string 
         title: `${r.eventType === 'check_in' ? 'เข้างาน' : 'ออกงาน'} · ${formatDateTime(r.requestedEventTime)}`,
         meta: '',
       }
+    }
+    case 'offSite': {
+      const r = item.request
+      const range =
+        r.startDate === r.endDate
+          ? formatDate(r.startDate)
+          : `${formatDate(r.startDate)} – ${formatDate(r.endDate)}`
+      return { title: `${r.placeName} · ${range}`, meta: '' }
     }
   }
 }

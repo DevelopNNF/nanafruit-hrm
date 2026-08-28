@@ -1665,6 +1665,11 @@
   background: var(--approval-timecorrection-bg);
 }
 
+.approval-type-pill.offSite {
+  color: var(--approval-offsite-fg);
+  background: var(--approval-offsite-bg);
+}
+
 .approval-item-detail {
   background: var(--bg);
   border-radius: 12px;

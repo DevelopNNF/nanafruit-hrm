@@ -93,15 +93,19 @@ export function computeAttendanceDay(day: MatchedAttendanceDay): AttendanceDayVe
   const lateGrace = day.lateGraceMinutes ?? 0
   const earlyGrace = day.earlyLeaveGraceMinutes ?? 0
 
+  // An approved off-site day is exempt from the shift's own start/end
+  // enforcement (the confirmed "flexible check-in/out" rule) — grace is
+  // simply never checked, rather than widened, so this stays a flat skip
+  // instead of another branch inside the grace math below.
   let lateMinutes = 0
-  if (day.actualCheckInAt !== null) {
+  if (!day.isOffSiteDay && day.actualCheckInAt !== null) {
     const actual = new Date(day.actualCheckInAt)
     const allowedUntil = new Date(dueIn.getTime() + lateGrace * 60_000)
     if (actual > allowedUntil) lateMinutes = minutesBetweenInstants(dueIn, actual)
   }
 
   let earlyLeaveMinutes = 0
-  if (day.actualCheckOutAt !== null) {
+  if (!day.isOffSiteDay && day.actualCheckOutAt !== null) {
     const actual = new Date(day.actualCheckOutAt)
     const allowedFrom = new Date(dueOut.getTime() - earlyGrace * 60_000)
     if (actual < allowedFrom) earlyLeaveMinutes = minutesBetweenInstants(actual, dueOut)
@@ -212,9 +216,9 @@ export async function recomputeAttendanceDaily(
           late_minutes, early_leave_minutes, worked_minutes,
           expected_work_minutes, leave_minutes, is_overnight,
           approved_ot_minutes, actual_ot_minutes, ot_normal_minutes, ot_extra_minutes,
-          late_grace_minutes, early_leave_grace_minutes)
+          late_grace_minutes, early_leave_grace_minutes, off_site_request_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-               $20, $21, $22, $23, $24, $25)
+               $20, $21, $22, $23, $24, $25, $26)
        ON CONFLICT (employee_id, work_date) DO UPDATE SET
          shift_id = EXCLUDED.shift_id,
          day_status = EXCLUDED.day_status,
@@ -239,6 +243,7 @@ export async function recomputeAttendanceDaily(
          ot_extra_minutes = EXCLUDED.ot_extra_minutes,
          late_grace_minutes = EXCLUDED.late_grace_minutes,
          early_leave_grace_minutes = EXCLUDED.early_leave_grace_minutes,
+         off_site_request_id = EXCLUDED.off_site_request_id,
          computed_at = now(),
          updated_at = now()`,
       [
@@ -267,6 +272,7 @@ export async function recomputeAttendanceDaily(
         overtime.extraMinutes,
         day.lateGraceMinutes ?? 0,
         day.earlyLeaveGraceMinutes ?? 0,
+        day.offSiteRequestId,
       ]
     )
   }
@@ -304,6 +310,7 @@ type AttendanceDailyRow = {
   expected_work_minutes: number | null
   leave_minutes: number
   is_overnight: boolean
+  off_site_request_id: string | null
   computed_at: string
 }
 
@@ -333,6 +340,7 @@ function rowToAttendanceDailyItem(row: AttendanceDailyRow): AttendanceDailyItem 
     expectedWorkMinutes: row.expected_work_minutes,
     leaveMinutes: row.leave_minutes,
     isOvernight: row.is_overnight,
+    offSiteRequestId: row.off_site_request_id === null ? null : Number(row.off_site_request_id),
     computedAt: new Date(row.computed_at).toISOString(),
   }
 }
@@ -446,7 +454,7 @@ export async function listAttendanceDaily(
               d.effective_check_in_at, d.effective_check_out_at,
               d.actual_check_in_at, d.actual_check_out_at,
               d.late_minutes, d.early_leave_minutes, d.worked_minutes,
-              d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.computed_at
+              d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.off_site_request_id, d.computed_at
        ${from}
        ORDER BY e.employee_code, d.work_date
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -541,7 +549,7 @@ export async function listAttendanceDailyForExport(
             d.effective_check_in_at, d.effective_check_out_at,
             d.actual_check_in_at, d.actual_check_out_at,
             d.late_minutes, d.early_leave_minutes, d.worked_minutes,
-            d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.computed_at,
+            d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.off_site_request_id, d.computed_at,
             md.dept_name AS department_name, mj.job_title, ed.work_location,
             ed.start_working_date, ed.end_working_date
      ${from}

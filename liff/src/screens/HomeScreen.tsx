@@ -16,6 +16,7 @@ export type SubScreen =
   | 'shiftChange'
   | 'dayOffSwap'
   | 'overtime'
+  | 'offSite'
   | 'profile'
   | 'calendar'
   | 'approvals'
@@ -32,6 +33,7 @@ const TILES: Tile[] = [
   { screen: 'shiftChange', label: 'ขอเปลี่ยนกะ', en: 'ShiftChange' },
   { screen: 'dayOffSwap', label: 'สลับวันหยุด', en: 'DayOffSwap' },
   { screen: 'overtime', label: 'ขอทำงานล่วงเวลา (OT)', en: 'Overtime' },
+  { screen: 'offSite', label: 'ทำงานนอกสถานที่', en: 'OffSiteWork' },
   { screen: 'profile', label: 'ข้อมูลพนักงาน', en: 'Profile' },
 ]
 

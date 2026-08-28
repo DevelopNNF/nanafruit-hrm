@@ -15,11 +15,12 @@ const RESOURCE_PATH: Record<ApprovalResourceType, string> = {
   shiftChange: 'shift-change-requests',
   dayOffSwap: 'day-off-swap-requests',
   timeCorrection: 'time-corrections',
+  offSite: 'off-site-work-requests',
 }
 
 /** Approving asks for no reason (see ApprovalRejectModal's comment for why
  *  rejecting does) — just a plain confirm, so no body beyond an empty
- *  object; none of the 5 approve endpoints read one either way. */
+ *  object; none of the 6 approve endpoints read one either way. */
 export async function approveApprovalItem(item: PendingApprovalItem): Promise<void> {
   const res = await apiFetch(`/api/${RESOURCE_PATH[item.resourceType]}/${item.request.id}/approve`, {
     method: 'POST',

@@ -28,6 +28,8 @@ export type AttendanceRow = {
   matched_location_id: string | null
   matched_location_name: string | null
   distance_meters: string | null
+  matched_off_site_request_id: string | null
+  matched_off_site_place_name: string | null
 }
 
 export type AttendanceListRow = AttendanceRow & {
@@ -39,10 +41,12 @@ export const SELECT_ATTENDANCE_EVENT = `
   SELECT a.id, a.employee_id, a.event_type, a.event_time, a.source,
          a.latitude, a.longitude, a.accuracy_meters,
          a.shift_id, ms.shift_name, a.device_info,
-         a.matched_location_id, ml.location_name AS matched_location_name, a.distance_meters
+         a.matched_location_id, ml.location_name AS matched_location_name, a.distance_meters,
+         a.matched_off_site_request_id, osr.place_name AS matched_off_site_place_name
   FROM attendance_events a
   LEFT JOIN master_shifts ms ON ms.id = a.shift_id
   LEFT JOIN master_locations ml ON ml.id = a.matched_location_id
+  LEFT JOIN off_site_work_requests osr ON osr.id = a.matched_off_site_request_id
 `
 
 export const SELECT_ATTENDANCE_LIST = `
@@ -50,10 +54,12 @@ export const SELECT_ATTENDANCE_LIST = `
          a.latitude, a.longitude, a.accuracy_meters,
          a.shift_id, ms.shift_name, a.device_info,
          a.matched_location_id, ml.location_name AS matched_location_name, a.distance_meters,
+         a.matched_off_site_request_id, osr.place_name AS matched_off_site_place_name,
          e.employee_code, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
   FROM attendance_events a
   LEFT JOIN master_shifts ms ON ms.id = a.shift_id
   LEFT JOIN master_locations ml ON ml.id = a.matched_location_id
+  LEFT JOIN off_site_work_requests osr ON osr.id = a.matched_off_site_request_id
   JOIN employees e ON e.id = a.employee_id
 `
 
@@ -73,6 +79,9 @@ export function rowToAttendanceEvent(row: AttendanceRow): AttendanceEvent {
     matchedLocationId: row.matched_location_id === null ? null : Number(row.matched_location_id),
     matchedLocationName: row.matched_location_name,
     distanceMeters: row.distance_meters === null ? null : Number(row.distance_meters),
+    matchedOffSiteRequestId:
+      row.matched_off_site_request_id === null ? null : Number(row.matched_off_site_request_id),
+    matchedOffSitePlaceName: row.matched_off_site_place_name,
   }
 }
 

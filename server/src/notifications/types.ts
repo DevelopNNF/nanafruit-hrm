@@ -21,6 +21,7 @@ export type RequestResourceType =
   | 'shift_change_request'
   | 'day_off_swap_request'
   | 'time_correction_request'
+  | 'off_site_work_request'
 
 export type RequestActionEvent =
   | {

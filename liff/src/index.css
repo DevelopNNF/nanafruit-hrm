@@ -82,6 +82,8 @@
   --approval-dayoffswap-bg: #fbf0da;
   --approval-timecorrection-fg: #4b7f6b;
   --approval-timecorrection-bg: #e4f0eb;
+  --approval-offsite-fg: #0f8b8d;
+  --approval-offsite-bg: #e0f5f5;
 
   --sans: 'Sarabun', 'Noto Sans Thai', system-ui, sans-serif;
   --display: 'Kanit', 'Noto Sans Thai', system-ui, sans-serif;

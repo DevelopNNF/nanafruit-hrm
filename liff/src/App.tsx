@@ -7,6 +7,7 @@ import { TimeCorrectionScreen } from './screens/TimeCorrectionScreen'
 import { ShiftChangeRequestScreen } from './screens/ShiftChangeRequestScreen'
 import { DayOffSwapRequestScreen } from './screens/DayOffSwapRequestScreen'
 import { OvertimeRequestScreen } from './screens/OvertimeRequestScreen'
+import { OffSiteRequestScreen } from './screens/OffSiteRequestScreen'
 import { ProfileScreen } from './screens/ProfileScreen'
 import { CalendarScreen } from './screens/CalendarScreen'
 import { ApprovalInboxScreen } from './screens/ApprovalInboxScreen'
@@ -50,6 +51,7 @@ function EmployeeHome({ employee, isSupervisor }: { employee: Employee; isSuperv
   if (screen === 'shiftChange') return <ShiftChangeRequestScreen onBack={back} />
   if (screen === 'dayOffSwap') return <DayOffSwapRequestScreen onBack={back} />
   if (screen === 'overtime') return <OvertimeRequestScreen onBack={back} />
+  if (screen === 'offSite') return <OffSiteRequestScreen onBack={back} />
   if (screen === 'profile') return <ProfileScreen employee={employee} onBack={back} />
   if (screen === 'calendar') return <CalendarScreen onBack={back} />
   if (screen === 'approvals') return <ApprovalInboxScreen onBack={back} />
