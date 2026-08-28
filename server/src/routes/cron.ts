@@ -52,6 +52,13 @@ function parseDateParam(value: unknown): string | null | undefined {
   return Number.isNaN(new Date(`${value}T00:00:00Z`).getTime()) ? undefined : value
 }
 
+/** null means "not given" (run every employee); undefined means the value present is invalid. */
+function parseEmployeeIdParam(value: unknown): number | null | undefined {
+  if (value === undefined) return null
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined
+  return Number(value)
+}
+
 /**
  * POST /api/cron/attendance-daily
  *
@@ -61,6 +68,10 @@ function parseDateParam(value: unknown): string | null | undefined {
  * done is what lets the scheduler's own success/failure log mean something. If
  * the employee count ever grows enough to approach that timeout, narrowing the
  * window with ?from=&to= is the first lever, not a background queue.
+ *
+ * ?employeeId= is optional and narrows the run to that one employee instead
+ * of every active one, over the same date range. Omit it for the normal
+ * whole-company run.
  */
 cronRouter.post('/cron/attendance-daily', cronLimiter, async (req: Request, res: Response) => {
   const expected = configuredSecret()
@@ -81,12 +92,17 @@ cronRouter.post('/cron/attendance-daily', cronLimiter, async (req: Request, res:
   const fromParam = parseDateParam(req.query['from'])
   if (fromParam === undefined) return fail(res, 400, 'from must be YYYY-MM-DD')
 
+  const employeeIdParam = parseEmployeeIdParam(req.query['employeeId'])
+  if (employeeIdParam === undefined) return fail(res, 400, 'employeeId must be a positive integer')
+
   const toDate = toParam ?? defaultRange().toDate
   const fromDate = fromParam ?? addDays(toDate, -(DEFAULT_WINDOW_DAYS - 1))
   if (fromDate > toDate) return fail(res, 400, `from (${fromDate}) must not be after to (${toDate})`)
 
   try {
-    const result = await withAttendanceJobLock(() => runAttendanceCompute({ fromDate, toDate }))
+    const result = await withAttendanceJobLock(() =>
+      runAttendanceCompute({ fromDate, toDate }, undefined, employeeIdParam ?? undefined)
+    )
 
     if (result === null) {
       // The previous trigger is still running. 409 rather than 200 so a
@@ -101,11 +117,12 @@ cronRouter.post('/cron/attendance-daily', cronLimiter, async (req: Request, res:
         `${(result.durationMs / 1000).toFixed(1)}s`
     )
 
-    // Only on the plain daily call (no explicit ?from=/?to=) — an ad-hoc
-    // backfill or re-run over an arbitrary range must not re-send a digest
-    // for days that already had one. See attendanceDigest.ts's header comment
-    // on why this isn't otherwise guarded against duplicate sends.
-    if (toParam === null && fromParam === null) {
+    // Only on the plain daily call (no explicit ?from=/?to=/?employeeId=) — an
+    // ad-hoc backfill, re-run over an arbitrary range, or single-employee
+    // re-run must not re-send a company-wide digest for days that already had
+    // one. See attendanceDigest.ts's header comment on why this isn't
+    // otherwise guarded against duplicate sends.
+    if (toParam === null && fromParam === null && employeeIdParam === null) {
       void sendAttendanceDigest(toDate)
     }
 

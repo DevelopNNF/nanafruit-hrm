@@ -87,10 +87,15 @@ function clampToEmploymentWindow(
  * Does NOT take the lock itself: callers wrap it in withAttendanceJobLock, so
  * that acquiring and reporting a busy run is the caller's decision (the CLI
  * says so on stderr, the HTTP route answers 409).
+ *
+ * `employeeId`, when given, narrows the run to that one employee instead of
+ * every active one — the same range, just scoped. Omit it for the normal
+ * whole-company run.
  */
 export async function runAttendanceCompute(
   range: AttendanceRunRange,
-  onEmployee?: (employeeId: number, rows: number, error?: unknown) => void
+  onEmployee?: (employeeId: number, rows: number, error?: unknown) => void,
+  employeeId?: number
 ): Promise<AttendanceRunResult> {
   const startedAt = Date.now()
 
@@ -101,7 +106,10 @@ export async function runAttendanceCompute(
     end_working_date: string | null
   }>(
     `SELECT employee_id, start_working_date, hire_date, end_working_date
-     FROM employment_details WHERE status = 'Active' ORDER BY employee_id`
+     FROM employment_details
+     WHERE status = 'Active' AND ($1::int IS NULL OR employee_id = $1)
+     ORDER BY employee_id`,
+    [employeeId ?? null]
   )
 
   let rows = 0
