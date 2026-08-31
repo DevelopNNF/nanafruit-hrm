@@ -47,6 +47,7 @@ import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
 import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
+import { reclassifyAttendanceEvents } from '../attendanceReclassify.js'
 import {
   approvedOvertimeMinutesInWeek,
   approvedOvertimeMinutesInWeekBulk,
@@ -1190,18 +1191,38 @@ overtimeRequestsRouter.post(
           },
         })
 
+        // Re-derive check-in/check-out typing for already-imported punches in
+        // this range before recomputing: a punch imported before this OT
+        // existed was classified without knowing the wider window it now
+        // widens (see resolveOvertimeOwnerDate), so it can be stuck mis-typed
+        // — e.g. the shift's true tail-end checkout still reading as a
+        // check-in — which silently zeros the actual overtime paid even once
+        // the day-attribution itself is fixed. Must run first: recomputeAttendanceDaily
+        // only reads event_type, it never revises it.
+        await reclassifyAttendanceEvents(
+          Number(row.employee_id),
+          addDays(row.ot_date, -1),
+          addDays(row.ot_date, 1),
+          client
+        )
+
         // Recompute this date immediately instead of waiting for the batch
         // job. The job's default window is the last 7 days ending yesterday
         // and OT may be filed up to 7 days back, so a request dated at that
         // limit and approved a few days later falls outside every future run
         // and would never be counted at all.
         //
-        // Through ot_date + 1 because an overnight block reaches into the
-        // next day's row, and in the same transaction so the figures can
-        // never reflect an approval that then rolled back.
+        // ot_date - 1 through ot_date + 1: an overnight block reaches into
+        // the next day's row, and — see resolveOvertimeOwnerDate in
+        // attendanceMatchingQueries.ts — an OT block that actually closes out
+        // an overnight shift starting the day before gets attributed to
+        // *that* day's row instead of this one's, so the day before must be
+        // recomputed too or it would never pick up the reattribution. All in
+        // the same transaction so the figures can never reflect an approval
+        // that then rolled back.
         await recomputeAttendanceDaily(
           Number(row.employee_id),
-          row.ot_date,
+          addDays(row.ot_date, -1),
           addDays(row.ot_date, 1),
           client
         )

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   chooseAttendanceWindow,
   computeShiftWindow,
+  resolveOvertimeOwnerDate,
   type MatchedAttendanceDay,
 } from './attendanceMatchingQueries.js'
 
@@ -134,5 +135,91 @@ describe('chooseAttendanceWindow', () => {
     const today = noShift('2026-08-20')
     const now = new Date('2026-08-20T05:00:00Z')
     assert.equal(chooseAttendanceWindow(yesterday, today, now).workDate, '2026-08-20')
+  })
+})
+
+describe('resolveOvertimeOwnerDate', () => {
+  /** Builds the shiftEdgesByDate map resolveOvertimeOwnerDate reads, from
+   *  plain shift-time strings — null for a date with no shift at all. */
+  function edges(entries: Record<string, [string, string] | null>): Map<string, { checkInAt: Date; checkOutAt: Date } | null> {
+    const map = new Map<string, { checkInAt: Date; checkOutAt: Date } | null>()
+    for (const [date, times] of Object.entries(entries)) {
+      if (times === null) {
+        map.set(date, null)
+        continue
+      }
+      const { checkInAt, checkOutAt } = computeShiftWindow(date, times[0], times[1])
+      map.set(date, { checkInAt, checkOutAt })
+    }
+    return map
+  }
+
+  it('attributes an OT block that closes out an overnight shift to the shift\'s own day — the TEMP-0014 case', () => {
+    // 20:00-05:00 shifts on both the 10th and the 11th; OT approved 05:00-08:00
+    // on the 11th to cover the tail of the shift that started the 10th.
+    const shiftEdgesByDate = edges({
+      '2026-08-10': ['20:00:00', '05:00:00'],
+      '2026-08-11': ['20:00:00', '05:00:00'],
+    })
+    const { checkInAt: otStart, checkOutAt: otEnd } = computeShiftWindow('2026-08-11', '05:00:00', '08:00:00')
+    assert.equal(resolveOvertimeOwnerDate('2026-08-11', otStart, otEnd, shiftEdgesByDate), '2026-08-10')
+  })
+
+  it('keeps ot_date when it sits inside its own shift as usual (no neighbor closer)', () => {
+    // Ordinary day shift 08:00-17:00, OT tacked on right after it the same day.
+    const shiftEdgesByDate = edges({
+      '2026-08-19': ['08:00:00', '17:00:00'],
+      '2026-08-20': ['08:00:00', '17:00:00'],
+    })
+    const { checkInAt: otStart, checkOutAt: otEnd } = computeShiftWindow('2026-08-20', '17:00:00', '19:00:00')
+    assert.equal(resolveOvertimeOwnerDate('2026-08-20', otStart, otEnd, shiftEdgesByDate), '2026-08-20')
+  })
+
+  it('keeps ot_date when both neighboring gaps exceed the cap', () => {
+    const shiftEdgesByDate = edges({
+      '2026-08-10': ['08:00:00', '12:00:00'], // ends 12:00 — 17h before a 05:00 OT start
+      '2026-08-11': ['20:00:00', '23:00:00'], // starts 20:00 — 12h after a 08:00 OT end
+    })
+    const { checkInAt: otStart, checkOutAt: otEnd } = computeShiftWindow('2026-08-11', '05:00:00', '08:00:00')
+    assert.equal(resolveOvertimeOwnerDate('2026-08-11', otStart, otEnd, shiftEdgesByDate), '2026-08-11')
+  })
+
+  it('lets the only side with a shift win even far away, as long as within the cap', () => {
+    // No shift at all on the 11th itself (a rest day) — only the previous
+    // overnight shift to compare against, 3h from the OT's start.
+    const shiftEdgesByDate = edges({
+      '2026-08-10': ['20:00:00', '02:00:00'],
+      '2026-08-11': null,
+    })
+    const { checkInAt: otStart, checkOutAt: otEnd } = computeShiftWindow('2026-08-11', '05:00:00', '08:00:00')
+    assert.equal(resolveOvertimeOwnerDate('2026-08-11', otStart, otEnd, shiftEdgesByDate), '2026-08-10')
+  })
+
+  it('keeps ot_date when the only comparable side is beyond the cap', () => {
+    const shiftEdgesByDate = edges({
+      '2026-08-10': ['20:00:00', '22:00:00'], // ends 22:00 — 7h before a 05:00 OT start, past the 6h cap
+      '2026-08-11': null,
+    })
+    const { checkInAt: otStart, checkOutAt: otEnd } = computeShiftWindow('2026-08-11', '05:00:00', '08:00:00')
+    assert.equal(resolveOvertimeOwnerDate('2026-08-11', otStart, otEnd, shiftEdgesByDate), '2026-08-11')
+  })
+
+  it('keeps ot_date on an exact tie between the two gaps', () => {
+    // Shift ends 00:00 the 11th, next shift starts 08:00 the 11th — an OT
+    // block dead in the middle (02:00-06:00) is 2h from both edges.
+    const shiftEdgesByDate = edges({
+      '2026-08-10': ['16:00:00', '00:00:00'],
+      '2026-08-11': ['08:00:00', '17:00:00'],
+    })
+    const { checkInAt: otStart, checkOutAt: otEnd } = computeShiftWindow('2026-08-11', '02:00:00', '06:00:00')
+    assert.equal(resolveOvertimeOwnerDate('2026-08-11', otStart, otEnd, shiftEdgesByDate), '2026-08-11')
+  })
+
+  it('stays on ot_date when the previous day is outside the map entirely (caller passed a narrow date range)', () => {
+    const shiftEdgesByDate = edges({
+      '2026-08-11': ['20:00:00', '05:00:00'],
+    })
+    const { checkInAt: otStart, checkOutAt: otEnd } = computeShiftWindow('2026-08-11', '05:00:00', '08:00:00')
+    assert.equal(resolveOvertimeOwnerDate('2026-08-11', otStart, otEnd, shiftEdgesByDate), '2026-08-11')
   })
 })

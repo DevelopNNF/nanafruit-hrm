@@ -198,14 +198,80 @@ async function loadOffSiteByDate(
 /** One approved overtime block, resolved to real instants. */
 export type OvertimeInterval = { requestId: number; startAt: string; endAt: string }
 
+/** A shift's real checkIn/checkOut instants, or null on a date with no shift
+ *  at all — what resolveOvertimeOwnerDate compares an OT block's edges
+ *  against. Deliberately just the two instants, not a whole ExpectedShiftWindow:
+ *  this decision only cares where the shift starts and ends, never its break,
+ *  leave carve-outs, or status. */
+type ShiftEdges = { checkInAt: Date; checkOutAt: Date } | null
+
 /**
- * Approved overtime_requests for the given work-dates, grouped by date and
+ * How close an approved OT block's edge must be to a neighboring day's shift
+ * edge before that OT is treated as a continuation of that shift rather than
+ * a block in its own right. Wider than MATCH_BUFFER_MINUTES (which governs
+ * how far a raw *punch* may drift from an expected window) on purpose: an OT
+ * request is deliberately-approved, planned time, not a stray punch, so a
+ * larger tolerance is safe. Beyond this, an OT block is presumed unrelated to
+ * either neighboring shift and stays on the date it was actually filed
+ * against — otherwise a genuinely standalone block (called in for a few
+ * hours on a rest day) could get dragged into whichever distant shift
+ * happens to be a little closer than the other, widening that day's match
+ * window for no real reason. See resolveOvertimeOwnerDate.
+ */
+export const OVERTIME_ATTACH_MAX_GAP_MINUTES = 360
+
+/**
+ * Which work-date an approved OT block should be grouped under, when it
+ * borders two shifts rather than sitting inside its own.
+ *
+ * The motivating case: a 20:00-05:00 shift starting the 10th, OT approved for
+ * 05:00-08:00 on the 11th to cover the tail end of it. Filed with
+ * ot_date = 11th (the only date the 05:00-08:00 range actually falls on), but
+ * the shift the employee is finishing is the 10th's — attaching the OT to the
+ * 11th's own window instead merges it with the 11th's *own* 20:00-05:00 shift
+ * into one absurdly wide match span, mis-attributing whichever punch happens
+ * to fall first inside it.
+ *
+ * Resolved by comparing two gaps: the OT's start against the previous day's
+ * shift end, and the OT's end against ot_date's own shift start. Whichever is
+ * smaller wins, provided it is within OVERTIME_ATTACH_MAX_GAP_MINUTES; a
+ * missing shift on one side loses automatically (infinite gap); an exact tie,
+ * or both sides out of range, keeps ot_date — the date the request was
+ * actually filed against, and the least surprising fallback.
+ */
+export function resolveOvertimeOwnerDate(
+  otDate: string,
+  otStartAt: Date,
+  otEndAt: Date,
+  shiftEdgesByDate: Map<string, ShiftEdges>
+): string {
+  const prevDate = addDays(otDate, -1)
+  const prevShift = shiftEdgesByDate.get(prevDate) ?? null
+  const ownShift = shiftEdgesByDate.get(otDate) ?? null
+
+  const maxGapMs = OVERTIME_ATTACH_MAX_GAP_MINUTES * 60_000
+  const gapToPrev = prevShift ? Math.abs(otStartAt.getTime() - prevShift.checkOutAt.getTime()) : Infinity
+  const gapToOwn = ownShift ? Math.abs(ownShift.checkInAt.getTime() - otEndAt.getTime()) : Infinity
+  const cappedGapToPrev = gapToPrev <= maxGapMs ? gapToPrev : Infinity
+  const cappedGapToOwn = gapToOwn <= maxGapMs ? gapToOwn : Infinity
+
+  if (cappedGapToPrev === Infinity && cappedGapToOwn === Infinity) return otDate
+  return cappedGapToPrev < cappedGapToOwn ? prevDate : otDate
+}
+
+/**
+ * Approved overtime_requests for the given work-dates, grouped by the
+ * work-date each is actually attributed to (see resolveOvertimeOwnerDate) and
  * resolved to instants.
  *
- * Anchored to its own ot_date, exactly like the shift is anchored to
- * work_date: a 22:00-02:00 block belongs to the evening it started, and
- * computeShiftWindow already encodes that "end <= start means the next
- * calendar day" rule, so it is reused rather than restated.
+ * `shiftEdgesByDate` must cover every date in `dates` plus the day before the
+ * earliest one — resolveExpectedShiftWindows builds it from the same
+ * calendarDays it already fetched, so this never issues its own query for it.
+ * An OT block whose previous day falls outside that map (the caller asked for
+ * a narrow slice that didn't include it) simply cannot be re-attributed
+ * backward and stays on its own ot_date — a caller wanting the re-attribution
+ * available must include that neighbor, same requirement
+ * attendanceImportClassify.ts already documents for its own windows.
  *
  * Only 'approved' rows are loaded. A pending request must not widen the
  * matching window or it would change the attendance verdict of a day before
@@ -214,6 +280,7 @@ export type OvertimeInterval = { requestId: number; startAt: string; endAt: stri
 async function loadOvertimeByDate(
   employeeId: number,
   dates: string[],
+  shiftEdgesByDate: Map<string, ShiftEdges>,
   db: Queryable
 ): Promise<Map<string, OvertimeInterval[]>> {
   const { rows } = await db.query<{
@@ -232,13 +299,14 @@ async function loadOvertimeByDate(
   const byDate = new Map<string, OvertimeInterval[]>()
   for (const row of rows) {
     const { checkInAt, checkOutAt } = computeShiftWindow(row.ot_date, row.start_time, row.end_time)
-    const list = byDate.get(row.ot_date) ?? []
+    const ownerDate = resolveOvertimeOwnerDate(row.ot_date, checkInAt, checkOutAt, shiftEdgesByDate)
+    const list = byDate.get(ownerDate) ?? []
     list.push({
       requestId: Number(row.id),
       startAt: checkInAt.toISOString(),
       endAt: checkOutAt.toISOString(),
     })
-    byDate.set(row.ot_date, list)
+    byDate.set(ownerDate, list)
   }
   return byDate
 }
@@ -374,7 +442,21 @@ export async function resolveExpectedShiftWindows(
   // buying anything worth that.
   const policyByShiftId = await loadShiftPolicy(shiftIds, db)
   const leaveByDate = await loadLeaveByDate(employeeId, sorted[0]!, sorted[sorted.length - 1]!, db)
-  const overtimeByDate = await loadOvertimeByDate(employeeId, dates, db)
+
+  // Built from calendarDays rather than a fresh query: resolveOvertimeOwnerDate
+  // only needs where each date's shift starts and ends, and calendarDays has
+  // already resolved that. Only covers `dates` itself — an OT block whose
+  // previous day falls outside it can't be re-attributed backward, see
+  // loadOvertimeByDate's comment.
+  const shiftEdgesByDate = new Map<string, ShiftEdges>(
+    calendarDays.map((day) => [
+      day.date,
+      day.shiftId !== null && day.shiftStartTime !== null && day.shiftEndTime !== null
+        ? computeShiftWindow(day.date, day.shiftStartTime, day.shiftEndTime)
+        : null,
+    ])
+  )
+  const overtimeByDate = await loadOvertimeByDate(employeeId, dates, shiftEdgesByDate, db)
   const offSiteByDate = await loadOffSiteByDate(employeeId, sorted[0]!, sorted[sorted.length - 1]!, db)
 
   return calendarDays.map((day) => {
