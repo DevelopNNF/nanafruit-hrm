@@ -100,6 +100,7 @@ export function PayrollPeriodFormPage() {
   const [entries, setEntries] = useState<PayrollEntry[]>([])
   const [entriesLoading, setEntriesLoading] = useState(!isNew)
   const [calculating, setCalculating] = useState(false)
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -248,7 +249,8 @@ export function PayrollPeriodFormPage() {
   const editable = canWrite && status === 'draft'
   const dayCount =
     draft.periodStart && draft.periodEnd ? windowDayCount(draft.periodStart, draft.periodEnd) : null
-  const totals = entries.reduce(
+  const visibleEntries = needsReviewOnly ? entries.filter((entry) => entry.needsReview) : entries
+  const totals = visibleEntries.reduce(
     (sum, entry) => ({
       grossEarnings: sum.grossEarnings + entry.grossEarnings,
       totalDeductions: sum.totalDeductions + entry.totalDeductions,
@@ -510,80 +512,95 @@ export function PayrollPeriodFormPage() {
           )}
 
           {!entriesLoading && entries.length > 0 && (
-            <div className="overflow-hidden rounded-lg border border-slate-200">
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
-                  <thead>
-                    <tr>
-                      {['รหัส', 'รหัสลายนิ้วมือ', 'ชื่อ', 'ประเภท', 'รับรวม', 'หักรวม', 'สุทธิ', ''].map(
-                        (h) => (
-                          <th
-                            key={h}
-                            className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
+            <>
+              <label className="mb-3 flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={needsReviewOnly}
+                  onChange={(e) => setNeedsReviewOnly(e.target.checked)}
+                />
+                แสดงเฉพาะรายการที่ต้องตรวจสอบ
+              </label>
+
+              {visibleEntries.length === 0 ? (
+                <p className={muted}>ไม่มีรายการที่ต้องตรวจสอบ</p>
+              ) : (
+                <div className="overflow-hidden rounded-lg border border-slate-200">
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
+                      <thead>
+                        <tr>
+                          {['รหัส', 'รหัสลายนิ้วมือ', 'ชื่อ', 'ประเภท', 'รับรวม', 'หักรวม', 'สุทธิ', ''].map(
+                            (h) => (
+                              <th
+                                key={h}
+                                className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
+                              >
+                                {h}
+                              </th>
+                            )
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleEntries.map((entry) => (
+                          <tr
+                            key={entry.id}
+                            className="cursor-pointer hover:bg-slate-50"
+                            onClick={() => void navigate(`/payroll/entries/${entry.id}`)}
                           >
-                            {h}
-                          </th>
-                        )
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {entries.map((entry) => (
-                      <tr
-                        key={entry.id}
-                        className="cursor-pointer hover:bg-slate-50"
-                        onClick={() => void navigate(`/payroll/entries/${entry.id}`)}
-                      >
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-700">
-                          {entry.employeeCode}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-700">
-                          {entry.fingerprintCode ?? <span className={muted}>—</span>}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
-                          {entry.employeeName}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                          {WAGE_TYPE_LABEL[entry.wageType]}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right tabular-nums text-slate-700">
-                          {formatAmount(entry.grossEarnings)}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right tabular-nums text-slate-700">
-                          {formatAmount(entry.totalDeductions)}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right tabular-nums font-medium text-slate-900">
-                          {formatAmount(entry.netPay)}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
-                          {entry.needsReview && <span className={badge('danger')}>ต้องตรวจสอบ</span>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-slate-50">
-                      <td
-                        className="px-4 py-2.5 align-middle text-xs font-semibold tracking-wider text-slate-500 uppercase"
-                        colSpan={4}
-                      >
-                        รวม {entries.length} คน
-                      </td>
-                      <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
-                        {formatAmount(totals.grossEarnings)}
-                      </td>
-                      <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
-                        {formatAmount(totals.totalDeductions)}
-                      </td>
-                      <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
-                        {formatAmount(totals.netPay)}
-                      </td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-700">
+                              {entry.employeeCode}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-700">
+                              {entry.fingerprintCode ?? <span className={muted}>—</span>}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
+                              {entry.employeeName}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                              {WAGE_TYPE_LABEL[entry.wageType]}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right tabular-nums text-slate-700">
+                              {formatAmount(entry.grossEarnings)}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right tabular-nums text-slate-700">
+                              {formatAmount(entry.totalDeductions)}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right tabular-nums font-medium text-slate-900">
+                              {formatAmount(entry.netPay)}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
+                              {entry.needsReview && <span className={badge('danger')}>ต้องตรวจสอบ</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-slate-50">
+                          <td
+                            className="px-4 py-2.5 align-middle text-xs font-semibold tracking-wider text-slate-500 uppercase"
+                            colSpan={4}
+                          >
+                            รวม {visibleEntries.length} คน
+                          </td>
+                          <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
+                            {formatAmount(totals.grossEarnings)}
+                          </td>
+                          <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
+                            {formatAmount(totals.totalDeductions)}
+                          </td>
+                          <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
+                            {formatAmount(totals.netPay)}
+                          </td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </section>
       )}
