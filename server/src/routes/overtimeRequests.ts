@@ -325,12 +325,22 @@ type ValidationOutcome =
  * midnight runs into tomorrow's shift. buildCalendarDaysForDates is the same
  * classification cascade the monthly calendar and day-off swaps use, so a
  * date can never classify one way here and another way there.
+ *
+ * `checkBackdate` is false only for the re-validation an approval runs before
+ * deciding — see the approve routes' own comments. OVERTIME_BACKDATE_LIMIT_DAYS
+ * exists to stop a request from being *filed* long after the fact; it says
+ * nothing about how long a request that was validly filed may then sit in an
+ * approval queue, and HR routinely clears that queue in a batch near
+ * month-end, well past 7 days after some of the dates in it. Re-checking it
+ * at approval time was rejecting requests for no reason other than approval
+ * lag — nothing about the request itself had gone stale.
  */
 async function validateOvertimeRequestInput(
   employeeId: number,
   input: OvertimeRequestInput,
   excludeId: number | null,
-  db: Queryable = pool
+  db: Queryable = pool,
+  { checkBackdate = true }: { checkBackdate?: boolean } = {}
 ): Promise<ValidationOutcome> {
   const employee = await findEmployeeById(employeeId, db)
   if (!employee) return { kind: 'employee-not-found' }
@@ -345,7 +355,9 @@ async function validateOvertimeRequestInput(
   if (requestedMinutes > OVERTIME_MAX_MINUTES) return { kind: 'too-long' }
 
   const today = toThailandDateString(new Date())
-  if (input.otDate < addDays(today, -OVERTIME_BACKDATE_LIMIT_DAYS)) return { kind: 'backdated' }
+  if (checkBackdate && input.otDate < addDays(today, -OVERTIME_BACKDATE_LIMIT_DAYS)) {
+    return { kind: 'backdated' }
+  }
   if (input.otDate < employee.employment.hireDate) return { kind: 'before-hire' }
 
   const days = await buildCalendarDaysForDates(
@@ -450,13 +462,6 @@ function validationFail(res: Response, outcome: Exclude<ValidationOutcome, { kin
  * at rejection, which is the only decision still available.
  */
 function approvalStaleFail(res: Response, outcome: Exclude<ValidationOutcome, { kind: 'ok' }>): void {
-  if (outcome.kind === 'backdated') {
-    return fail(
-      res,
-      409,
-      `คำขอนี้ย้อนหลังเกิน ${OVERTIME_BACKDATE_LIMIT_DAYS} วันไปแล้ว ไม่สามารถอนุมัติได้ กรุณาปฏิเสธคำขอนี้`
-    )
-  }
   if (outcome.kind === 'shift-conflict') {
     const { day } = outcome
     return fail(
@@ -486,9 +491,11 @@ function approvalStaleFail(res: Response, outcome: Exclude<ValidationOutcome, { 
       'พนักงานคนนี้ยังไม่ได้ถูกกำหนดกลุ่มการทำงานล่วงเวลา จึงยังคำนวณค่า OT ไม่ได้ กรุณากำหนดกลุ่มในหน้าข้อมูลพนักงานก่อน'
     )
   }
-  // Everything else (length bounds, hire date, missing employee) was already
-  // true at submission and cannot become true afterwards; if one shows up
-  // here the employee-facing wording is still accurate.
+  // Everything else (length bounds, hire date, missing employee, backdating —
+  // the last of which isn't even checked here any more, see
+  // validateOvertimeRequestInput's checkBackdate) was already true at
+  // submission and cannot become true afterwards; if one shows up here the
+  // employee-facing wording is still accurate.
   return validationFail(res, outcome)
 }
 
@@ -1122,14 +1129,20 @@ overtimeRequestsRouter.post(
         if (!actorInfo) return { kind: 'forbidden' as const }
 
         // Re-validated here, not just at submission, for BOTH a forwarding
-        // approval and a final one: a request can sit pending long enough to
-        // fall out of the backdating window, and in the meantime an approved
-        // shift change can have moved the employee's shift onto the hours
-        // this request claims. Both are checked against live data — the
-        // row's own snapshot is what was true when it was filed, which is
+        // approval and a final one: in the meantime an approved shift change
+        // can have moved the employee's shift onto the hours this request
+        // claims, gone onto approved leave, etc. Checked against live data —
+        // the row's own snapshot is what was true when it was filed, which is
         // exactly the thing in question. Forwarding something already stale
         // just pushes the same problem to HR/Admin instead of catching it
         // where it happened.
+        //
+        // checkBackdate: false — HR routinely clears the approval queue in a
+        // batch near month-end, well past 7 days after some of the dates in
+        // it. The 7-day limit exists to stop a request from being *filed*
+        // long after the fact (see OVERTIME_BACKDATE_LIMIT_DAYS); it was
+        // never meant to expire a request that was validly filed but is
+        // simply waiting its turn in the queue.
         const outcome = await validateOvertimeRequestInput(
           Number(row.employee_id),
           {
@@ -1139,7 +1152,8 @@ overtimeRequestsRouter.post(
             reason: row.reason,
           },
           id,
-          client
+          client,
+          { checkBackdate: false }
         )
         if (outcome.kind !== 'ok') return { kind: 'stale' as const, outcome }
 
@@ -1468,7 +1482,8 @@ overtimeRequestsRouter.post(
 
             // Same live re-validation as the single-request approve route —
             // see its own comment for why the row's own snapshot isn't
-            // enough, and for why this runs before a forwarding approval too.
+            // enough, why this runs before a forwarding approval too, and why
+            // checkBackdate is off here.
             const outcome = await validateOvertimeRequestInput(
               employeeId,
               {
@@ -1478,7 +1493,8 @@ overtimeRequestsRouter.post(
                 reason: row.reason,
               },
               id,
-              client
+              client,
+              { checkBackdate: false }
             )
             if (outcome.kind !== 'ok') {
               results.push({
@@ -1533,9 +1549,18 @@ overtimeRequestsRouter.post(
               },
             })
 
+            // Same reclassify-then-recompute sequence, and the same
+            // ot_date - 1..+1 range, as the single-request approve route —
+            // see its comments for why both are needed.
+            await reclassifyAttendanceEvents(
+              employeeId,
+              addDays(row.ot_date, -1),
+              addDays(row.ot_date, 1),
+              client
+            )
             await recomputeAttendanceDaily(
               employeeId,
-              row.ot_date,
+              addDays(row.ot_date, -1),
               addDays(row.ot_date, 1),
               client
             )
