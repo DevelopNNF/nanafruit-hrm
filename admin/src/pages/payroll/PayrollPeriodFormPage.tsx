@@ -248,6 +248,14 @@ export function PayrollPeriodFormPage() {
   const editable = canWrite && status === 'draft'
   const dayCount =
     draft.periodStart && draft.periodEnd ? windowDayCount(draft.periodStart, draft.periodEnd) : null
+  const totals = entries.reduce(
+    (sum, entry) => ({
+      grossEarnings: sum.grossEarnings + entry.grossEarnings,
+      totalDeductions: sum.totalDeductions + entry.totalDeductions,
+      netPay: sum.netPay + entry.netPay,
+    }),
+    { grossEarnings: 0, totalDeductions: 0, netPay: 0 }
+  )
 
   return (
     <>
@@ -507,14 +515,16 @@ export function PayrollPeriodFormPage() {
                 <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
                   <thead>
                     <tr>
-                      {['รหัส', 'ชื่อ', 'ประเภท', 'รับรวม', 'หักรวม', 'สุทธิ', ''].map((h) => (
-                        <th
-                          key={h}
-                          className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
-                        >
-                          {h}
-                        </th>
-                      ))}
+                      {['รหัส', 'รหัสลายนิ้วมือ', 'ชื่อ', 'ประเภท', 'รับรวม', 'หักรวม', 'สุทธิ', ''].map(
+                        (h) => (
+                          <th
+                            key={h}
+                            className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
+                          >
+                            {h}
+                          </th>
+                        )
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -526,6 +536,9 @@ export function PayrollPeriodFormPage() {
                       >
                         <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-700">
                           {entry.employeeCode}
+                        </td>
+                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-mono text-[0.775rem] text-slate-700">
+                          {entry.fingerprintCode ?? <span className={muted}>—</span>}
                         </td>
                         <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-900">
                           {entry.employeeName}
@@ -548,6 +561,26 @@ export function PayrollPeriodFormPage() {
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-50">
+                      <td
+                        className="px-4 py-2.5 align-middle text-xs font-semibold tracking-wider text-slate-500 uppercase"
+                        colSpan={4}
+                      >
+                        รวม {entries.length} คน
+                      </td>
+                      <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
+                        {formatAmount(totals.grossEarnings)}
+                      </td>
+                      <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
+                        {formatAmount(totals.totalDeductions)}
+                      </td>
+                      <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
+                        {formatAmount(totals.netPay)}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>

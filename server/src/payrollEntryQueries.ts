@@ -54,6 +54,7 @@ export type PayrollEntryRow = {
   employee_id: string
   employee_code: string
   employee_name: string
+  fingerprint_code: string | null
   wage_type: string
   employed_days: string | null
   is_full_period: boolean | null
@@ -73,12 +74,15 @@ export type PayrollEntryRow = {
 }
 
 export const SELECT_PAYROLL_ENTRY = `
-  SELECT id, payroll_period_id, employee_id, employee_code, employee_name, wage_type,
-         employed_days, is_full_period, work_days, paid_leave_days, absent_days,
-         late_minutes_total, late_minutes_deducted,
-         early_leave_minutes_total, early_leave_minutes_deducted,
-         gross_earnings, total_deductions, net_pay, needs_review, review_reasons, calculated_at
-  FROM payroll_entries
+  SELECT pe.id, pe.payroll_period_id, pe.employee_id, pe.employee_code, pe.employee_name,
+         e.fingerprint_code, pe.wage_type,
+         pe.employed_days, pe.is_full_period, pe.work_days, pe.paid_leave_days, pe.absent_days,
+         pe.late_minutes_total, pe.late_minutes_deducted,
+         pe.early_leave_minutes_total, pe.early_leave_minutes_deducted,
+         pe.gross_earnings, pe.total_deductions, pe.net_pay, pe.needs_review, pe.review_reasons,
+         pe.calculated_at
+  FROM payroll_entries pe
+  LEFT JOIN employees e ON e.id = pe.employee_id
 `
 
 function rowToPayrollEntry(row: PayrollEntryRow): PayrollEntry {
@@ -88,6 +92,7 @@ function rowToPayrollEntry(row: PayrollEntryRow): PayrollEntry {
     employeeId: Number(row.employee_id),
     employeeCode: row.employee_code,
     employeeName: row.employee_name,
+    fingerprintCode: row.fingerprint_code,
     wageType: row.wage_type as PayrollEntry['wageType'],
     employedDays: row.employed_days === null ? null : Number(row.employed_days),
     isFullPeriod: row.is_full_period,
@@ -140,7 +145,7 @@ export async function listPayrollEntriesForPeriod(
   db: Queryable = pool
 ): Promise<PayrollEntry[]> {
   const { rows } = await db.query<PayrollEntryRow>(
-    `${SELECT_PAYROLL_ENTRY} WHERE payroll_period_id = $1 ORDER BY employee_code`,
+    `${SELECT_PAYROLL_ENTRY} WHERE pe.payroll_period_id = $1 ORDER BY pe.employee_code`,
     [periodId]
   )
   return rows.map(rowToPayrollEntry)
@@ -151,7 +156,7 @@ export async function findPayrollEntryById(
   id: number,
   db: Queryable = pool
 ): Promise<PayrollEntryWithLines | null> {
-  const { rows } = await db.query<PayrollEntryRow>(`${SELECT_PAYROLL_ENTRY} WHERE id = $1`, [id])
+  const { rows } = await db.query<PayrollEntryRow>(`${SELECT_PAYROLL_ENTRY} WHERE pe.id = $1`, [id])
   const row = rows[0]
   if (!row) return null
 

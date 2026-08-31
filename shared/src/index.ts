@@ -1582,6 +1582,10 @@ export type PayrollEntry = {
   employeeId: number
   employeeCode: string
   employeeName: string
+  /** The employee's current fingerprint terminal code — read live from
+   *  employees, not snapshotted, so it tracks re-enrollment. Null if the
+   *  employee has none set. */
+  fingerprintCode: string | null
   wageType: WageType
   /** Monthly only — null for a daily entry. */
   employedDays: number | null
