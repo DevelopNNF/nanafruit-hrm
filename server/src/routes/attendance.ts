@@ -371,6 +371,9 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
     return fail(res, 400, `workLocation must be one of: ${WORK_LOCATIONS.join(', ')}`)
   }
 
+  const search = req.query['search']
+  if (search !== undefined && typeof search !== 'string') return fail(res, 400, 'search must be a string')
+
   const page = parseOptionalId(req.query['page'])
   if (page === undefined) return fail(res, 400, 'page must be a positive integer')
 
@@ -386,6 +389,7 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
         ...(toDate !== null && { toDate }),
         ...(statusRaw !== undefined && { status: statusRaw as AttendanceDailyFilter }),
         ...(workLocation !== null && { workLocation }),
+        ...(search !== undefined && search !== '' && { search }),
       },
       {
         ...(page !== null && { page }),
@@ -427,6 +431,9 @@ attendanceRouter.get('/attendance/daily/export', canReadAdmin, async (req: Reque
     return fail(res, 400, `workLocation must be one of: ${WORK_LOCATIONS.join(', ')}`)
   }
 
+  const search = req.query['search']
+  if (search !== undefined && typeof search !== 'string') return fail(res, 400, 'search must be a string')
+
   try {
     const buffer = await buildAttendanceReportWorkbook({
       ...(employeeId !== null && { employeeId }),
@@ -435,6 +442,7 @@ attendanceRouter.get('/attendance/daily/export', canReadAdmin, async (req: Reque
       ...(toDate !== null && { toDate }),
       ...(statusRaw !== undefined && { status: statusRaw as AttendanceDailyFilter }),
       ...(workLocation !== null && { workLocation }),
+      ...(search !== undefined && search !== '' && { search }),
     })
 
     const filename = `attendance-${fromDate ?? 'all'}-to-${toDate ?? 'all'}.xlsx`

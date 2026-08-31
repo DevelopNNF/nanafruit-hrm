@@ -45,6 +45,7 @@ type Filters = {
   departmentId: number | ''
   status: AttendanceDailyFilter | ''
   workLocation: WorkLocation | ''
+  search: string
 }
 
 const FILTER_LABEL: Record<AttendanceDailyFilter, string> = {
@@ -159,12 +160,18 @@ export function AttendanceDailyListPage() {
     departmentId: '',
     status: '',
     workLocation: '',
+    search: '',
   }
   // `draft` tracks the form fields as the user edits them; `applied` is what
   // was last submitted and is the only thing the fetch effect depends on —
   // so changing a filter no longer fires a request until ค้นหา is pressed.
   const [draft, setDraft] = useState<Filters>(initialFilters)
   const [applied, setApplied] = useState<Filters>(initialFilters)
+  // Bumped on every ค้นหา submit so the fetch effect below always re-runs —
+  // `applied`/`page` alone don't change (React bails on the setState) when
+  // the user resubmits the same filters already applied on page 1, which
+  // otherwise left `fetching` stuck true with no request in flight.
+  const [searchToken, setSearchToken] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [departments, setDepartments] = useState<Department[]>([])
@@ -200,6 +207,7 @@ export function AttendanceDailyListPage() {
         ...(applied.departmentId !== '' && { departmentId: applied.departmentId }),
         ...(applied.status !== '' && { status: applied.status }),
         ...(applied.workLocation !== '' && { workLocation: applied.workLocation }),
+        ...(applied.search.trim() !== '' && { search: applied.search.trim() }),
       },
       { page, pageSize },
       controller.signal
@@ -215,7 +223,7 @@ export function AttendanceDailyListPage() {
       })
 
     return () => controller.abort()
-  }, [applied, page, pageSize])
+  }, [applied, page, pageSize, searchToken])
 
   const summary = state.phase === 'ok' ? state.summary : null
 
@@ -224,6 +232,7 @@ export function AttendanceDailyListPage() {
     setFetching(true)
     setApplied(draft)
     setPage(1)
+    setSearchToken((t) => t + 1)
   }
 
   function goToPage(next: number) {
@@ -246,6 +255,7 @@ export function AttendanceDailyListPage() {
         ...(applied.departmentId !== '' && { departmentId: applied.departmentId }),
         ...(applied.status !== '' && { status: applied.status }),
         ...(applied.workLocation !== '' && { workLocation: applied.workLocation }),
+        ...(applied.search.trim() !== '' && { search: applied.search.trim() }),
       })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -277,8 +287,18 @@ export function AttendanceDailyListPage() {
 
       <form
         onSubmit={handleSearch}
-        className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7"
+        className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8"
       >
+        <label className={fieldLabel}>
+          <span>ค้นหา</span>
+          <input
+            type="text"
+            className={fieldControl}
+            placeholder="รหัสพนักงาน, ชื่อ-นามสกุล, ชื่อเล่น"
+            value={draft.search}
+            onChange={(e) => setDraft({ ...draft, search: e.target.value })}
+          />
+        </label>
         <label className={fieldLabel}>
           <span>ตั้งแต่วันที่</span>
           <input

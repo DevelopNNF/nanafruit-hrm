@@ -8,6 +8,8 @@ export type AttendanceDailyQuery = {
   departmentId?: number
   status?: AttendanceDailyFilter
   workLocation?: WorkLocation
+  /** Matched against employee code, full name, and nickname. */
+  search?: string
 }
 
 function buildParams(query: AttendanceDailyQuery): URLSearchParams {
@@ -18,6 +20,7 @@ function buildParams(query: AttendanceDailyQuery): URLSearchParams {
   if (query.departmentId !== undefined) params.set('departmentId', String(query.departmentId))
   if (query.status) params.set('status', query.status)
   if (query.workLocation) params.set('workLocation', query.workLocation)
+  if (query.search) params.set('search', query.search)
   return params
 }
 

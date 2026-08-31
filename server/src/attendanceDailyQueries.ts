@@ -366,6 +366,10 @@ export type AttendanceDailyFilterInput = {
   departmentId?: number
   status?: AttendanceDailyFilter
   workLocation?: WorkLocation
+  /** Matched against employee_code, the Thai full name, and nickname — same
+   *  fields as searchEmployees' query, minus the English name and job title
+   *  this report has no columns for. */
+  search?: string
 }
 
 /** The WHERE conditions shared by the on-screen list and the unlimited export
@@ -401,6 +405,14 @@ function buildAttendanceDailyConditions(filter: AttendanceDailyFilterInput): {
   }
   if (filter.status !== undefined) {
     conditions.push(FILTER_SQL[filter.status])
+  }
+  const search = filter.search?.trim()
+  if (search) {
+    params.push(`%${search}%`)
+    const n = params.length
+    conditions.push(
+      `(e.employee_code ILIKE $${n} OR (e.first_name_th || ' ' || e.last_name_th) ILIKE $${n} OR e.nickname ILIKE $${n})`
+    )
   }
   return { conditions, params }
 }
