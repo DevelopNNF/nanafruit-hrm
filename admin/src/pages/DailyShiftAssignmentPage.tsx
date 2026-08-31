@@ -37,6 +37,15 @@ function today(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 }
 
+function formatTime(time: string): string {
+  return time.slice(0, 5)
+}
+
+/** The shift <select>'s "delete" choice — clears whatever shift is assigned
+ *  on the selected date(s) instead of assigning one. Distinct from '' (no
+ *  choice made yet) and from any real shift id. */
+const DELETE_SHIFT_VALUE = '__delete__'
+
 /**
  * Assigns a shift to several temporary daily workers (employmentType
  * 'ชั่วคราว') for every date in a From–To range at once. These employees
@@ -58,7 +67,8 @@ export function DailyShiftAssignmentPage() {
   const [employeesState, setEmployeesState] = useState<EmployeesState>({ phase: 'loading' })
   const [shiftsState, setShiftsState] = useState<LoadState<Shift[]>>({ phase: 'loading' })
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<number[]>([])
-  const [shiftId, setShiftId] = useState<number | ''>('')
+  /** '' = no choice yet, DELETE_SHIFT_VALUE = "ลบกะ", otherwise a shift id. */
+  const [shiftSelection, setShiftSelection] = useState<string>('')
   const [submitting, setSubmitting] = useState(false)
   const [outcomes, setOutcomes] = useState<DailyShiftAssignmentOutcome[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -146,15 +156,21 @@ export function DailyShiftAssignmentPage() {
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
-    if (shiftId === '') {
-      notify.error('ยังไม่ได้เลือกกะ', 'เลือกกะที่จะมอบหมายก่อนบันทึก')
+    if (shiftSelection === '') {
+      notify.error('ยังไม่ได้เลือกกะ', 'เลือกกะที่จะมอบหมายหรือลบก่อนบันทึก')
       return
     }
     if (selectedEmployeeIds.length === 0) {
       notify.error('ยังไม่ได้เลือกพนักงาน', 'ย้ายพนักงานอย่างน้อยหนึ่งคนไปฝั่งขวาก่อนบันทึก')
       return
     }
-    const assignments = selectedEmployeeIds.map((employeeId) => ({ employeeId, shiftId: Number(shiftId) }))
+    const isDelete = shiftSelection === DELETE_SHIFT_VALUE
+    const dateRangeText = dateTo && dateTo !== dateFrom ? `${dateFrom} – ${dateTo}` : dateFrom
+    if (isDelete && !confirm(`ลบกะของพนักงานที่เลือก ${selectedEmployeeIds.length} คน ในวันที่ ${dateRangeText}?`)) {
+      return
+    }
+    const shiftIdToSend = isDelete ? null : Number(shiftSelection)
+    const assignments = selectedEmployeeIds.map((employeeId) => ({ employeeId, shiftId: shiftIdToSend }))
 
     setSubmitting(true)
     setError(null)
@@ -165,10 +181,12 @@ export function DailyShiftAssignmentPage() {
       const okCount = result.filter((o) => o.kind === 'ok').length
       const problemCount = result.length - okCount
       if (problemCount === 0) {
-        notify.success(`มอบหมายกะสำเร็จ ${okCount} คน`)
+        notify.success(`${isDelete ? 'ลบกะสำเร็จ' : 'มอบหมายกะสำเร็จ'} ${okCount} คน`)
         setSelectedEmployeeIds([])
       } else {
-        notify.error(`มอบหมายสำเร็จ ${okCount} คน — มีปัญหา ${problemCount} คน ดูรายละเอียดด้านล่าง`)
+        notify.error(
+          `${isDelete ? 'ลบกะสำเร็จ' : 'มอบหมายสำเร็จ'} ${okCount} คน — มีปัญหา ${problemCount} คน ดูรายละเอียดด้านล่าง`
+        )
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'บันทึกไม่สำเร็จ')
@@ -240,15 +258,16 @@ export function DailyShiftAssignmentPage() {
               <select
                 className={fieldControl}
                 required
-                value={shiftId}
-                onChange={(e) => setShiftId(e.target.value ? Number(e.target.value) : '')}
+                value={shiftSelection}
+                onChange={(e) => setShiftSelection(e.target.value)}
               >
                 <option value="">— เลือกกะ —</option>
                 {shifts.map((shift) => (
                   <option key={shift.id} value={shift.id}>
-                    {shift.shiftName}
+                    {shift.shiftName} ({formatTime(shift.shiftStartTime)}–{formatTime(shift.shiftEndTime)})
                   </option>
                 ))}
+                <option value={DELETE_SHIFT_VALUE}>— ลบกะ (ยกเลิกกะที่มอบหมายไว้) —</option>
               </select>
             </label>
           </div>
@@ -282,11 +301,15 @@ export function DailyShiftAssignmentPage() {
 
           <div className='w-full flex justify-end'>
             <button
-              className={button('primary')}
+              className={button(shiftSelection === DELETE_SHIFT_VALUE ? 'danger' : 'primary')}
               type="submit"
               disabled={submitting || loading || selectedEmployeeIds.length === 0}
             >
-              {submitting ? 'กำลังบันทึก…' : 'บันทึกการมอบหมาย'}
+              {submitting
+                ? 'กำลังบันทึก…'
+                : shiftSelection === DELETE_SHIFT_VALUE
+                  ? 'ลบกะ'
+                  : 'บันทึกการมอบหมาย'}
             </button>
           </div>
         </form>

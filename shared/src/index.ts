@@ -361,7 +361,9 @@ export type DailyShiftAssignmentInput = {
   dateFrom: string
   /** 'YYYY-MM-DD', >= dateFrom. null means "just dateFrom" — a single day. */
   dateTo: string | null
-  assignments: { employeeId: number; shiftId: number }[]
+  /** shiftId null clears any shift assigned on the date(s) instead of
+   *  assigning one — the "ลบกะ" option on the admin screen. */
+  assignments: { employeeId: number; shiftId: number | null }[]
 }
 
 /** One employee's result across the whole [dateFrom, dateTo] range.

@@ -1326,16 +1326,21 @@ function parseDailyShiftAssignmentInput(body: unknown): ParseResult<DailyShiftAs
     return { ok: false, message: 'assignments must be a non-empty array' }
   }
 
-  const assignments: { employeeId: number; shiftId: number }[] = []
+  const assignments: { employeeId: number; shiftId: number | null }[] = []
   for (const item of assignmentsRaw) {
     if (typeof item !== 'object' || item === null) {
       return { ok: false, message: 'each assignment must be an object' }
     }
     const row = item as Record<string, unknown>
     const employeeId = requiredPositiveInt(row, 'employeeId')
-    const shiftId = requiredPositiveInt(row, 'shiftId')
-    if (employeeId === null || shiftId === null) {
-      return { ok: false, message: 'each assignment needs a positive employeeId and shiftId' }
+    if (employeeId === null) {
+      return { ok: false, message: 'each assignment needs a positive employeeId' }
+    }
+    // null means "ลบกะ" — clear whatever shift is assigned on the date(s)
+    // instead of assigning one.
+    const shiftId = optionalPositiveInt(row, 'shiftId')
+    if (shiftId === undefined) {
+      return { ok: false, message: 'each assignment needs shiftId as a positive integer or null' }
     }
     assignments.push({ employeeId, shiftId })
   }
@@ -1428,7 +1433,7 @@ employeesRouter.post(
               shiftId: assignment.shiftId,
               dateFrom: input.dateFrom,
               dateTo,
-              note: 'มอบหมายกะรายวัน',
+              note: assignment.shiftId === null ? 'ลบกะรายวัน' : 'มอบหมายกะรายวัน',
               createdByKind: actor.kind,
               createdById: actor.oid,
             })
