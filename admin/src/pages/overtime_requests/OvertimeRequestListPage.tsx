@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import type { OvertimeRequestListItem, OvertimeRequestStage, OvertimeRequestStatus } from '@hrm/shared'
 import { listOvertimeRequests, listOvertimeRequestsPendingApproval } from '../../api/overtimeRequests'
 import { Pagination } from '../../components/Pagination'
@@ -15,7 +15,6 @@ import {
   alertDetail,
   alertTitle,
   badge,
-  button,
   cardEmpty,
   eyebrow,
   muted,
@@ -166,9 +165,6 @@ export function OvertimeRequestListPage() {
           <h1>คำขอทำงานล่วงเวลา</h1>
           <p className={subtitle}>คำขอ OT จากพนักงาน รออนุมัติหรือปฏิเสธ</p>
         </div>
-        <Link className={button('primary')} to="/overtime-requests/bulk-request">
-          ขอ OT แบบกลุ่ม
-        </Link>
       </header>
 
       <Tabs value={tab} onValueChange={handleTabChange}>
