@@ -21,10 +21,12 @@ import ExcelJS from 'exceljs'
 import {
   EMPLOYMENT_TYPES,
   FINGERPRINT_CODE_MAX_LENGTH,
+  NATIONALITIES,
   TITLES,
   WORK_LOCATIONS,
   type EmploymentType,
   type Gender,
+  type Nationality,
   type Title,
   type WorkLocation,
 } from '@hrm/shared'
@@ -44,6 +46,7 @@ type Field =
   | 'firstNameTh'
   | 'lastNameTh'
   | 'nickname'
+  | 'nationality'
   | 'idCardNumber'
   | 'gender'
   | 'hireDate'
@@ -69,6 +72,7 @@ const STANDARD_HEADER_FIELDS: Record<string, Field> = {
   ชื่อ: 'firstNameTh',
   นามสกุล: 'lastNameTh',
   ชื่อเล่น: 'nickname',
+  สัญชาติ: 'nationality',
   เลขบัตรประชาชน: 'idCardNumber',
   เพศ: 'gender',
   วันที่จ้าง: 'hireDate',
@@ -84,12 +88,17 @@ const STANDARD_HEADER_FIELDS: Record<string, Field> = {
   'กลุ่ม OT': 'overtimeGroupName',
 }
 
+// idCardNumber is deliberately absent here even though the column itself must
+// exist (see below) — its per-row requiredness now depends on the row's own
+// nationality value ('ไทย' needs one, 'ต่างชาติ' doesn't), so it's resolved
+// by resolveIdCardNumber in parseRow instead of the generic fieldText()
+// required/optional switch every other field here uses.
 const STANDARD_REQUIRED_FIELDS: readonly Field[] = [
   'employeeCode',
   'title',
   'firstNameTh',
   'lastNameTh',
-  'idCardNumber',
+  'nationality',
   'hireDate',
   'startWorkingDate',
   'workLocation',
@@ -100,20 +109,38 @@ const STANDARD_REQUIRED_FIELDS: readonly Field[] = [
   'payrollGroupName',
 ]
 
-/** No รหัสพนักงาน/เลขบัตรประชาชน/กะงาน columns — temporary daily workers have
- *  neither an employee code nor an ID card, and their shift is assigned
- *  day-by-day (see the "มอบหมายกะรายวัน" screen), not through this sheet.
- *  รหัสลายนิ้วมือ is required here specifically, unlike the standard
- *  template, because it's this employee type's only real identity — the key
- *  routes/employeeImport.ts's dedup/update logic matches on for this
- *  template. ค่าจ้าง (wageAmount) is new and optional: a daily wage rate can
- *  be set here or, same as any other employee, later via the Finance tab. */
+/** idCardNumber's column must still exist on the standard template — this is
+ *  checked independently of STANDARD_REQUIRED_FIELDS (which only gates
+ *  per-row blank-cell errors via fieldText) because resolveColumns' "missing
+ *  column" check reads requiredFields directly, and idCardNumber can't sit in
+ *  that list without every row being forced non-blank regardless of
+ *  nationality. */
+const STANDARD_STRUCTURAL_COLUMNS: readonly Field[] = [...STANDARD_REQUIRED_FIELDS, 'idCardNumber']
+
+/** No รหัสพนักงาน/กะงาน columns — temporary daily workers have no employee
+ *  code, and their shift is assigned day-by-day (see the "มอบหมายกะรายวัน"
+ *  screen), not through this sheet. รหัสลายนิ้วมือ is required here
+ *  specifically, unlike the standard template, because it's this employee
+ *  type's only real identity — the key routes/employeeImport.ts's
+ *  dedup/update logic matches on for this template. ค่าจ้าง (wageAmount) is
+ *  optional: a daily wage rate can be set here or, same as any other
+ *  employee, later via the Finance tab.
+ *
+ *  เลขบัตรประชาชน IS present here, unlike before nationality existed — a
+ *  temporary daily worker can be a Thai national too, and nationality alone
+ *  decides whether it's required (see resolveIdCardNumber), not employee
+ *  type. Absent from TEMP_WORKER_REQUIRED_FIELDS/structuralColumns below on
+ *  purpose: an older downloaded copy of this template predating the column
+ *  should keep working (every row just reads null for it) rather than
+ *  hard-failing the whole upload. */
 const TEMP_WORKER_HEADER_FIELDS: Record<string, Field> = {
   รหัสลายนิ้วมือ: 'fingerprintCode',
   คำนำหน้า: 'title',
   ชื่อ: 'firstNameTh',
   นามสกุล: 'lastNameTh',
   ชื่อเล่น: 'nickname',
+  สัญชาติ: 'nationality',
+  เลขบัตรประชาชน: 'idCardNumber',
   เพศ: 'gender',
   วันที่จ้าง: 'hireDate',
   วันที่เริ่มงาน: 'startWorkingDate',
@@ -145,19 +172,27 @@ const TEMP_WORKER_REQUIRED_FIELDS: readonly Field[] = [
 type TemplateConfig = {
   code: TemplateCode
   headerFields: Record<string, Field>
+  /** Drives fieldText()'s per-row required/optional switch. */
   requiredFields: readonly Field[]
+  /** Drives resolveColumns' "column missing from the header row" structural
+   *  check. A superset of requiredFields for the standard template only —
+   *  see STANDARD_STRUCTURAL_COLUMNS' own comment for why idCardNumber sits
+   *  here but not in requiredFields. */
+  structuralColumns: readonly Field[]
 }
 
 const STANDARD_TEMPLATE: TemplateConfig = {
   code: 'EMP-IMP',
   headerFields: STANDARD_HEADER_FIELDS,
   requiredFields: STANDARD_REQUIRED_FIELDS,
+  structuralColumns: STANDARD_STRUCTURAL_COLUMNS,
 }
 
 const TEMP_WORKER_TEMPLATE: TemplateConfig = {
   code: 'TEMP-EMP-IMP',
   headerFields: TEMP_WORKER_HEADER_FIELDS,
   requiredFields: TEMP_WORKER_REQUIRED_FIELDS,
+  structuralColumns: TEMP_WORKER_REQUIRED_FIELDS,
 }
 
 /** Thai label shown for each field's required-column error, and in the
@@ -169,6 +204,7 @@ const FIELD_LABELS: Record<Field, string> = {
   firstNameTh: 'ชื่อ',
   lastNameTh: 'นามสกุล',
   nickname: 'ชื่อเล่น',
+  nationality: 'สัญชาติ',
   idCardNumber: 'เลขบัตรประชาชน',
   gender: 'เพศ',
   hireDate: 'วันที่จ้าง',
@@ -194,6 +230,8 @@ export type ParsedImportRow = {
   firstNameTh: string | null
   lastNameTh: string | null
   nickname: string | null
+  /** Gates whether idCardNumber is required — see resolveIdCardNumber. */
+  nationality: Nationality | null
   idCardNumber: string | null
   gender: Gender | null
   hireDate: string | null
@@ -289,6 +327,25 @@ function isValidThaiIdCardNumber(value: string): boolean {
   return check === digits[12]
 }
 
+/** idCardNumber's required-ness depends on the row's own nationality, not on
+ *  which template is in use — a Thai national needs one whether they're on
+ *  the standard sheet or the temp-worker one, and a foreign national needs
+ *  neither. This is why idCardNumber is absent from both templates'
+ *  requiredFields and resolved here directly instead of through fieldText(). */
+function resolveIdCardNumber(
+  text: string,
+  nationality: Nationality | null,
+  errors: string[]
+): string | null {
+  if (text === '') {
+    if (nationality === 'ไทย') errors.push(`ไม่ระบุ${FIELD_LABELS.idCardNumber}`)
+    return null
+  }
+  if (isValidThaiIdCardNumber(text)) return text
+  errors.push(`เลขบัตรประชาชนไม่ถูกต้อง: "${text}"`)
+  return null
+}
+
 function isRowEmpty(row: ExcelJS.Row): boolean {
   let empty = true
   row.eachCell({ includeEmpty: false }, (cell) => {
@@ -328,7 +385,7 @@ function resolveColumns(
     if (field) columns.set(field, colNumber)
   })
 
-  const missing = template.requiredFields.filter((field) => !columns.has(field))
+  const missing = template.structuralColumns.filter((field) => !columns.has(field))
   if (missing.length > 0) {
     const labels = missing.map((field) => FIELD_LABELS[field]).join(', ')
     return {
@@ -411,12 +468,17 @@ function parseRow(row: ExcelJS.Row, columns: Map<Field, number>, template: Templ
     fingerprintCode = null
   }
 
-  const idCardText = fieldText(get('idCardNumber'), 'idCardNumber', template, errors)
-  let idCardNumber: string | null = null
-  if (idCardText !== null) {
-    if (isValidThaiIdCardNumber(idCardText)) idCardNumber = idCardText
-    else errors.push(`เลขบัตรประชาชนไม่ถูกต้อง: "${idCardText}"`)
+  const nationalityText = fieldText(get('nationality'), 'nationality', template, errors)
+  let nationality: Nationality | null = null
+  if (nationalityText !== null) {
+    if ((NATIONALITIES as readonly string[]).includes(nationalityText)) {
+      nationality = nationalityText as Nationality
+    } else {
+      errors.push(`สัญชาติไม่ถูกต้อง: "${nationalityText}" (ต้องเป็น ${NATIONALITIES.join(' / ')})`)
+    }
   }
+
+  const idCardNumber = resolveIdCardNumber(get('idCardNumber'), nationality, errors)
 
   const genderText = optionalText(get('gender'))
   let gender: Gender | null = null
@@ -478,6 +540,7 @@ function parseRow(row: ExcelJS.Row, columns: Map<Field, number>, template: Templ
     firstNameTh,
     lastNameTh,
     nickname,
+    nationality,
     idCardNumber,
     gender,
     hireDate,

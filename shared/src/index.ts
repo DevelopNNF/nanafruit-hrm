@@ -52,6 +52,12 @@ export type Title = (typeof TITLES)[number]
 export const GENDERS = ['male', 'female'] as const
 export type Gender = (typeof GENDERS)[number]
 
+/** Gates whether idCardNumber is required — see Employee.idCardNumber's own
+ *  comment. Just two values, so a const array like TITLES/GENDERS rather than
+ *  a master table. */
+export const NATIONALITIES = ['ไทย', 'ต่างชาติ'] as const
+export type Nationality = (typeof NATIONALITIES)[number]
+
 export const EMPLOYEE_STATUSES = ['Active', 'Inactive'] as const
 export type EmployeeStatus = (typeof EMPLOYEE_STATUSES)[number]
 
@@ -99,8 +105,15 @@ export type Employee = {
   employeeCode: string
   /** 13-digit Thai national ID, checksum-validated. Nullable: existing
    *  employees have never recorded this, and there is no honest default to
-   *  invent for them — same reasoning as GENDERS. */
+   *  invent for them — same reasoning as GENDERS. Required going forward only
+   *  when nationality is 'ไทย' — a foreign national has no Thai ID card to
+   *  give, and withholding tax (ภงด.3) only needs one for a Thai national. */
   idCardNumber: string | null
+  /** Thai or foreign — gates whether idCardNumber is required (see its own
+   *  comment). Nullable for the same reason idCardNumber/gender are: existing
+   *  employees have never recorded this, and there is no honest default to
+   *  invent for them. */
+  nationality: Nationality | null
   /** The ID a fingerprint terminal knows this employee by — the join key for
    *  importing a scanner's attendance export. Deliberately separate from
    *  employeeCode: the terminals were enrolled independently and number

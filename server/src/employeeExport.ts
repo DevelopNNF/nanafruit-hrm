@@ -50,10 +50,10 @@ const LISTS_SHEET = 'Lists'
  *  layout, so hardcoding the columns it writes is the same trade
  *  attendanceReportExport.ts makes for its own template.
  *
- *  supervisorEmployeeCode (หัวหน้างาน, col 13) and overtimeGroupName (กลุ่ม
- *  OT, col 19) were added straight into the checked-in .xlsx template files
- *  by hand — this constant mirrors that layout exactly rather than the other
- *  way around. */
+ *  supervisorEmployeeCode (หัวหน้างาน, col 14), overtimeGroupName (กลุ่ม
+ *  OT, col 20), and nationality (สัญชาติ, col 7) were added straight into the
+ *  checked-in .xlsx template file by hand — this constant mirrors that
+ *  layout exactly rather than the other way around. */
 const COLUMNS = {
   employeeCode: 1,
   fingerprintCode: 2,
@@ -61,19 +61,20 @@ const COLUMNS = {
   firstNameTh: 4,
   lastNameTh: 5,
   nickname: 6,
-  idCardNumber: 7,
-  gender: 8,
-  hireDate: 9,
-  startWorkingDate: 10,
-  workLocation: 11,
-  employmentType: 12,
-  supervisorEmployeeCode: 13,
-  departmentName: 14,
-  jobTitle: 15,
-  shiftName: 16,
-  holidayGroupName: 17,
-  payrollGroupName: 18,
-  overtimeGroupName: 19,
+  nationality: 7,
+  idCardNumber: 8,
+  gender: 9,
+  hireDate: 10,
+  startWorkingDate: 11,
+  workLocation: 12,
+  employmentType: 13,
+  supervisorEmployeeCode: 14,
+  departmentName: 15,
+  jobTitle: 16,
+  shiftName: 17,
+  holidayGroupName: 18,
+  payrollGroupName: 19,
+  overtimeGroupName: 20,
 } as const
 
 /** Which Sheet1 column reads its dropdown from which Lists-sheet column.
@@ -97,30 +98,41 @@ const LIST_COLUMNS: { sheet1Column: number; listColumn: number }[] = [
 ]
 
 /** Column numbers on employee-temporary-template.xlsx's Sheet1 — no
- *  employeeCode/idCardNumber/shiftName columns (temporary daily workers have
- *  neither an employee code nor an ID card, and their shift is assigned
- *  day-by-day through the "มอบหมายกะรายวัน" screen, not this sheet), plus a
- *  ค่าจ้าง column the standard template doesn't have. supervisorEmployeeCode
- *  and overtimeGroupName were added by hand into the checked-in .xlsx the
- *  same way as the standard template above. */
+ *  employeeCode/shiftName columns (temporary daily workers have no employee
+ *  code, and their shift is assigned day-by-day through the "มอบหมายกะรายวัน"
+ *  screen, not this sheet), plus a ค่าจ้าง column the standard template
+ *  doesn't have. supervisorEmployeeCode and overtimeGroupName were added by
+ *  hand into the checked-in .xlsx the same way as the standard template
+ *  above; nationality (สัญชาติ, col 6) has been added the same way too.
+ *
+ *  idCardNumber is NOT waived here the way it once was: nationality alone
+ *  decides whether it's required (see parseEmployeeBasicFields' comment), and
+ *  a temporary daily worker can be a Thai national same as anyone else — see
+ *  the discussion that added this column back after 052/temp-daily-worker
+ *  planning had originally dropped it. Column 7 assumes it lands directly
+ *  after สัญชาติ in the checked-in .xlsx, mirroring the standard template's
+ *  own column order (nickname, สัญชาติ, เลขบัตรประชาชน, ...) — update this
+ *  number if it's placed elsewhere. */
 const TEMP_WORKER_COLUMNS = {
   fingerprintCode: 1,
   title: 2,
   firstNameTh: 3,
   lastNameTh: 4,
   nickname: 5,
-  gender: 6,
-  hireDate: 7,
-  startWorkingDate: 8,
-  workLocation: 9,
-  employmentType: 10,
-  supervisorEmployeeCode: 11,
-  departmentName: 12,
-  jobTitle: 13,
-  holidayGroupName: 14,
-  payrollGroupName: 15,
-  overtimeGroupName: 16,
-  wageAmount: 17,
+  nationality: 6,
+  idCardNumber: 7,
+  gender: 8,
+  hireDate: 9,
+  startWorkingDate: 10,
+  workLocation: 11,
+  employmentType: 12,
+  supervisorEmployeeCode: 13,
+  departmentName: 14,
+  jobTitle: 15,
+  holidayGroupName: 16,
+  payrollGroupName: 17,
+  overtimeGroupName: 18,
+  wageAmount: 19,
 } as const
 
 /** Same Lists-sheet columns as LIST_COLUMNS, minus shifts (listColumn 4 —
@@ -187,10 +199,11 @@ function applyDropdowns(
 }
 
 /** Same shape as writeRow, but for employee-temporary-template.xlsx's columns
- *  — no employeeCode/idCardNumber/shiftName, and ค่าจ้าง is deliberately left
- *  blank (this is a data export of what's already on the employee record, and
- *  the current wage rate isn't part of that record — see wageAssignmentQueries.ts
- *  if that ever needs to change). */
+ *  — no employeeCode/shiftName, and ค่าจ้าง is deliberately left blank (this
+ *  is a data export of what's already on the employee record, and the
+ *  current wage rate isn't part of that record — see wageAssignmentQueries.ts
+ *  if that ever needs to change). idCardNumber IS written here, unlike
+ *  before nationality existed — see TEMP_WORKER_COLUMNS' comment. */
 function writeTempWorkerRow(worksheet: ExcelJS.Worksheet, rowNumber: number, employee: Employee): void {
   const row = worksheet.getRow(rowNumber)
   row.getCell(TEMP_WORKER_COLUMNS.fingerprintCode).value = employee.fingerprintCode
@@ -198,6 +211,8 @@ function writeTempWorkerRow(worksheet: ExcelJS.Worksheet, rowNumber: number, emp
   row.getCell(TEMP_WORKER_COLUMNS.firstNameTh).value = employee.firstNameTh
   row.getCell(TEMP_WORKER_COLUMNS.lastNameTh).value = employee.lastNameTh
   row.getCell(TEMP_WORKER_COLUMNS.nickname).value = employee.nickname
+  row.getCell(TEMP_WORKER_COLUMNS.nationality).value = employee.nationality
+  row.getCell(TEMP_WORKER_COLUMNS.idCardNumber).value = employee.idCardNumber
   row.getCell(TEMP_WORKER_COLUMNS.gender).value =
     employee.gender === null ? null : GENDER_LABELS[employee.gender]
   row.getCell(TEMP_WORKER_COLUMNS.hireDate).value = parseDateOnlyUtc(employee.employment.hireDate)
@@ -225,6 +240,7 @@ function writeRow(worksheet: ExcelJS.Worksheet, rowNumber: number, employee: Emp
   row.getCell(COLUMNS.firstNameTh).value = employee.firstNameTh
   row.getCell(COLUMNS.lastNameTh).value = employee.lastNameTh
   row.getCell(COLUMNS.nickname).value = employee.nickname
+  row.getCell(COLUMNS.nationality).value = employee.nationality
   row.getCell(COLUMNS.idCardNumber).value = employee.idCardNumber
   row.getCell(COLUMNS.gender).value = employee.gender === null ? null : GENDER_LABELS[employee.gender]
   row.getCell(COLUMNS.hireDate).value = parseDateOnlyUtc(employee.employment.hireDate)

@@ -34,6 +34,7 @@ import {
   type EmployeeImportTemplateCode,
   type EmploymentType,
   type Gender,
+  type Nationality,
   type Title,
   type WorkLocation,
 } from '@hrm/shared'
@@ -91,8 +92,11 @@ function adminActor(req: Request): Extract<AuthUser, { kind: 'admin' }> | null {
  *  employeeCode: '' means "generate one" — only ever happens for the
  *  temp-worker template, which has no employeeCode column at all; blank is
  *  what a missing column already parses to (see employeeImportParse.ts).
- *  idCardNumber/shiftId are nullable for the same reason: that template has
- *  no เลขบัตรประชาชน or กะงาน columns either. */
+ *  shiftId is nullable for the same reason: that template has no กะงาน
+ *  column. idCardNumber/nationality are nullable for a different reason —
+ *  idCardNumber is only required when nationality is 'ไทย', and nationality
+ *  itself is optional on the temp-worker template (see
+ *  employeeImportParse.ts's resolveIdCardNumber and TEMP_WORKER_REQUIRED_FIELDS). */
 type ResolvedRow = {
   employeeCode: string
   fingerprintCode: string | null
@@ -100,6 +104,7 @@ type ResolvedRow = {
   firstNameTh: string
   lastNameTh: string
   nickname: string | null
+  nationality: Nationality | null
   idCardNumber: string | null
   gender: Gender | null
   hireDate: string
@@ -355,10 +360,15 @@ async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult>
     // Every required field parsed clean and every name resolved (reasons is
     // empty), so every field below is genuinely non-null for the fields this
     // template actually carries — this check is defensive bookkeeping, not
-    // something a valid file can trigger. employeeCode/idCardNumber/shiftId
-    // legitimately stay null for the temp-worker template (no such columns);
+    // something a valid file can trigger. employeeCode/shiftId legitimately
+    // stay null for the temp-worker template (no employeeCode/กะงาน columns);
     // fingerprintCode legitimately stays null for the standard template
-    // (optional there).
+    // (optional there). idCardNumber is deliberately absent from this check —
+    // it legitimately stays null whenever nationality isn't 'ไทย' (on either
+    // template), and the one case where a null there IS a problem (nationality
+    // 'ไทย' with no idCardNumber) already produced an error in
+    // employeeImportParse.ts's resolveIdCardNumber, so reasons would already
+    // be non-empty and this branch would never be reached for that row.
     if (
       row.title === null ||
       row.firstNameTh === null ||
@@ -370,7 +380,7 @@ async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult>
       departmentId === null ||
       jobId === null ||
       payrollGroupId === null ||
-      (!isTempWorkerTemplate && (row.employeeCode === null || row.idCardNumber === null || shiftId === null)) ||
+      (!isTempWorkerTemplate && (row.employeeCode === null || shiftId === null)) ||
       (isTempWorkerTemplate && row.fingerprintCode === null)
     ) {
       return {
@@ -394,6 +404,7 @@ async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult>
       firstNameTh: row.firstNameTh,
       lastNameTh: row.lastNameTh,
       nickname: row.nickname,
+      nationality: row.nationality,
       idCardNumber: row.idCardNumber,
       gender: row.gender,
       hireDate: row.hireDate,
@@ -516,10 +527,20 @@ async function createEmployeeFromImport(
     r.employeeCode,
     async (employeeCode) => {
       const { rows } = await client.query<{ id: string }>(
-        `INSERT INTO employees (employee_code, id_card_number, fingerprint_code, title, first_name_th, last_name_th, nickname, gender)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO employees (employee_code, id_card_number, nationality, fingerprint_code, title, first_name_th, last_name_th, nickname, gender)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id`,
-        [employeeCode, r.idCardNumber, r.fingerprintCode, r.title, r.firstNameTh, r.lastNameTh, r.nickname, r.gender]
+        [
+          employeeCode,
+          r.idCardNumber,
+          r.nationality,
+          r.fingerprintCode,
+          r.title,
+          r.firstNameTh,
+          r.lastNameTh,
+          r.nickname,
+          r.gender,
+        ]
       )
       const row = rows[0]
       if (!row) throw new Error('insert into employees returned no id')
@@ -602,18 +623,29 @@ async function updateEmployeeFromImport(
     throw new Error('updateEmployeeFromImport called on a row with no resolved data or employeeId')
   }
 
-  // id_card_number: COALESCE rather than a plain overwrite — the temp-worker
-  // template has no เลขบัตรประชาชน column at all, so r.idCardNumber is always
-  // null for those rows, and a plain overwrite would silently erase an ID
-  // card HR had added by hand since the last import. The standard template's
-  // idCardNumber is a required column (never null), so this is a no-op
-  // change for it — always the freshly-parsed value, same as before.
+  // id_card_number/nationality: COALESCE rather than a plain overwrite — both
+  // can legitimately be blank on a given row now (idCardNumber whenever
+  // nationality isn't 'ไทย'; nationality itself on the temp-worker template,
+  // where it's optional), and a plain overwrite would silently erase a value
+  // HR had added by hand since the last import. A row that does carry a value
+  // always writes it, same as before.
   await client.query(
     `UPDATE employees SET
-       id_card_number = COALESCE($2, id_card_number), fingerprint_code = $3, title = $4,
-       first_name_th = $5, last_name_th = $6, nickname = $7, gender = $8, updated_at = now()
+       id_card_number = COALESCE($2, id_card_number), nationality = COALESCE($3, nationality),
+       fingerprint_code = $4, title = $5,
+       first_name_th = $6, last_name_th = $7, nickname = $8, gender = $9, updated_at = now()
      WHERE id = $1`,
-    [row.employeeId, r.idCardNumber, r.fingerprintCode, r.title, r.firstNameTh, r.lastNameTh, r.nickname, r.gender]
+    [
+      row.employeeId,
+      r.idCardNumber,
+      r.nationality,
+      r.fingerprintCode,
+      r.title,
+      r.firstNameTh,
+      r.lastNameTh,
+      r.nickname,
+      r.gender,
+    ]
   )
 
   // status/end_working_date/termination_reason are deliberately absent —

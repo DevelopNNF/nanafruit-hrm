@@ -5,6 +5,7 @@ import {
   EMPLOYMENT_TYPES,
   FINGERPRINT_CODE_MAX_LENGTH,
   GENDERS,
+  NATIONALITIES,
   ROLES,
   SOCIAL_SECURITY_TYPES,
   TAX_TYPES,
@@ -155,13 +156,19 @@ function isValidThaiIdCardNumber(value: string): boolean {
 /** Shared by parseEmployeeInput (POST) and PATCH /employees/:id/basic.
  *
  *  `optionalIdentity` (POST only — PATCH always leaves it off) waives
- *  employeeCode/idCardNumber from the required check: temporary daily
+ *  employeeCode/nationality from the required check: temporary daily
  *  workers are onboarded with neither (see employeeCodeGenerator.ts and the
  *  admin quick-add toggle). A blank employeeCode comes back as `''`, which
  *  the POST handler below treats as "generate one" — the guardrail against a
  *  *normal* hire accidentally skipping these fields lives entirely in the
  *  admin form's own required-fields check, not here; this endpoint is a
- *  deliberately permissive superset of what the DB itself requires. */
+ *  deliberately permissive superset of what the DB itself requires.
+ *
+ *  idCardNumber is not gated by optionalIdentity at all — it is required
+ *  whenever nationality is 'ไทย', regardless of employee type, and never
+ *  required otherwise. That is the one rule that actually matters for
+ *  ภงด.3 withholding tax, so it applies uniformly rather than being waived
+ *  for temporary daily workers the way employeeCode/nationality are. */
 function parseEmployeeBasicFields(
   raw: Record<string, unknown>,
   opts: { optionalIdentity?: boolean } = {}
@@ -179,6 +186,17 @@ function parseEmployeeBasicFields(
     if (value === null) return { ok: false, message: `${key} is required` }
   }
 
+  const nationalityText = requiredString(raw, 'nationality')
+  let nationality: EmployeeBasicInput['nationality'] = null
+  if (nationalityText !== null) {
+    if (!(NATIONALITIES as readonly string[]).includes(nationalityText)) {
+      return { ok: false, message: `nationality must be one of: ${NATIONALITIES.join(', ')}` }
+    }
+    nationality = nationalityText as EmployeeBasicInput['nationality']
+  } else if (!opts.optionalIdentity) {
+    return { ok: false, message: 'nationality is required' }
+  }
+
   const idCardText = requiredString(raw, 'idCardNumber')
   let idCardNumber: string | null = null
   if (idCardText !== null) {
@@ -186,8 +204,8 @@ function parseEmployeeBasicFields(
       return { ok: false, message: 'idCardNumber must be a valid 13-digit Thai national ID number' }
     }
     idCardNumber = idCardText
-  } else if (!opts.optionalIdentity) {
-    return { ok: false, message: 'idCardNumber is required' }
+  } else if (nationality === 'ไทย') {
+    return { ok: false, message: 'idCardNumber is required when nationality is "ไทย"' }
   }
 
   // Optional, and only ever set for staff enrolled on a fingerprint terminal.
@@ -258,6 +276,7 @@ function parseEmployeeBasicFields(
     value: {
       employeeCode: employeeCode ?? '',
       idCardNumber,
+      nationality,
       fingerprintCode,
       entraUpn,
       title: title as EmployeeBasicInput['title'],
@@ -785,14 +804,15 @@ employeesRouter.post('/employees', canWrite, async (req: Request, res: Response)
         async (employeeCode) => {
           const { rows } = await client.query<{ id: string }>(
             `INSERT INTO employees
-               (employee_code, id_card_number, fingerprint_code, entra_upn, title,
+               (employee_code, id_card_number, nationality, fingerprint_code, entra_upn, title,
                 first_name_th, last_name_th,
                 first_name_en, last_name_en, nickname, gender)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              RETURNING id`,
             [
               employeeCode,
               input.idCardNumber,
+              input.nationality,
               input.fingerprintCode,
               input.entraUpn,
               input.title,
@@ -933,16 +953,18 @@ employeesRouter.patch('/employees/:id/basic', canWrite, async (req: Request, res
     const result = await withTransaction(async (client) => {
       const { rowCount } = await client.query(
         `UPDATE employees SET
-           employee_code = $2, id_card_number = $3, fingerprint_code = $4, entra_upn = $5,
-           title = $6,
-           first_name_th = $7, last_name_th = $8,
-           first_name_en = $9, last_name_en = $10,
-           nickname = $11, gender = $12, updated_at = now()
+           employee_code = $2, id_card_number = $3, nationality = $4, fingerprint_code = $5,
+           entra_upn = $6,
+           title = $7,
+           first_name_th = $8, last_name_th = $9,
+           first_name_en = $10, last_name_en = $11,
+           nickname = $12, gender = $13, updated_at = now()
          WHERE id = $1`,
         [
           id,
           input.employeeCode,
           input.idCardNumber,
+          input.nationality,
           input.fingerprintCode,
           input.entraUpn,
           input.title,

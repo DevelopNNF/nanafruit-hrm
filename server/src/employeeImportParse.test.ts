@@ -14,6 +14,7 @@ const HEADERS = [
   'ชื่อ*',
   'นามสกุล*',
   'ชื่อเล่น',
+  'สัญชาติ*',
   'เลขบัตรประชาชน*',
   'เพศ',
   'วันที่จ้าง*',
@@ -36,6 +37,7 @@ const VALID_ROW = [
   'ทดสอบ',
   'ระบบ',
   'ทด',
+  'ไทย',
   '1234567890121',
   'ชาย',
   '2026-01-01',
@@ -129,6 +131,8 @@ describe('parseEmployeeImport', () => {
     assert.deepEqual(row.errors, [])
     assert.equal(row.employeeCode, 'EMP001')
     assert.equal(row.title, 'นาย')
+    assert.equal(row.nationality, 'ไทย')
+    assert.equal(row.idCardNumber, '1234567890121')
     assert.equal(row.gender, 'male')
     assert.equal(row.hireDate, '2026-01-01')
     assert.equal(row.departmentName, 'Development')
@@ -205,6 +209,61 @@ describe('parseEmployeeImport', () => {
     const parsed = result.value.rows[0]!
     assert.equal(parsed.idCardNumber, null)
     assert.ok(parsed.errors.some((e) => e.includes('เลขบัตรประชาชน')))
+  })
+
+  it('does not require idCardNumber when nationality is ต่างชาติ', async () => {
+    const row = [...VALID_ROW]
+    row[HEADERS.indexOf('สัญชาติ*')] = 'ต่างชาติ'
+    row[HEADERS.indexOf('เลขบัตรประชาชน*')] = ''
+    const result = await parse([row])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.nationality, 'ต่างชาติ')
+    assert.equal(parsed.idCardNumber, null)
+    assert.deepEqual(parsed.errors, [])
+  })
+
+  it('still requires idCardNumber when nationality is ไทย, regardless of template', async () => {
+    const row = [...VALID_ROW]
+    row[HEADERS.indexOf('เลขบัตรประชาชน*')] = ''
+    const result = await parse([row])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.idCardNumber, null)
+    assert.ok(parsed.errors.some((e) => e.includes('เลขบัตรประชาชน')))
+  })
+
+  it('rejects a nationality outside the fixed picker list', async () => {
+    const row = [...VALID_ROW]
+    row[HEADERS.indexOf('สัญชาติ*')] = 'อเมริกัน'
+    const result = await parse([row])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.nationality, null)
+    assert.ok(parsed.errors.some((e) => e.includes('สัญชาติ')))
+  })
+
+  it('requires a สัญชาติ column value on the standard template', async () => {
+    const row = [...VALID_ROW]
+    row[HEADERS.indexOf('สัญชาติ*')] = ''
+    const result = await parse([row])
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.nationality, null)
+    assert.ok(parsed.errors.some((e) => e.includes('สัญชาติ')))
+  })
+
+  it('fails the whole file when the สัญชาติ column is missing from the header', async () => {
+    const headers = HEADERS.filter((h) => h !== 'สัญชาติ*')
+    const row = VALID_ROW.filter((_, i) => HEADERS[i] !== 'สัญชาติ*')
+    const result = await parse([row], headers)
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.ok(result.message.includes('สัญชาติ'))
   })
 
   it('rejects a title outside the fixed picker list', async () => {
@@ -297,19 +356,58 @@ describe('parseEmployeeImport — temp-worker template (TEMP-EMP-IMP)', () => {
     assert.equal(result.value.templateCode, 'TEMP-EMP-IMP')
   })
 
-  it('reads a fully valid row — no employeeCode/idCardNumber/shiftName, with wageAmount', async () => {
+  it('reads a fully valid row — no employeeCode/shiftName, with wageAmount', async () => {
     const result = await parseTempWorker([TEMP_WORKER_VALID_ROW])
     assert.equal(result.ok, true, result.ok ? '' : result.message)
     if (!result.ok) return
     const row = result.value.rows[0]!
     assert.deepEqual(row.errors, [])
     assert.equal(row.employeeCode, null)
+    // Neither สัญชาติ nor เลขบัตรประชาชน is in TEMP_WORKER_HEADERS at all —
+    // an older download of this template predating those columns should keep
+    // working rather than hard-failing (see TEMP_WORKER_HEADER_FIELDS' comment).
+    assert.equal(row.nationality, null)
     assert.equal(row.idCardNumber, null)
     assert.equal(row.shiftName, null)
     assert.equal(row.fingerprintCode, 'FP9999')
     assert.equal(row.wageAmount, 350)
     assert.equal(row.supervisorEmployeeCode, 'EMP999')
     assert.equal(row.overtimeGroupName, 'OT Normal')
+  })
+
+  it('accepts สัญชาติ/เลขบัตรประชาชน columns when present, same rule as the standard template', async () => {
+    const headers = [...TEMP_WORKER_HEADERS, 'สัญชาติ', 'เลขบัตรประชาชน']
+    const row = [...TEMP_WORKER_VALID_ROW, 'ไทย', '1234567890121']
+    const result = await parseTempWorker([row], headers)
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.deepEqual(parsed.errors, [])
+    assert.equal(parsed.nationality, 'ไทย')
+    assert.equal(parsed.idCardNumber, '1234567890121')
+  })
+
+  it('requires idCardNumber for the temp-worker template too when nationality is ไทย', async () => {
+    const headers = [...TEMP_WORKER_HEADERS, 'สัญชาติ', 'เลขบัตรประชาชน']
+    const row = [...TEMP_WORKER_VALID_ROW, 'ไทย', '']
+    const result = await parseTempWorker([row], headers)
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.idCardNumber, null)
+    assert.ok(parsed.errors.some((e) => e.includes('เลขบัตรประชาชน')))
+  })
+
+  it('leaves nationality/idCardNumber optional on the temp-worker template even when the columns are present', async () => {
+    const headers = [...TEMP_WORKER_HEADERS, 'สัญชาติ', 'เลขบัตรประชาชน']
+    const row = [...TEMP_WORKER_VALID_ROW, '', '']
+    const result = await parseTempWorker([row], headers)
+    assert.equal(result.ok, true, result.ok ? '' : result.message)
+    if (!result.ok) return
+    const parsed = result.value.rows[0]!
+    assert.equal(parsed.nationality, null)
+    assert.equal(parsed.idCardNumber, null)
+    assert.deepEqual(parsed.errors, [])
   })
 
   it('skips blank หัวหน้างาน/กลุ่ม OT columns without an error — both optional', async () => {

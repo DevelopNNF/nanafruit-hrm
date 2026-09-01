@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   FINGERPRINT_CODE_MAX_LENGTH,
   GENDERS,
+  NATIONALITIES,
   TITLES,
   type Employee,
   type EmployeeBasicInput,
@@ -34,7 +35,8 @@ function missingBasicFields(draft: EmployeeBasicInput): string[] {
   if (!draft.employeeCode.trim()) missing.push('รหัสพนักงาน')
   if (!draft.firstNameTh.trim()) missing.push('ชื่อ (ไทย)')
   if (!draft.lastNameTh.trim()) missing.push('นามสกุล (ไทย)')
-  if (!draft.idCardNumber || !/^\d{13}$/.test(draft.idCardNumber)) {
+  if (!draft.nationality) missing.push('สัญชาติ')
+  if (draft.nationality === 'ไทย' && (!draft.idCardNumber || !/^\d{13}$/.test(draft.idCardNumber))) {
     missing.push('เลขบัตรประชาชน (13 หลัก)')
   }
   return missing
@@ -44,6 +46,7 @@ function draftFrom(employee: Employee): EmployeeBasicInput {
   return {
     employeeCode: employee.employeeCode,
     idCardNumber: employee.idCardNumber,
+    nationality: employee.nationality,
     fingerprintCode: employee.fingerprintCode,
     entraUpn: employee.entraUpn,
     title: employee.title,
@@ -187,10 +190,31 @@ export function EmployeeBasicTab({
               </label>
               <label className={fieldLabel}>
                 <span>
-                  เลขบัตรประชาชน <span className={requiredMark}>*</span>
+                  สัญชาติ <span className={requiredMark}>*</span>
+                </span>
+                <select
+                  className={fieldControl}
+                  value={draft.nationality ?? ''}
+                  onChange={(e) =>
+                    set('nationality', (e.target.value || null) as EmployeeBasicInput['nationality'])
+                  }
+                >
+                  <option value="" disabled>
+                    — เลือกสัญชาติ —
+                  </option>
+                  {NATIONALITIES.map((nationality) => (
+                    <option key={nationality} value={nationality}>
+                      {nationality}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fieldLabel}>
+                <span>
+                  เลขบัตรประชาชน {draft.nationality === 'ไทย' && <span className={requiredMark}>*</span>}
                 </span>
                 <input
-                  required
+                  required={draft.nationality === 'ไทย'}
                   maxLength={13}
                   inputMode="numeric"
                   pattern="\d{13}"

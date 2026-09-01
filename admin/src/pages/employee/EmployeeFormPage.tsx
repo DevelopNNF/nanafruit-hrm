@@ -6,6 +6,7 @@ import {
   EMPLOYMENT_TYPES,
   FINGERPRINT_CODE_MAX_LENGTH,
   GENDERS,
+  NATIONALITIES,
   TITLES,
   WORK_LOCATIONS,
   type Department,
@@ -54,6 +55,7 @@ function today(): string {
 const emptyDraft: EmployeeInput = {
   employeeCode: '',
   idCardNumber: null,
+  nationality: null,
   fingerprintCode: null,
   entraUpn: null,
   title: TITLES[0],
@@ -103,19 +105,20 @@ const emptyDraft: EmployeeInput = {
  *  can end up invisible or simply not fire. Checking here and surfacing it
  *  as a toast is the reliable path.
  *
- *  `isMinimalProfile` waives employeeCode/idCardNumber — temporary daily
- *  workers (fingerprint-only, no employee code, no ID card) created via the
- *  quick-add toggle below. Everything else stays required exactly as for a
- *  normal hire. */
+ *  `isMinimalProfile` waives employeeCode/nationality — temporary daily
+ *  workers (fingerprint-only, no employee code, nationality often unknown at
+ *  onboarding) created via the quick-add toggle below. idCardNumber is NOT
+ *  gated by isMinimalProfile at all: it's required whenever nationality is
+ *  'ไทย', regardless of employee type — a temporary daily worker who is a
+ *  Thai national still needs one for withholding tax (ภงด.3). Everything
+ *  else stays required exactly as for a normal hire. */
 function missingEmployeeFields(draft: EmployeeInput, isMinimalProfile: boolean): string[] {
   const missing: string[] = []
   if (!isMinimalProfile && !draft.employeeCode.trim()) missing.push('รหัสพนักงาน')
   if (!draft.firstNameTh.trim()) missing.push('ชื่อ (ไทย)')
   if (!draft.lastNameTh.trim()) missing.push('นามสกุล (ไทย)')
-  if (
-    !isMinimalProfile &&
-    (!draft.idCardNumber || !/^\d{13}$/.test(draft.idCardNumber))
-  ) {
+  if (!isMinimalProfile && !draft.nationality) missing.push('สัญชาติ')
+  if (draft.nationality === 'ไทย' && (!draft.idCardNumber || !/^\d{13}$/.test(draft.idCardNumber))) {
     missing.push('เลขบัตรประชาชน (13 หลัก)')
   }
   if (!draft.employment.hireDate) missing.push('วันที่จ้าง')
@@ -471,10 +474,31 @@ function NewEmployeeForm({ canWrite, onCancel }: { canWrite: boolean; onCancel: 
               </label>
               <label className={fieldLabel}>
                 <span>
-                  เลขบัตรประชาชน {!isMinimalProfile && <span className={requiredMark}>*</span>}
+                  สัญชาติ {!isMinimalProfile && <span className={requiredMark}>*</span>}
+                </span>
+                <select
+                  className={fieldControl}
+                  value={draft.nationality ?? ''}
+                  onChange={(e) =>
+                    setBasic('nationality', (e.target.value || null) as EmployeeInput['nationality'])
+                  }
+                >
+                  <option value="" disabled={!isMinimalProfile}>
+                    {isMinimalProfile ? '— ไม่ระบุ —' : '— เลือกสัญชาติ —'}
+                  </option>
+                  {NATIONALITIES.map((nationality) => (
+                    <option key={nationality} value={nationality}>
+                      {nationality}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fieldLabel}>
+                <span>
+                  เลขบัตรประชาชน {draft.nationality === 'ไทย' && <span className={requiredMark}>*</span>}
                 </span>
                 <input
-                  required={!isMinimalProfile}
+                  required={draft.nationality === 'ไทย'}
                   maxLength={13}
                   inputMode="numeric"
                   pattern="\d{13}"
