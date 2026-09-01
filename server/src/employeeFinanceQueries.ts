@@ -22,13 +22,14 @@ export type EmployeeFinanceRow = {
   social_security_fixed_amount: string | null // numeric: pg hands these back as strings to avoid precision loss
   tax_type: string
   tax_fixed_amount: string | null
+  tax_percent: string | null // numeric: pg hands these back as strings to avoid precision loss
   tax_start_month: string | null // 'YYYY-MM-DD' — see the DATE type parser in db.ts
 }
 
 export const SELECT_EMPLOYEE_FINANCE = `
   SELECT payment_method, bank_name, bank_branch_code,
          bank_account_number, social_security_type, social_security_fixed_amount,
-         tax_type, tax_fixed_amount, tax_start_month
+         tax_type, tax_fixed_amount, tax_percent, tax_start_month
   FROM employee_finance
 `
 
@@ -43,6 +44,7 @@ export function rowToEmployeeFinance(row: EmployeeFinanceRow): EmployeeFinance {
       row.social_security_fixed_amount === null ? null : Number(row.social_security_fixed_amount),
     taxType: row.tax_type as EmployeeFinance['taxType'],
     taxFixedAmount: row.tax_fixed_amount === null ? null : Number(row.tax_fixed_amount),
+    taxPercent: row.tax_percent === null ? null : Number(row.tax_percent),
     taxStartMonth: row.tax_start_month,
   }
 }

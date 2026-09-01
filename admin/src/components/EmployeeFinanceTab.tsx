@@ -38,8 +38,10 @@ const sectionTitle = 'mb-5 border-b border-slate-200 pb-3 text-xs font-bold trac
  *  server yet. */
 const DEFAULT_BANK_NAME = 'ไทยพาณิชย์ (SCB)'
 
+const CASH_PAYMENT: PaymentMethod = 'cash'
 const SOCIAL_SECURITY_FIXED: SocialSecurityType = 'fixed_monthly'
 const TAX_FIXED: TaxType = 'fixed_monthly'
+const TAX_PERCENT: TaxType = 'percent_of_income'
 
 /** Draft state for the 3 enum selects starts unset (`null`, rendered as the
  *  "— โปรดระบุ —" placeholder) rather than defaulting to PAYMENT_METHODS[0]
@@ -64,6 +66,7 @@ function emptyDraft(): FinanceDraft {
     socialSecurityFixedAmount: null,
     taxType: null,
     taxFixedAmount: null,
+    taxPercent: null,
     taxStartMonth: null,
   }
 }
@@ -77,6 +80,7 @@ function draftFrom(finance: EmployeeFinance): FinanceDraft {
     socialSecurityFixedAmount: finance.socialSecurityFixedAmount,
     taxType: finance.taxType,
     taxFixedAmount: finance.taxFixedAmount,
+    taxPercent: finance.taxPercent,
     taxStartMonth: finance.taxStartMonth,
   }
 }
@@ -87,7 +91,9 @@ function draftFrom(finance: EmployeeFinance): FinanceDraft {
 function missingFinanceFields(draft: FinanceDraft): string[] {
   const missing: string[] = []
   if (!draft.paymentMethod) missing.push('ช่องทางการจ่ายค่าจ้าง')
-  if (!draft.bankAccountNumber.trim()) missing.push('เลขที่บัญชี')
+  if (draft.paymentMethod !== CASH_PAYMENT && !draft.bankAccountNumber.trim()) {
+    missing.push('เลขที่บัญชี')
+  }
   if (!draft.socialSecurityType) missing.push('ประกันสังคม')
   if (
     draft.socialSecurityType === SOCIAL_SECURITY_FIXED &&
@@ -101,6 +107,12 @@ function missingFinanceFields(draft: FinanceDraft): string[] {
     (draft.taxFixedAmount === null || draft.taxFixedAmount <= 0)
   ) {
     missing.push('ค่าภาษีคงที่')
+  }
+  if (
+    draft.taxType === TAX_PERCENT &&
+    (draft.taxPercent === null || draft.taxPercent <= 0)
+  ) {
+    missing.push('เปอร์เซ็นต์ภาษี')
   }
   return missing
 }
@@ -169,6 +181,7 @@ export function EmployeeFinanceTab({
       ...prev,
       taxType: value,
       taxFixedAmount: value === TAX_FIXED ? prev.taxFixedAmount : null,
+      taxPercent: value === TAX_PERCENT ? prev.taxPercent : null,
     }))
   }
 
@@ -212,8 +225,10 @@ export function EmployeeFinanceTab({
   }
 
   const bankName = state.finance?.bankName ?? DEFAULT_BANK_NAME
+  const showBankFields = draft.paymentMethod !== CASH_PAYMENT && draft.paymentMethod !== null
   const showSocialSecurityFixedAmount = draft.socialSecurityType === SOCIAL_SECURITY_FIXED
   const showTaxFixedAmount = draft.taxType === TAX_FIXED
+  const showTaxPercent = draft.taxType === TAX_PERCENT
 
   return (
     <>
@@ -256,29 +271,33 @@ export function EmployeeFinanceTab({
                   ))}
                 </select>
               </label>
-              <label className={fieldLabel}>
-                <span>ธนาคาร</span>
-                <input disabled className={fieldControl} value={bankName} readOnly />
-              </label>
-              <label className={fieldLabel}>
-                <span>รหัสสาขาธนาคาร</span>
-                <input
-                  className={fieldControl}
-                  value={draft.bankBranchCode ?? ''}
-                  onChange={(e) => set('bankBranchCode', e.target.value || null)}
-                />
-              </label>
-              <label className={fieldLabel}>
-                <span>
-                  เลขที่บัญชี <span className={requiredMark}>*</span>
-                </span>
-                <input
-                  required
-                  className={fieldControl}
-                  value={draft.bankAccountNumber}
-                  onChange={(e) => set('bankAccountNumber', e.target.value)}
-                />
-              </label>
+              {showBankFields && (
+                <>
+                  <label className={fieldLabel}>
+                    <span>ธนาคาร</span>
+                    <input disabled className={fieldControl} value={bankName} readOnly />
+                  </label>
+                  <label className={fieldLabel}>
+                    <span>รหัสสาขาธนาคาร</span>
+                    <input
+                      className={fieldControl}
+                      value={draft.bankBranchCode ?? ''}
+                      onChange={(e) => set('bankBranchCode', e.target.value || null)}
+                    />
+                  </label>
+                  <label className={fieldLabel}>
+                    <span>
+                      เลขที่บัญชี <span className={requiredMark}>*</span>
+                    </span>
+                    <input
+                      required
+                      className={fieldControl}
+                      value={draft.bankAccountNumber}
+                      onChange={(e) => set('bankAccountNumber', e.target.value)}
+                    />
+                  </label>
+                </>
+              )}
             </div>
           </section>
 
@@ -367,6 +386,26 @@ export function EmployeeFinanceTab({
                     value={draft.taxFixedAmount ?? ''}
                     onChange={(e) =>
                       set('taxFixedAmount', e.target.value === '' ? null : Number(e.target.value))
+                    }
+                  />
+                </label>
+              )}
+              {showTaxPercent && (
+                <label className={fieldLabel}>
+                  <span>
+                    เปอร์เซ็นต์ภาษี <span className={requiredMark}>*</span>
+                  </span>
+                  <input
+                    required
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    max="100"
+                    inputMode="decimal"
+                    className={fieldControl}
+                    value={draft.taxPercent ?? ''}
+                    onChange={(e) =>
+                      set('taxPercent', e.target.value === '' ? null : Number(e.target.value))
                     }
                   />
                 </label>

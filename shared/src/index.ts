@@ -541,6 +541,10 @@ export type EmployeeFinance = {
    *  Shares the slug with socialSecurityType's fixed value but is a
    *  different enum — the two CHECKs are separate. */
   taxFixedAmount: number | null
+  /** Required exactly when taxType is 'percent_of_income', null otherwise —
+   *  same consistency-CHECK pattern as taxFixedAmount. A percentage of gross
+   *  income (0, 100], not a fraction. */
+  taxPercent: number | null
   /** Calendar date, `YYYY-MM-DD`, always the 1st of the month — the month
    *  withholding tax starts being calculated from. A real date rather than a
    *  bare 1-12 month number so it doesn't go silently ambiguous across

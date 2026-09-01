@@ -447,6 +447,7 @@ function parseEmploymentFields(emp: Record<string, unknown>): ParseResult<Employ
  *  EmployeeFinanceTab.tsx keeps the same pair for the same reason. */
 const SOCIAL_SECURITY_FIXED: SocialSecurityType = 'fixed_monthly'
 const TAX_FIXED: TaxType = 'fixed_monthly'
+const TAX_PERCENT: TaxType = 'percent_of_income'
 
 /** Shared by GET's absence of validation and PATCH /employees/:id/finance —
  *  really just the latter, but kept alongside parseEmployeeBasicFields/
@@ -461,16 +462,22 @@ function parseEmployeeFinanceFields(raw: Record<string, unknown>): ParseResult<E
     return { ok: false, message: `paymentMethod must be one of: ${PAYMENT_METHODS.join(', ')}` }
   }
 
+  // Cash payees have no bank to record — bankBranchCode/bankAccountNumber
+  // stay optional/empty rather than required, mirroring the admin form
+  // hiding those fields for 'cash'.
+  const isCashPayment = paymentMethod === 'cash'
+
   const bankBranchCodeRaw = raw['bankBranchCode']
   const bankBranchCode =
     typeof bankBranchCodeRaw === 'string' && bankBranchCodeRaw.trim() !== ''
       ? bankBranchCodeRaw.trim()
       : null
 
-  const bankAccountNumber = requiredString(raw, 'bankAccountNumber')
-  if (bankAccountNumber === null) {
+  const bankAccountNumberRaw = requiredString(raw, 'bankAccountNumber')
+  if (!isCashPayment && bankAccountNumberRaw === null) {
     return { ok: false, message: 'bankAccountNumber is required' }
   }
+  const bankAccountNumber = bankAccountNumberRaw ?? ''
 
   const socialSecurityType = requiredString(raw, 'socialSecurityType')
   if (
@@ -530,6 +537,24 @@ function parseEmployeeFinanceFields(raw: Record<string, unknown>): ParseResult<E
     }
   }
 
+  const taxPercent = optionalPositiveNumber(raw, 'taxPercent')
+  if (taxPercent === undefined || (taxPercent !== null && taxPercent > 100)) {
+    return { ok: false, message: 'taxPercent must be a positive number up to 100, or null' }
+  }
+  const taxNeedsPercent = taxType === TAX_PERCENT
+  if (taxNeedsPercent && taxPercent === null) {
+    return {
+      ok: false,
+      message: `taxPercent is required when taxType is "${TAX_PERCENT}"`,
+    }
+  }
+  if (!taxNeedsPercent && taxPercent !== null) {
+    return {
+      ok: false,
+      message: `taxPercent must be null unless taxType is "${TAX_PERCENT}"`,
+    }
+  }
+
   const taxStartMonthRaw = raw['taxStartMonth']
   let taxStartMonth: string | null = null
   if (taxStartMonthRaw !== null && taxStartMonthRaw !== undefined) {
@@ -556,6 +581,7 @@ function parseEmployeeFinanceFields(raw: Record<string, unknown>): ParseResult<E
       socialSecurityFixedAmount,
       taxType: taxType as EmployeeFinanceInput['taxType'],
       taxFixedAmount,
+      taxPercent,
       taxStartMonth,
     },
   }
@@ -1165,8 +1191,8 @@ employeesRouter.patch(
           `INSERT INTO employee_finance
              (employee_id, payment_method, bank_branch_code,
               bank_account_number, social_security_type, social_security_fixed_amount,
-              tax_type, tax_fixed_amount, tax_start_month)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              tax_type, tax_fixed_amount, tax_percent, tax_start_month)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            ON CONFLICT (employee_id) DO UPDATE SET
              payment_method = EXCLUDED.payment_method,
              bank_branch_code = EXCLUDED.bank_branch_code,
@@ -1175,11 +1201,12 @@ employeesRouter.patch(
              social_security_fixed_amount = EXCLUDED.social_security_fixed_amount,
              tax_type = EXCLUDED.tax_type,
              tax_fixed_amount = EXCLUDED.tax_fixed_amount,
+             tax_percent = EXCLUDED.tax_percent,
              tax_start_month = EXCLUDED.tax_start_month,
              updated_at = now()
            RETURNING payment_method, bank_name, bank_branch_code,
                      bank_account_number, social_security_type, social_security_fixed_amount,
-                     tax_type, tax_fixed_amount, tax_start_month`,
+                     tax_type, tax_fixed_amount, tax_percent, tax_start_month`,
           [
             id,
             input.paymentMethod,
@@ -1189,6 +1216,7 @@ employeesRouter.patch(
             input.socialSecurityFixedAmount,
             input.taxType,
             input.taxFixedAmount,
+            input.taxPercent,
             input.taxStartMonth,
           ]
         )
