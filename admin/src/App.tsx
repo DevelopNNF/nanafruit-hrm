@@ -9,6 +9,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { EmployeeListPage } from './pages/employee/EmployeeListPage'
 import { EmployeeFormPage } from './pages/employee/EmployeeFormPage'
 import { EmployeeImportPage } from './pages/employee/EmployeeImportPage'
+import { EmployeeFinanceImportPage } from './pages/employee/EmployeeFinanceImportPage'
 import { JobListPage } from './pages/masters/job_title/JobListPage'
 import { JobFormPage } from './pages/masters/job_title/JobFormPage'
 import { DepartmentListPage } from './pages/masters/department/DepartmentListPage'
@@ -130,6 +131,7 @@ const router = createBrowserRouter([
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'employees', element: <EmployeeListPage /> },
       { path: 'employees/import', element: <EmployeeImportPage /> },
+      { path: 'employees/finance-import', element: <EmployeeFinanceImportPage /> },
       { path: 'employees/new', element: <KeyedEmployeeForm /> },
       { path: 'employees/shift-assignments/daily', element: <DailyShiftAssignmentPage /> },
       { path: 'schedule', element: <WorkSchedulePage /> },

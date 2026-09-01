@@ -1972,6 +1972,63 @@ export type EmployeeImportResult = {
 
 export type EmployeeImportResponse = { result: EmployeeImportResult }
 
+/* Employee Finance Import/Export ---------------------------------------------
+ *
+ * server/templates/employee-finance-template.xlsx — one row per employee.
+ * Columns 1-11 (employeeCode, title, name, hireDate, startWorkingDate,
+ * employmentType, holidayGroup, payrollGroup, otGroup) are display-only
+ * context so HR can visually confirm which employee a row belongs to —
+ * employeeCode is the only one of those actually used to match against the
+ * database; the rest are never read past parsing. Only employee_finance
+ * (payment method, bank, social security, tax) and — via
+ * employee_wage_assignments, same as the temp-worker employee template —
+ * wage are ever written. HRM.Payroll/HRM.Admin only, unlike the finance tab's
+ * own PATCH endpoint (HRM.HR/HRM.Admin) — a bulk financial-data change is
+ * scoped narrower than a single-employee edit.
+ */
+
+/** No 'create': every row must match an existing employee by employeeCode.
+ *  'not_found' replaces 'blocked' from the employee template's action set —
+ *  there is no leaver rule here, just "this code isn't in the system". */
+export type EmployeeFinanceImportRowAction = 'update' | 'not_found' | 'skip'
+
+/** One data row of the uploaded sheet, after validation and matching against
+ *  the database. `reasons` explains why a not_found/skip row didn't go
+ *  through, or carries a heads-up for an update row — e.g. that it is about
+ *  to change the employee's wage. */
+export type EmployeeFinanceImportRowPreview = {
+  /** 1-based row number in the sheet, so HR can find it in Excel. */
+  rowNumber: number
+  action: EmployeeFinanceImportRowAction
+  employeeCode: string | null
+  /** Set only when the code matched an existing employee. */
+  employeeId: number | null
+  /** Read from the sheet's display-only name columns, for confirmation on
+   *  screen — never compared against the database. */
+  name: string | null
+  reasons: string[]
+}
+
+/** POST /api/employee-finance/import/preview */
+export type EmployeeFinanceImportPreview = {
+  fileName: string
+  rows: EmployeeFinanceImportRowPreview[]
+  updateCount: number
+  notFoundCount: number
+  skipCount: number
+}
+
+export type EmployeeFinanceImportPreviewResponse = { preview: EmployeeFinanceImportPreview }
+
+/** POST /api/employee-finance/import */
+export type EmployeeFinanceImportResult = {
+  updatedCount: number
+  notFoundCount: number
+  skippedCount: number
+}
+
+export type EmployeeFinanceImportResponse = { result: EmployeeFinanceImportResult }
+
 /* Attendance Daily -----------------------------------------------------------
  *
  * The computed daily verdict, one row per employee per work-date — what the

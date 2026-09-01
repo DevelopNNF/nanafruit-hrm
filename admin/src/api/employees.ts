@@ -297,3 +297,16 @@ export function downloadEmployeeImportTemplate(signal?: AbortSignal): Promise<Bl
 export function downloadTempWorkerEmployeeImportTemplate(signal?: AbortSignal): Promise<Blob> {
   return fetchWorkbook('/api/employees/export-template-temp-worker', signal)
 }
+
+/** Every employee's finance settings (bank/social security/tax) and current
+ *  wage, as a filled-in copy of employee-finance-template.xlsx. HRM.Payroll/
+ *  HRM.Admin only — see routes/employeeFinanceExport.ts. */
+export function exportEmployeeFinance(signal?: AbortSignal): Promise<Blob> {
+  return fetchWorkbook('/api/employee-finance/export', signal)
+}
+
+/** A blank copy of the employee-finance template — headers and the four
+ *  fixed-enum dropdowns only, no employee data. */
+export function downloadEmployeeFinanceImportTemplate(signal?: AbortSignal): Promise<Blob> {
+  return fetchWorkbook('/api/employee-finance/export-template', signal)
+}

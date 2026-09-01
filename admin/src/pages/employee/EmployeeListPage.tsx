@@ -2,9 +2,14 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Download, Plus, Search, Upload } from 'lucide-react'
 import type { PayrollGroup, Employee } from '@hrm/shared'
-import { exportEmployees, exportTempWorkerEmployees, searchEmployees } from '../../api/employees'
+import {
+  exportEmployeeFinance,
+  exportEmployees,
+  exportTempWorkerEmployees,
+  searchEmployees,
+} from '../../api/employees'
 import { listPayrollGroups } from '../../api/payrollGroups'
-import { useCanWrite } from '../../auth/meContext'
+import { useCanWrite, useCanWritePayroll } from '../../auth/meContext'
 import { notify } from '../../notifications/notify'
 import { DropdownMenuButton } from '../../components/DropdownMenuButton'
 import { Pagination } from '../../components/Pagination'
@@ -41,7 +46,9 @@ export function EmployeeListPage() {
   const [fetching, setFetching] = useState(true)
   const navigate = useNavigate()
   const canWrite = useCanWrite()
+  const canWritePayroll = useCanWritePayroll()
   const [exporting, setExporting] = useState(false)
+  const [exportingFinance, setExportingFinance] = useState(false)
 
   async function handleExport(kind: ExportKind) {
     setExporting(true)
@@ -58,6 +65,24 @@ export function EmployeeListPage() {
       notify.error('ส่งออกข้อมูลไม่สำเร็จ', err instanceof Error ? err.message : undefined)
     } finally {
       setExporting(false)
+    }
+  }
+
+  async function handleExportFinance() {
+    setExportingFinance(true)
+    try {
+      const blob = await exportEmployeeFinance()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      const today = new Date().toISOString().slice(0, 10)
+      link.download = `employee-finance-${today}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      notify.error('ส่งออกข้อมูลการเงินไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setExportingFinance(false)
     }
   }
 
@@ -137,9 +162,9 @@ export function EmployeeListPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
           <DropdownMenuButton
-            label={exporting ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
+            label={exporting || exportingFinance ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
             icon={<Download size={16} />}
-            disabled={exporting}
+            disabled={exporting || exportingFinance}
             items={[
               {
                 label: 'พนักงานทั่วไป (EMP-IMP)',
@@ -151,12 +176,29 @@ export function EmployeeListPage() {
                 description: 'เฉพาะพนักงานประเภท “ชั่วคราว” ตามเทมเพลตพนักงานรายวันชั่วคราว',
                 onClick: () => void handleExport('temp_worker'),
               },
+              // เฉพาะฝ่ายเงินเดือน/ผู้ดูแลระบบ — ข้อมูลบัญชีธนาคาร/ภาษี/ประกันสังคม
+              // ของพนักงานทุกคนในไฟล์เดียว ไม่ใช่สิ่งที่ HR ทั่วไปควรดึงออกมาได้
+              ...(canWritePayroll
+                ? [
+                    {
+                      label: 'ข้อมูลการเงินพนักงาน (EMP-FIN-IMP)',
+                      description: 'ค่าจ้าง ช่องทางจ่ายเงิน ธนาคาร ประกันสังคม ภาษี ของพนักงานทุกคน',
+                      onClick: () => void handleExportFinance(),
+                    },
+                  ]
+                : []),
             ]}
           />
           {canWrite && (
             <Link className={button()} to="/employees/import">
               <Upload size={16} />
               นำเข้า Excel
+            </Link>
+          )}
+          {canWritePayroll && (
+            <Link className={button()} to="/employees/finance-import">
+              <Upload size={16} />
+              นำเข้าข้อมูลการเงิน
             </Link>
           )}
           {canWrite && (

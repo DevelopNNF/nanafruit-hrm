@@ -7,6 +7,8 @@ import { healthRouter } from './routes/health.js'
 import { employeesRouter } from './routes/employees.js'
 import { employeeImportRouter } from './routes/employeeImport.js'
 import { employeeExportRouter } from './routes/employeeExport.js'
+import { employeeFinanceImportRouter } from './routes/employeeFinanceImport.js'
+import { employeeFinanceExportRouter } from './routes/employeeFinanceExport.js'
 import { jobsRouter } from './routes/jobs.js'
 import { departmentsRouter } from './routes/departments.js'
 import { shiftsRouter } from './routes/shifts.js'
@@ -93,6 +95,8 @@ app.use('/api', cronRouter)
 // upload.
 app.use('/api', authenticate, employeeImportRouter)
 app.use('/api', authenticate, employeeExportRouter)
+app.use('/api', authenticate, employeeFinanceImportRouter)
+app.use('/api', authenticate, employeeFinanceExportRouter)
 app.use('/api', authenticate, employeesRouter)
 app.use('/api', authenticate, jobsRouter)
 app.use('/api', authenticate, departmentsRouter)
