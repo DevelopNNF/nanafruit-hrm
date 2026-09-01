@@ -33,7 +33,7 @@ export const SOCIAL_SECURITY_TYPE_LABELS: Record<SocialSecurityType, string> = {
   actual_wage_company_paid: 'คิดตามฐานเงินเดือนจริงที่ได้รับ (บริษัทจ่ายให้)',
   section_39: 'คิดตามมาตรา 39',
   fixed_monthly: 'คิดคงที่ทุกเดือน',
-  formula: 'คิดตามสูตรคำนวณ',
+  // formula: 'คิดตามสูตรคำนวณ',
 }
 
 export const TAX_TYPE_LABELS: Record<TaxType, string> = {

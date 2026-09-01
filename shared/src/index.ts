@@ -507,7 +507,7 @@ export const SOCIAL_SECURITY_TYPES = [
   'actual_wage_company_paid',
   'section_39',
   'fixed_monthly',
-  'formula',
+  // 'formula',
 ] as const
 export type SocialSecurityType = (typeof SOCIAL_SECURITY_TYPES)[number]
 
