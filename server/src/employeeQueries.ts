@@ -28,6 +28,7 @@ export type EmployeeRow = {
   last_name_en: string | null
   nickname: string | null
   gender: string | null
+  line_user_id: string | null
   status: string | null
   hire_date: string | null // 'YYYY-MM-DD' — see the DATE type parser in db.ts
   start_working_date: string | null // 'YYYY-MM-DD'
@@ -62,7 +63,7 @@ export type EmployeeRow = {
 export const SELECT_EMPLOYEE = `
   SELECT e.id, e.employee_code, e.id_card_number, e.nationality, e.fingerprint_code, e.entra_upn, e.title,
          e.first_name_th, e.last_name_th, e.first_name_en, e.last_name_en,
-         e.nickname, e.gender,
+         e.nickname, e.gender, e.line_user_id,
          d.status, d.hire_date, d.start_working_date, d.end_working_date,
          d.termination_reason, d.employment_type, d.work_location,
          d.job_id, mj.job_title,
@@ -119,6 +120,7 @@ export function rowToEmployee(row: EmployeeRow): Employee {
     lastNameEn: row.last_name_en,
     nickname: row.nickname,
     gender: row.gender as Employee['gender'],
+    lineLinked: row.line_user_id !== null,
     employment: {
       status: row.status as Employee['employment']['status'],
       hireDate: row.hire_date,

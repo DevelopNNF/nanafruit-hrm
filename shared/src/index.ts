@@ -141,6 +141,11 @@ export type Employee = {
    *  once set: a gender-restricted leave type simply can't be matched
    *  against an employee whose gender is still null. */
   gender: Gender | null
+  /** Whether employees.line_user_id is set — the LINE account this employee
+   *  claimed through liff/'s link-code flow. The id itself never leaves the
+   *  server: admin/ only ever needs to know linked-or-not, to switch between
+   *  the "ออกรหัสผูกบัญชี" and "ยกเลิกการผูกกับบัญชีนี้" states. */
+  lineLinked: boolean
   employment: EmploymentDetails
 }
 
@@ -261,12 +266,14 @@ export type EmploymentDetailsInput = Omit<
 >
 
 /** Body of POST /api/employees */
-export type EmployeeInput = Omit<Employee, 'id' | 'employment'> & {
+export type EmployeeInput = Omit<Employee, 'id' | 'lineLinked' | 'employment'> & {
   employment: EmploymentDetailsInput
 }
 
-/** Body of PATCH /api/employees/:id/basic */
-export type EmployeeBasicInput = Omit<Employee, 'id' | 'employment'>
+/** Body of PATCH /api/employees/:id/basic. lineLinked is absent — derived
+ *  from employees.line_user_id, and only the link-code/line-link routes ever
+ *  change it. */
+export type EmployeeBasicInput = Omit<Employee, 'id' | 'lineLinked' | 'employment'>
 
 /** Body of PATCH /api/employees/:id/employment. shiftId is absent — shift
  *  changes always go through POST /api/employees/:id/shift-changes, which is

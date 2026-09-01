@@ -271,7 +271,7 @@ export function EmployeeBasicTab({
           </section>
         </fieldset>
 
-        {canWrite && <LinkCodeCard employeeId={employee.id} />}
+        {canWrite && <LinkCodeCard employee={employee} onSaved={onSaved} />}
 
         {canWrite && (
           <div className="flex items-center gap-2.5 pt-1">

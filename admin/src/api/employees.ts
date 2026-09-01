@@ -137,6 +137,13 @@ export async function createLinkCode(id: number): Promise<LinkCodeResponse> {
   return unwrap<LinkCodeResponse>(res)
 }
 
+/** Severs the employee's LINE account. 409 if there isn't one linked. */
+export async function unlinkLineAccount(id: number): Promise<void> {
+  const res = await apiFetch(`/api/employees/${id}/line-link`, { method: 'DELETE' })
+  // 204: nothing to unwrap, but a failure still needs to surface.
+  if (!res.ok) await unwrap<never>(res)
+}
+
 export async function deleteEmployee(id: number): Promise<void> {
   const res = await apiFetch(`/api/employees/${id}`, { method: 'DELETE' })
   // 204: nothing to unwrap, but a failure still needs to surface.

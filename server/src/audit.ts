@@ -30,6 +30,7 @@ export type AuditAction =
   | 'employee.delete'
   | 'employee.link_code_issued'
   | 'employee.line_linked'
+  | 'employee.line_unlinked'
   | 'employee.import_create'
   | 'employee.import_update'
   | 'employee.export'

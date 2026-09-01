@@ -1880,7 +1880,7 @@ employeesRouter.post(
         if (!employee) return 'not-found' as const
         // Handing out a code for an employee who already has a LINE account
         // would only ever be the first half of taking their record away from
-        // them. Unlinking is a deliberate act and does not have a route yet.
+        // them. Unlinking is its own deliberate act — DELETE .../line-link.
         if (employee.line_user_id !== null) return 'already-linked' as const
 
         await client.query(
@@ -1909,6 +1909,53 @@ employeesRouter.post(
       // holds a hash, so a second GET could not reproduce this if it wanted to.
       const body: LinkCodeResponse = { code, expiresAt: expiresAt.toISOString() }
       res.status(201).json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Severs an employee's LINE account from their record. A deliberate act, kept
+// separate from PATCH .../basic — it is identity-granting like link-code, not
+// a field edit, so it gets its own audit action rather than hiding inside
+// employee.basic_update's detail.
+employeesRouter.delete(
+  '/employees/:id/line-link',
+  canWrite,
+  async (req: Request, res: Response) => {
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    const actor = actorOf(req)
+    if (actor?.kind !== 'admin') return fail(res, 500, 'server misconfigured')
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{ line_user_id: string | null }>(
+          'SELECT line_user_id FROM employees WHERE id = $1 FOR UPDATE',
+          [id]
+        )
+        const employee = rows[0]
+        if (!employee) return 'not-found' as const
+        if (employee.line_user_id === null) return 'not-linked' as const
+
+        await client.query(
+          'UPDATE employees SET line_user_id = NULL, updated_at = now() WHERE id = $1',
+          [id]
+        )
+
+        await recordAudit(client, {
+          actor,
+          action: 'employee.line_unlinked',
+          entityId: id,
+        })
+        return 'unlinked' as const
+      })
+
+      if (result === 'not-found') return fail(res, 404, `no employee with id ${id}`)
+      if (result === 'not-linked') return fail(res, 409, `employee ${id} is not linked to a LINE account`)
+
+      res.status(204).end()
     } catch (err) {
       handleUnexpected(res, err)
     }
