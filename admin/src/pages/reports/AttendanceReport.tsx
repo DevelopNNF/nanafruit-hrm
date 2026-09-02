@@ -213,6 +213,7 @@ export function AttendanceDailyListPage() {
       controller.signal
     )
       .then((body) => {
+        console.log(body.days)
         setState({ phase: 'ok', days: body.days, summary: body.summary })
         setFetching(false)
       })
@@ -445,7 +446,7 @@ export function AttendanceDailyListPage() {
                     <tr key={day.id} className="hover:bg-slate-50">
                       <td className={td}>
                         <div className="font-medium text-slate-900">{day.employeeName}</div>
-                        <div className="text-[0.71rem] text-slate-400 tabular-nums">{day.employeeCode}</div>
+                        <div className="text-[0.71rem] text-slate-400 tabular-nums">{`${day.employeeCode} (${day.employeeFingerprintCode ?? '—'})`}</div>
                       </td>
                       <td className={td}>
                         <div className="whitespace-nowrap tabular-nums">{formatDate(day.workDate)}</div>

@@ -2099,6 +2099,7 @@ export type AttendanceDailyItem = {
   employeeId: number
   employeeCode: string
   employeeName: string
+  employeeFingerprintCode: string | null
   /** Calendar date, `YYYY-MM-DD`. For an overnight shift this is the day the
    *  shift STARTED, so a 22:00–07:00 shift beginning on the 14th is the 14th. */
   workDate: string

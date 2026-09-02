@@ -56,6 +56,7 @@ function writeRow(worksheet: ExcelJS.Worksheet, rowNumber: number, day: Attendan
   const row = worksheet.getRow(rowNumber)
   let colNo = 1
   row.getCell(colNo++).value = day.employeeCode
+  row.getCell(colNo++).value = day.employeeFingerprintCode
   row.getCell(colNo++).value = day.employeeName
   row.getCell(colNo++).value = day.startWorkingDate === null ? null : parseDateOnlyUtc(day.startWorkingDate)
   row.getCell(colNo++).value = day.endWorkingDate === null ? null : parseDateOnlyUtc(day.endWorkingDate)

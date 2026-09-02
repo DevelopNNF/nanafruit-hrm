@@ -292,6 +292,7 @@ type AttendanceDailyRow = {
   employee_id: string
   employee_code: string
   employee_name: string
+  fingerprint_code: string | null
   work_date: string
   shift_id: string | null
   shift_code: string | null
@@ -322,6 +323,7 @@ function rowToAttendanceDailyItem(row: AttendanceDailyRow): AttendanceDailyItem 
     employeeId: Number(row.employee_id),
     employeeCode: row.employee_code,
     employeeName: row.employee_name,
+    employeeFingerprintCode: row.fingerprint_code,
     workDate: row.work_date,
     shiftId: row.shift_id === null ? null : Number(row.shift_id),
     shiftCode: row.shift_code,
@@ -458,7 +460,7 @@ export async function listAttendanceDaily(
 
   const [listResult, summaryResult] = await Promise.all([
     db.query<AttendanceDailyRow>(
-      `SELECT d.id, d.employee_id, e.employee_code,
+      `SELECT d.id, d.employee_id, e.employee_code, e.fingerprint_code,
               (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name,
               d.work_date, d.shift_id, ms.shift_code, ms.shift_name,
               d.day_status, d.attendance_status,
@@ -553,7 +555,7 @@ export async function listAttendanceDailyForExport(
     ${where}`
 
   const { rows } = await db.query<AttendanceDailyExportDbRow>(
-    `SELECT d.id, d.employee_id, e.employee_code,
+    `SELECT d.id, d.employee_id, e.employee_code, e.fingerprint_code,
             (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name,
             d.work_date, d.shift_id, ms.shift_code, ms.shift_name,
             d.day_status, d.attendance_status,
