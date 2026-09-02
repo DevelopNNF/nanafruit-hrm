@@ -22,6 +22,7 @@ export type RequestResourceType =
   | 'day_off_swap_request'
   | 'time_correction_request'
   | 'off_site_work_request'
+  | 'comp_time_off_request'
 
 export type RequestActionEvent =
   | {

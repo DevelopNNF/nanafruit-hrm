@@ -11,6 +11,7 @@ import {
 import {
   cancelOvertimeRequest,
   fetchMyOvertimeRequests,
+  fetchOvertimeCompTimeEligibility,
   submitOvertimeRequest,
   updateOvertimeRequest,
 } from '../api/overtimeRequests'
@@ -93,6 +94,24 @@ export function OvertimeRequestCard({ onBack }: Props) {
   const [startTime, setStartTime] = useState('18:00')
   const [endTime, setEndTime] = useState('20:00')
   const [reason, setReason] = useState('')
+  const [compTimeRequested, setCompTimeRequested] = useState(false)
+
+  // Whether the employee's own OT group offers comp-time-off at all — gates
+  // showing the toggle. Fetched once; false (hidden) until it's known, same
+  // fail-safe default the shift-conflict preview uses elsewhere in this file.
+  const [compTimeEligible, setCompTimeEligible] = useState(false)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchOvertimeCompTimeEligibility(controller.signal)
+      .then(setCompTimeEligible)
+      .catch(() => {
+        // Silent, same reasoning as the calendar-month fetch below: this only
+        // powers whether an optional toggle is shown, and the server is the
+        // real authority on whether compTimeRequested is accepted anyway.
+      })
+    return () => controller.abort()
+  }, [])
 
   // Calendar months already fetched, keyed 'YYYY-MM'. The form needs the day
   // being requested AND both its neighbours (an overnight shift from the day
@@ -149,6 +168,7 @@ export function OvertimeRequestCard({ onBack }: Props) {
     setStartTime('18:00')
     setEndTime('20:00')
     setReason('')
+    setCompTimeRequested(false)
     setError(null)
     setMode('form')
   }
@@ -159,6 +179,7 @@ export function OvertimeRequestCard({ onBack }: Props) {
     setStartTime(hhmm(request.startTime))
     setEndTime(hhmm(request.endTime))
     setReason(request.reason)
+    setCompTimeRequested(request.compTimeRequested)
     setError(null)
     setMode('form')
   }
@@ -168,7 +189,7 @@ export function OvertimeRequestCard({ onBack }: Props) {
     setBusy(true)
     setError(null)
     try {
-      const input = { otDate, startTime, endTime, reason }
+      const input = { otDate, startTime, endTime, reason, compTimeRequested: compTimeEligible && compTimeRequested }
       const request =
         editingId === null
           ? await submitOvertimeRequest(input)
@@ -308,11 +329,26 @@ export function OvertimeRequestCard({ onBack }: Props) {
           </label>
         </div>
 
+        {compTimeEligible && (
+          <label className="field-checkbox">
+            <input
+              type="checkbox"
+              checked={compTimeRequested}
+              onChange={(e) => setCompTimeRequested(e.target.checked)}
+              disabled={busy}
+            />
+            <span>ขอเป็นวันหยุดสะสมแทนเงิน</span>
+          </label>
+        )}
+
         {preview.minutes !== null && (
           <p className={`request-form-summary ${preview.conflict !== null ? 'conflict' : ''}`}>
             รวม {formatHours(preview.minutes)}
             {overtimeCrossesMidnight(startTime, endTime) && ' (ข้ามเที่ยงคืน)'}
-            {preview.conflict === null && ' — ระบบคำนวณคร่าว ๆ ยอดจริงยึดตามที่อนุมัติ'}
+            {preview.conflict === null &&
+              (compTimeRequested
+                ? ' — ยอดวันหยุดสะสมที่ได้จริงขึ้นกับการอนุมัติ'
+                : ' — ระบบคำนวณคร่าว ๆ ยอดจริงยึดตามที่อนุมัติ')}
           </p>
         )}
 

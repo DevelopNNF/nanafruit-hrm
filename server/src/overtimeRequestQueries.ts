@@ -56,6 +56,11 @@ export type OvertimeRequestRow = {
   decision_reason: string | null
   created_at: string
   updated_at: string
+  comp_time_requested: boolean
+  comp_time_allocated_normal_minutes: number
+  comp_time_allocated_extra_minutes: number
+  comp_time_accrual_minutes: number
+  comp_time_money_source_minutes: number
 }
 
 export type OvertimeRequestListRow = OvertimeRequestRow & {
@@ -73,7 +78,10 @@ export const SELECT_OVERTIME_REQUEST = `
          (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
          otr.current_stage, otr.supervisor_approved_by_name, otr.supervisor_approved_at,
          otr.decided_by_name, otr.decided_at, otr.decision_reason,
-         otr.created_at, otr.updated_at
+         otr.created_at, otr.updated_at,
+         otr.comp_time_requested, otr.comp_time_allocated_normal_minutes,
+         otr.comp_time_allocated_extra_minutes, otr.comp_time_accrual_minutes,
+         otr.comp_time_money_source_minutes
   FROM overtime_requests otr
   LEFT JOIN master_shifts ms ON ms.id = otr.shift_id
   JOIN master_overtime_groups mog ON mog.id = otr.overtime_group_id
@@ -91,6 +99,9 @@ export const SELECT_OVERTIME_REQUEST_LIST = `
          otr.current_stage, otr.supervisor_approved_by_name, otr.supervisor_approved_at,
          otr.decided_by_name, otr.decided_at, otr.decision_reason,
          otr.created_at, otr.updated_at,
+         otr.comp_time_requested, otr.comp_time_allocated_normal_minutes,
+         otr.comp_time_allocated_extra_minutes, otr.comp_time_accrual_minutes,
+         otr.comp_time_money_source_minutes,
          e.employee_code, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
   FROM overtime_requests otr
   LEFT JOIN master_shifts ms ON ms.id = otr.shift_id
@@ -132,6 +143,11 @@ export function rowToOvertimeRequest(row: OvertimeRequestRow): OvertimeRequest {
     decisionReason: row.decision_reason,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
+    compTimeRequested: row.comp_time_requested,
+    compTimeAllocatedNormalMinutes: row.comp_time_allocated_normal_minutes,
+    compTimeAllocatedExtraMinutes: row.comp_time_allocated_extra_minutes,
+    compTimeAccrualMinutes: row.comp_time_accrual_minutes,
+    compTimeMoneySourceMinutes: row.comp_time_money_source_minutes,
   }
 }
 

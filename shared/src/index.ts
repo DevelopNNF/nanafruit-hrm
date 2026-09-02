@@ -1263,6 +1263,27 @@ export type OvertimeGroup = {
   rateOtHoliday: number
   roundingMinutes: OvertimeRoundingMinutes
   isActive: boolean
+  /** Whether employees in this group may request OT as accrued comp-time-off
+   *  (วันหยุดสะสม) instead of money. Gates the five comp* fields below and
+   *  the per-request toggle on overtime_requests. */
+  compTimeEnabled: boolean
+  /** Conversion multipliers into comp-time minutes, parallel to rate* above
+   *  but independent of them (a group can price OT as money AND convert OT
+   *  to comp-time at different multipliers) — required (non-null) iff
+   *  compTimeEnabled. E.g. 4 hours OT at 1.5 -> 6 hours accrued. */
+  compRateOtWorkday: number | null
+  compRateNormalDayoff: number | null
+  compRateOtDayoff: number | null
+  compRateNormalHoliday: number | null
+  compRateOtHoliday: number | null
+  /** Caps how many comp-time minutes a single employee may accrue through
+   *  this group per calendar year; minutes beyond the cap are paid as money
+   *  at the ordinary rate* instead of accruing. */
+  compAnnualCapEnabled: boolean
+  compAnnualCapMinutes: number | null
+  /** Rounds accrued comp-time to the nearest (not down, unlike
+   *  roundingMinutes above) multiple of this many minutes. */
+  compRoundingMinutes: OvertimeRoundingMinutes
 }
 
 /** Body of POST /api/overtime-groups and PUT /api/overtime-groups/:id */
@@ -2842,6 +2863,27 @@ export type OvertimeRequest = {
   createdAt: string
   /** ISO 8601. Bumped on every edit while pending. */
   updatedAt: string
+  /** Whether the employee chose to take this specific request as accrued
+   *  comp-time-off instead of money — a per-request choice, only ever true
+   *  when overtimeGroupId's group has compTimeEnabled. False for every
+   *  request filed against a group that doesn't offer the option at all. */
+  compTimeRequested: boolean
+  /** This request's share of its work-date's day-level normal/extra minutes
+   *  (see allocateOvertimeDayMinutesToRequests in overtimeCalculation.ts),
+   *  frozen at approval time. 0 until approved, regardless of
+   *  compTimeRequested — these describe how the day's OT was divided among
+   *  its requests, not how this one request was priced. */
+  compTimeAllocatedNormalMinutes: number
+  compTimeAllocatedExtraMinutes: number
+  /** How many comp-time-off minutes this request actually accrued, after the
+   *  group's conversion rate, rounding, and annual-cap proration. 0 until
+   *  approved; stays 0 forever if compTimeRequested is false. */
+  compTimeAccrualMinutes: number
+  /** How many of this request's allocated minutes were still priced and paid
+   *  as money — every allocated minute when compTimeRequested is false, or
+   *  just the annual-cap overflow when it's true and the cap was crossed.
+   *  0 until approved. */
+  compTimeMoneySourceMinutes: number
 }
 
 /** A request as admin/ sees it: the employee joined in for display, same
@@ -2863,10 +2905,21 @@ export type OvertimeRequestInput = {
   startTime: string
   endTime: string
   reason: string
+  /** Requests this OT be accrued as comp-time-off instead of paid as money.
+   *  The server rejects true unless the employee's own overtimeGroupId has
+   *  compTimeEnabled — see GET /api/overtime-requests/comp-time-eligibility,
+   *  which the LIFF form checks before even showing the toggle. */
+  compTimeRequested: boolean
 }
 
 /** POST /api/overtime-requests, PUT /api/overtime-requests/:id */
 export type OvertimeRequestResponse = { request: OvertimeRequest }
+
+/** GET /api/overtime-requests/comp-time-eligibility — whether the calling
+ *  employee's own OT group currently allows comp-time-off requests, so LIFF
+ *  can decide whether to render the toggle at all without being handed the
+ *  group's actual rate configuration. */
+export type OvertimeCompTimeEligibilityResponse = { compTimeEnabled: boolean }
 
 /** GET /api/overtime-requests/me — an employee's own requests, no employee
  *  join needed since it's implicitly them. */
@@ -3231,6 +3284,164 @@ export type OvertimeReportResponse = {
   byWeek: OvertimeReportWeek[]
   summary: OvertimeReportSummary
 }
+
+/* Comp-Time-Off Balance -----------------------------------------------------
+ *
+ * overtime_comp_time_entries: same append-only ledger shape as
+ * LeaveBalanceEntry (leave_balance_entries), but in MINUTES rather than days,
+ * and — per HR's confirmed decision — scoped to a single calendar year with
+ * no carry-over: the balance simply resets every January 1st, which the
+ * balance query achieves by filtering to the current year rather than
+ * summing all history. See the migration's comment for the full reasoning.
+ *
+ * CompTimeOffRequest (the redemption request itself) is defined further
+ * below, in its own section — it needs CalendarDayStatus-independent request/
+ * approval types that don't belong bundled with the balance shapes here. */
+
+export const OVERTIME_COMP_TIME_ENTRY_TYPES = ['accrual', 'usage', 'adjustment'] as const
+export type OvertimeCompTimeEntryType = (typeof OVERTIME_COMP_TIME_ENTRY_TYPES)[number]
+
+export type OvertimeCompTimeEntry = {
+  id: number
+  employeeId: number
+  year: number
+  entryType: OvertimeCompTimeEntryType
+  /** Positive for accrual, negative for usage, either sign for adjustment —
+   *  enforced by a DB CHECK, not just convention. */
+  amountMinutes: number
+  sourceOvertimeRequestId: number | null
+  sourceRedemptionId: number | null
+  /** Required when entryType is 'adjustment', null otherwise. */
+  reason: string | null
+  createdByName: string
+  /** ISO 8601. */
+  createdAt: string
+}
+
+/** One employee's comp-time-off balance for one (reset-on-January-1st) year,
+ *  derived by summing overtime_comp_time_entries — there is no stored
+ *  "current balance" row. */
+export type CompTimeBalance = {
+  year: number
+  /** SUM(amountMinutes) for this employee/year — the actual spendable
+   *  balance. Resets to 0 every January 1st (prior years' entries fall
+   *  outside the year filter on their own; nothing needs to "expire" them). */
+  balanceMinutes: number
+  /** SUM of accrual entries only, for this employee/year — what to compare
+   *  against the OT group's comp_annual_cap_minutes when deciding whether a
+   *  new accrual must be prorated to money instead. */
+  accruedThisYearMinutes: number
+  /** SUM(requestedMinutes) of this employee's still-pending
+   *  comp_time_off_requests — netted out of balanceMinutes below the same
+   *  way LeaveBalanceSummary.pendingDays nets against remainingDays, so two
+   *  pending redemptions can't both be approved past the same balance. */
+  pendingRedemptionMinutes: number
+  /** balanceMinutes - pendingRedemptionMinutes. What a new redemption
+   *  request is actually checked against. */
+  availableMinutes: number
+}
+
+/** GET /api/employees/:employeeId/comp-time-balance?year= */
+export type CompTimeBalanceResponse = { balance: CompTimeBalance }
+
+/* Comp-Time-Off Requests -----------------------------------------------------
+ *
+ * The employee-initiated "ขอใช้วันหยุดสะสม" request: spending accrued
+ * comp-time-off balance (see CompTimeBalance above) on a date. Deliberately a
+ * separate, simpler request type from LeaveRequest rather than a new
+ * master_leave_types row — tracked in minutes to match how OT accrues it,
+ * and none of LeaveRequest's per-leave-type eligibility rules (gender,
+ * advance notice, half-day/hourly flags, annual entitlement) apply here; the
+ * only balance check is against CompTimeBalance.availableMinutes.
+ *
+ * Same four-state pending/approved/rejected/cancelled decision workflow and
+ * two-stage supervisor->HR approval shape as OvertimeRequest/LeaveRequest —
+ * see comp_time_off_requests' migration for the full reasoning, which
+ * applies unchanged here.
+ */
+
+export const COMP_TIME_OFF_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
+export type CompTimeOffRequestStatus = (typeof COMP_TIME_OFF_REQUEST_STATUSES)[number]
+
+export const COMP_TIME_OFF_REQUEST_STAGES = ['supervisor', 'hr'] as const
+export type CompTimeOffRequestStage = (typeof COMP_TIME_OFF_REQUEST_STAGES)[number]
+
+export type CompTimeOffRequest = {
+  id: number
+  employeeId: number
+  /** Calendar date, `YYYY-MM-DD`, the comp-time-off is taken on. */
+  offDate: string
+  /** Wall-clock 'HH:MM:SS'. Always set today — see CompTimeOffRequestInput's
+   *  comment on why a whole-day request (the schema's nullable columns would
+   *  allow it) isn't offered yet. */
+  startTime: string
+  endTime: string
+  /** What's actually checked against and deducted from the balance on
+   *  approval — never derived from startTime/endTime on read. */
+  requestedMinutes: number
+  reason: string
+  status: CompTimeOffRequestStatus
+  requiresSupervisorApproval: boolean
+  supervisorEmployeeId: number | null
+  supervisorEmployeeName: string | null
+  currentStage: CompTimeOffRequestStage | null
+  supervisorApprovedByName: string | null
+  supervisorApprovedAt: string | null
+  decidedByName: string | null
+  decidedAt: string | null
+  /** Required when status is 'rejected', null otherwise. */
+  decisionReason: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** A request as admin/ sees it: the employee joined in for display, same
+ *  shape as OvertimeRequestListItem. */
+export type CompTimeOffRequestListItem = CompTimeOffRequest & {
+  employeeCode: string
+  employeeName: string
+}
+
+/** Body of POST /api/comp-time-off-requests and PUT .../:id — same shape for
+ *  both. employeeId is not an input — the server derives it from the
+ *  caller's employee session. Neither is requestedMinutes: always
+ *  server-computed from startTime/endTime, never taken from the client.
+ *
+ *  The schema (comp_time_off_requests) allows a whole-day request (both
+ *  times null) for a future phase, but the route currently requires both —
+ *  resolving "how many minutes is a whole day" would need a shift/holiday
+ *  lookup this phase deliberately doesn't take on; every request today is an
+ *  exact time range. */
+export type CompTimeOffRequestInput = {
+  offDate: string
+  startTime: string
+  endTime: string
+  reason: string
+}
+
+/** POST /api/comp-time-off-requests, PUT .../:id */
+export type CompTimeOffRequestResponse = { request: CompTimeOffRequest }
+
+/** GET /api/comp-time-off-requests/me */
+export type CompTimeOffRequestMineResponse = { requests: CompTimeOffRequest[] }
+
+/** GET /api/comp-time-off-requests */
+export type CompTimeOffRequestListResponse = {
+  requests: CompTimeOffRequestListItem[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+/** GET /api/comp-time-off-requests/pending-approval */
+export type CompTimeOffRequestPendingApprovalResponse = { requests: CompTimeOffRequestListItem[] }
+
+/** GET /api/comp-time-off-requests/:id, POST .../approve, POST .../reject */
+export type CompTimeOffRequestDetailResponse = { request: CompTimeOffRequestListItem; canDecide: boolean }
+
+/** Body of POST /api/comp-time-off-requests/:id/reject — a reason is
+ *  required every time, never optional. */
+export type CompTimeOffRequestRejectRequest = { reason: string }
 
 /* Health ------------------------------------------------------------------ */
 

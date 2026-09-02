@@ -13,6 +13,7 @@ const RESOURCE_LABELS: Record<RequestResourceType, string> = {
   day_off_swap_request: 'คำขอสลับวันหยุด',
   time_correction_request: 'คำขอแก้ไขเวลา',
   off_site_work_request: 'คำขอทำงานนอกสถานที่',
+  comp_time_off_request: 'คำขอใช้วันหยุดสะสม',
 }
 
 export function resourceLabel(resource: RequestResourceType): string {

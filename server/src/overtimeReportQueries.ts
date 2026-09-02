@@ -147,6 +147,19 @@ function groupOf(row: ReportRow): OvertimeGroup | null {
     rateOtHoliday: Number(row.rate_ot_holiday),
     roundingMinutes: (row.rounding_minutes ?? 0) as OvertimeRoundingMinutes,
     isActive: true,
+    // This report only ever reads rate*/roundingMinutes off the group (via
+    // overtimeRatesFor/bucketOvertimeDay) — the comp-time fields are never
+    // consulted here, so they're left at their "disabled" shape rather than
+    // querying mog.comp_* columns this report doesn't otherwise need.
+    compTimeEnabled: false,
+    compRateOtWorkday: null,
+    compRateNormalDayoff: null,
+    compRateOtDayoff: null,
+    compRateNormalHoliday: null,
+    compRateOtHoliday: null,
+    compAnnualCapEnabled: false,
+    compAnnualCapMinutes: null,
+    compRoundingMinutes: 0,
   }
 }
 

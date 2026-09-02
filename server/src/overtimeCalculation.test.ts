@@ -8,7 +8,17 @@
 import { strict as assert } from 'node:assert'
 import { describe, it } from 'node:test'
 import type { OvertimeGroup } from '@hrm/shared'
-import { bucketOvertimeDay, overtimeAmount, overtimeRatesFor } from './overtimeCalculation.js'
+import {
+  actualMinutesPerRequest,
+  allocateOvertimeDayMinutesToRequests,
+  bucketOvertimeDay,
+  candidateCompAccrualMinutes,
+  compConversionRatesFor,
+  overtimeAmount,
+  overtimeRatesFor,
+  roundMinutesNearest,
+  splitCompTimeForAnnualCap,
+} from './overtimeCalculation.js'
 
 const GROUP: OvertimeGroup = {
   id: 1,
@@ -21,6 +31,28 @@ const GROUP: OvertimeGroup = {
   rateOtHoliday: 3,
   roundingMinutes: 0,
   isActive: true,
+  compTimeEnabled: false,
+  compRateOtWorkday: null,
+  compRateNormalDayoff: null,
+  compRateOtDayoff: null,
+  compRateNormalHoliday: null,
+  compRateOtHoliday: null,
+  compAnnualCapEnabled: false,
+  compAnnualCapMinutes: null,
+  compRoundingMinutes: 0,
+}
+
+const COMP_GROUP: OvertimeGroup = {
+  ...GROUP,
+  compTimeEnabled: true,
+  compRateOtWorkday: 1.5,
+  compRateNormalDayoff: 1,
+  compRateOtDayoff: 2,
+  compRateNormalHoliday: 1,
+  compRateOtHoliday: 3,
+  compAnnualCapEnabled: false,
+  compAnnualCapMinutes: null,
+  compRoundingMinutes: 0,
 }
 
 describe('overtimeRatesFor', () => {
@@ -174,5 +206,216 @@ describe('bucketOvertimeDay', () => {
     assert.equal(shares[0]!.amount, 0)
     assert.equal(shares[1]!.minutes, 60)
     assert.equal(shares[1]!.amount, 300)
+  })
+})
+
+describe('actualMinutesPerRequest', () => {
+  it('intersects each request interval against presence individually', () => {
+    const requests = [
+      { requestId: 1, startAt: '2026-01-05T11:00:00Z', endAt: '2026-01-05T12:00:00Z' },
+      { requestId: 2, startAt: '2026-01-05T13:00:00Z', endAt: '2026-01-05T14:00:00Z' },
+    ]
+    const result = actualMinutesPerRequest(requests, '2026-01-05T11:30:00Z', '2026-01-05T13:30:00Z')
+    // request 1: only the last 30 minutes of its hour overlap presence.
+    assert.equal(result.get(1), 30)
+    // request 2: only the first 30 minutes of its hour overlap presence.
+    assert.equal(result.get(2), 30)
+  })
+
+  it('zeroes every request when a punch is missing, mirroring computeOvertimeForDay', () => {
+    const requests = [{ requestId: 1, startAt: '2026-01-05T11:00:00Z', endAt: '2026-01-05T12:00:00Z' }]
+    assert.equal(actualMinutesPerRequest(requests, null, '2026-01-05T13:00:00Z').get(1), 0)
+    assert.equal(actualMinutesPerRequest(requests, '2026-01-05T11:00:00Z', null).get(1), 0)
+  })
+})
+
+describe('allocateOvertimeDayMinutesToRequests', () => {
+  it('gives the whole day to a single request — matches the pre-existing money math exactly', () => {
+    const allocation = allocateOvertimeDayMinutesToRequests({
+      dayStatus: 'workday',
+      dayNormalMinutes: 0,
+      dayExtraMinutes: 120,
+      requests: [{ requestId: 1, actualMinutes: 120 }],
+    })
+    assert.deepEqual(allocation, [{ requestId: 1, normalMinutes: 0, extraMinutes: 120 }])
+  })
+
+  it('splits two same-day day-off requests at the 8-hour boundary inside the second one', () => {
+    // 420 minutes then 180 minutes, no rounding loss (700 = 420+180... use
+    // exact totals): first request stays entirely normal, second request's
+    // first 60 minutes are normal (fills the 480 threshold) and the
+    // remaining 120 are extra.
+    const allocation = allocateOvertimeDayMinutesToRequests({
+      dayStatus: 'weekly_off',
+      dayNormalMinutes: 480,
+      dayExtraMinutes: 120,
+      requests: [
+        { requestId: 1, actualMinutes: 420 },
+        { requestId: 2, actualMinutes: 180 },
+      ],
+    })
+    assert.deepEqual(allocation, [
+      { requestId: 1, normalMinutes: 420, extraMinutes: 0 },
+      { requestId: 2, normalMinutes: 60, extraMinutes: 120 },
+    ])
+  })
+
+  it('takes the rounding-down loss off the last request, walking backward', () => {
+    // Two requests actually total 130 minutes; day-level rounding (30 min
+    // step) brings the payable total down to 120 — the 10-minute loss must
+    // come off request 2 first (the last one), not request 1.
+    const allocation = allocateOvertimeDayMinutesToRequests({
+      dayStatus: 'workday',
+      dayNormalMinutes: 0,
+      dayExtraMinutes: 120,
+      requests: [
+        { requestId: 1, actualMinutes: 70 },
+        { requestId: 2, actualMinutes: 60 },
+      ],
+    })
+    assert.deepEqual(allocation, [
+      { requestId: 1, normalMinutes: 0, extraMinutes: 70 },
+      { requestId: 2, normalMinutes: 0, extraMinutes: 50 },
+    ])
+    const total = allocation.reduce((sum, a) => sum + a.normalMinutes + a.extraMinutes, 0)
+    assert.equal(total, 120)
+  })
+
+  it('carries the rounding loss past a request whose own actual minutes are smaller than the loss', () => {
+    // Loss of 45 minutes must eat all of request 2 (20 min) and spill 25
+    // minutes into request 1, not go negative on request 2.
+    const allocation = allocateOvertimeDayMinutesToRequests({
+      dayStatus: 'workday',
+      dayNormalMinutes: 0,
+      dayExtraMinutes: 55,
+      requests: [
+        { requestId: 1, actualMinutes: 80 },
+        { requestId: 2, actualMinutes: 20 },
+      ],
+    })
+    assert.deepEqual(allocation, [
+      { requestId: 1, normalMinutes: 0, extraMinutes: 55 },
+      { requestId: 2, normalMinutes: 0, extraMinutes: 0 },
+    ])
+  })
+
+  it('returns all-zero allocations when the day has no actual minutes at all', () => {
+    const allocation = allocateOvertimeDayMinutesToRequests({
+      dayStatus: 'holiday',
+      dayNormalMinutes: 0,
+      dayExtraMinutes: 0,
+      requests: [{ requestId: 1, actualMinutes: 0 }],
+    })
+    assert.deepEqual(allocation, [{ requestId: 1, normalMinutes: 0, extraMinutes: 0 }])
+  })
+})
+
+describe('compConversionRatesFor', () => {
+  it('mirrors overtimeRatesFor\'s selection logic over the comp_rate_* columns', () => {
+    assert.deepEqual(compConversionRatesFor('workday', COMP_GROUP), { normalRate: 1.5, extraRate: 1.5 })
+    assert.deepEqual(compConversionRatesFor('holiday', COMP_GROUP), { normalRate: 1, extraRate: 3 })
+    assert.deepEqual(compConversionRatesFor('weekly_off', COMP_GROUP), { normalRate: 1, extraRate: 2 })
+  })
+
+  it('throws when the group does not have comp-time enabled', () => {
+    assert.throws(() => compConversionRatesFor('workday', GROUP))
+  })
+})
+
+describe('roundMinutesNearest', () => {
+  it('rounds to the nearest step, not down', () => {
+    assert.equal(roundMinutesNearest(37, 15), 30)
+    assert.equal(roundMinutesNearest(38, 15), 45)
+    assert.equal(roundMinutesNearest(97, 60), 120)
+  })
+
+  it('rounds ties up, matching Math.round', () => {
+    assert.equal(roundMinutesNearest(7.5, 15), 15)
+  })
+
+  it('returns a whole number even with no step configured', () => {
+    assert.equal(roundMinutesNearest(90.4, 0), 90)
+    assert.equal(roundMinutesNearest(90.6, 0), 91)
+  })
+})
+
+describe('candidateCompAccrualMinutes', () => {
+  it('converts allocated minutes through the comp rate, e.g. 4 hours at 1.5x -> 6 hours', () => {
+    const minutes = candidateCompAccrualMinutes({
+      status: 'workday',
+      allocatedNormalMinutes: 0,
+      allocatedExtraMinutes: 240,
+      group: COMP_GROUP,
+    })
+    assert.equal(minutes, 360)
+  })
+
+  it('blends normal and extra minutes at their own rates on a day off', () => {
+    const minutes = candidateCompAccrualMinutes({
+      status: 'weekly_off',
+      allocatedNormalMinutes: 60, // x1
+      allocatedExtraMinutes: 60, // x2
+      group: COMP_GROUP,
+    })
+    assert.equal(minutes, 180)
+  })
+
+  it('applies the group\'s comp rounding to the converted total', () => {
+    const rounded = candidateCompAccrualMinutes({
+      status: 'workday',
+      allocatedNormalMinutes: 0,
+      allocatedExtraMinutes: 37, // 37 * 1.5 = 55.5
+      group: { ...COMP_GROUP, compRoundingMinutes: 15 },
+    })
+    assert.equal(rounded, 60)
+  })
+})
+
+describe('splitCompTimeForAnnualCap', () => {
+  it('accrues the full candidate with no overflow when the group has no cap', () => {
+    const result = splitCompTimeForAnnualCap({
+      candidateAccrualMinutes: 360,
+      sourceMinutes: 240,
+      alreadyAccruedThisYearMinutes: 10_000,
+      group: COMP_GROUP,
+    })
+    assert.deepEqual(result, { accrualMinutes: 360, moneySourceMinutesFromOverflow: 0 })
+  })
+
+  it('accrues the full candidate when there is enough headroom under the cap', () => {
+    const group: OvertimeGroup = { ...COMP_GROUP, compAnnualCapEnabled: true, compAnnualCapMinutes: 480 }
+    const result = splitCompTimeForAnnualCap({
+      candidateAccrualMinutes: 360,
+      sourceMinutes: 240,
+      alreadyAccruedThisYearMinutes: 0,
+      group,
+    })
+    assert.deepEqual(result, { accrualMinutes: 360, moneySourceMinutesFromOverflow: 0 })
+  })
+
+  it('prorates the overflow to money, proportionally, when the cap is crossed mid-request', () => {
+    const group: OvertimeGroup = { ...COMP_GROUP, compAnnualCapEnabled: true, compAnnualCapMinutes: 480 }
+    // Already accrued 400/480 -> only 80 minutes of headroom left. Candidate
+    // 360 accrual came from 240 source minutes (1.5x): overflow is
+    // 360-80=280 accrual minutes, which is 280/360 of the request, so the
+    // money-priced source share is 280/360 * 240 = 186.67 -> rounds to 187.
+    const result = splitCompTimeForAnnualCap({
+      candidateAccrualMinutes: 360,
+      sourceMinutes: 240,
+      alreadyAccruedThisYearMinutes: 400,
+      group,
+    })
+    assert.deepEqual(result, { accrualMinutes: 80, moneySourceMinutesFromOverflow: 187 })
+  })
+
+  it('accrues nothing and converts the whole request to money once the cap is already reached', () => {
+    const group: OvertimeGroup = { ...COMP_GROUP, compAnnualCapEnabled: true, compAnnualCapMinutes: 480 }
+    const result = splitCompTimeForAnnualCap({
+      candidateAccrualMinutes: 180,
+      sourceMinutes: 120,
+      alreadyAccruedThisYearMinutes: 480,
+      group,
+    })
+    assert.deepEqual(result, { accrualMinutes: 0, moneySourceMinutesFromOverflow: 120 })
   })
 })

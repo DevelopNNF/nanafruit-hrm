@@ -1,4 +1,5 @@
 import type {
+  OvertimeCompTimeEligibilityResponse,
   OvertimeRequest,
   OvertimeRequestInput,
   OvertimeRequestMineResponse,
@@ -39,4 +40,12 @@ export async function cancelOvertimeRequest(id: number): Promise<OvertimeRequest
   const res = await apiFetch(`/api/overtime-requests/${id}/cancel`, { method: 'POST' })
   const body = await unwrap<OvertimeRequestResponse>(res)
   return body.request
+}
+
+/** Whether to show the comp-time-off toggle on the request form at all —
+ *  see the route's own comment for why this is just the one boolean. */
+export async function fetchOvertimeCompTimeEligibility(signal?: AbortSignal): Promise<boolean> {
+  const res = await apiFetch('/api/overtime-requests/comp-time-eligibility', { signal })
+  const body = await unwrap<OvertimeCompTimeEligibilityResponse>(res)
+  return body.compTimeEnabled
 }

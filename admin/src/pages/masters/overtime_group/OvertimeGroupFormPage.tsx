@@ -26,6 +26,15 @@ const ROUNDING_LABELS: Record<(typeof OVERTIME_ROUNDING_MINUTES)[number], string
   60: 'เต็มชั่วโมง',
 }
 
+// Comp-time rounding is nearest, not down (unlike the money-side rounding
+// above), so its labels say so explicitly rather than reusing ROUNDING_LABELS.
+const COMP_ROUNDING_LABELS: Record<(typeof OVERTIME_ROUNDING_MINUTES)[number], string> = {
+  0: 'ไม่ปัด',
+  15: 'ปัดใกล้สุด 15 นาที',
+  30: 'ปัดใกล้สุด 30 นาที',
+  60: 'ปัดใกล้สุดชั่วโมง',
+}
+
 const emptyDraft: OvertimeGroupInput = {
   groupCode: '',
   groupName: '',
@@ -36,6 +45,26 @@ const emptyDraft: OvertimeGroupInput = {
   rateOtHoliday: 3,
   roundingMinutes: 0,
   isActive: true,
+  compTimeEnabled: false,
+  compRateOtWorkday: null,
+  compRateNormalDayoff: null,
+  compRateOtDayoff: null,
+  compRateNormalHoliday: null,
+  compRateOtHoliday: null,
+  compAnnualCapEnabled: false,
+  compAnnualCapMinutes: null,
+  compRoundingMinutes: 0,
+}
+
+// Comp-time-off rates default to the same starting multipliers as the money
+// rates when the checkbox is first ticked, purely so the form doesn't hand
+// the admin five empty required fields with no starting point.
+const defaultCompRates = {
+  compRateOtWorkday: 1.5,
+  compRateNormalDayoff: 1,
+  compRateOtDayoff: 3,
+  compRateNormalHoliday: 2,
+  compRateOtHoliday: 3,
 }
 
 const sectionTitle =
@@ -79,6 +108,15 @@ export function OvertimeGroupFormPage() {
           rateOtHoliday: group.rateOtHoliday,
           roundingMinutes: group.roundingMinutes,
           isActive: group.isActive,
+          compTimeEnabled: group.compTimeEnabled,
+          compRateOtWorkday: group.compRateOtWorkday,
+          compRateNormalDayoff: group.compRateNormalDayoff,
+          compRateOtDayoff: group.compRateOtDayoff,
+          compRateNormalHoliday: group.compRateNormalHoliday,
+          compRateOtHoliday: group.compRateOtHoliday,
+          compAnnualCapEnabled: group.compAnnualCapEnabled,
+          compAnnualCapMinutes: group.compAnnualCapMinutes,
+          compRoundingMinutes: group.compRoundingMinutes,
         })
         setLoading(false)
       })
@@ -93,6 +131,42 @@ export function OvertimeGroupFormPage() {
 
   function set<K extends keyof OvertimeGroupInput>(key: K, value: OvertimeGroupInput[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }))
+  }
+
+  function toggleCompTimeEnabled(enabled: boolean) {
+    setDraft((prev) => ({
+      ...prev,
+      compTimeEnabled: enabled,
+      // Prefill with sane defaults the first time it's switched on so the
+      // admin isn't handed five blank required fields; clear everything
+      // (including the cap) when switched off so a disabled group never
+      // carries stale comp-time config.
+      ...(enabled
+        ? {
+            compRateOtWorkday: prev.compRateOtWorkday ?? defaultCompRates.compRateOtWorkday,
+            compRateNormalDayoff: prev.compRateNormalDayoff ?? defaultCompRates.compRateNormalDayoff,
+            compRateOtDayoff: prev.compRateOtDayoff ?? defaultCompRates.compRateOtDayoff,
+            compRateNormalHoliday: prev.compRateNormalHoliday ?? defaultCompRates.compRateNormalHoliday,
+            compRateOtHoliday: prev.compRateOtHoliday ?? defaultCompRates.compRateOtHoliday,
+          }
+        : {
+            compRateOtWorkday: null,
+            compRateNormalDayoff: null,
+            compRateOtDayoff: null,
+            compRateNormalHoliday: null,
+            compRateOtHoliday: null,
+            compAnnualCapEnabled: false,
+            compAnnualCapMinutes: null,
+          }),
+    }))
+  }
+
+  function toggleCompAnnualCapEnabled(enabled: boolean) {
+    setDraft((prev) => ({
+      ...prev,
+      compAnnualCapEnabled: enabled,
+      compAnnualCapMinutes: enabled ? (prev.compAnnualCapMinutes ?? 8 * 60) : null,
+    }))
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -285,6 +359,153 @@ export function OvertimeGroupFormPage() {
                 </select>
               </label>
             </div>
+          </section>
+
+          <section className={`${card} mb-4`}>
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={draft.compTimeEnabled}
+                onChange={(e) => toggleCompTimeEnabled(e.target.checked)}
+              />
+              <span>คิดเป็นวันหยุดสะสมได้</span>
+            </label>
+
+            {draft.compTimeEnabled && (
+              <div className="mt-4 border-t border-slate-200 pt-4">
+                <h2 className={sectionTitle}>อัตราการแปลงเป็นวันหยุดสะสม (Comp-time conversion rates)</h2>
+                <p className={`${muted} mb-3`}>
+                  ระบุเป็นตัวคูณของชั่วโมงที่ทำ OT เช่น ทำ OT 4 ชั่วโมง อัตรา 1.5 → ได้วันหยุดสะสม 6 ชั่วโมง
+                </p>
+                <div className={fieldStack}>
+                  <label className={fieldRow}>
+                    <span className={fieldRowLabel}>
+                      วันทำงานปกติ (Working Day) — OT นอกเวลา <span className={requiredMark}>*</span> :
+                    </span>
+                    <input
+                      required
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      className={`${fieldControl} max-w-32`}
+                      value={draft.compRateOtWorkday ?? ''}
+                      onChange={(e) => set('compRateOtWorkday', Number(e.target.value))}
+                    />
+                  </label>
+                  <label className={fieldRow}>
+                    <span className={fieldRowLabel}>
+                      วันหยุด (Day Off) — OT ในเวลา <span className={requiredMark}>*</span> :
+                    </span>
+                    <input
+                      required
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      className={`${fieldControl} max-w-32`}
+                      value={draft.compRateNormalDayoff ?? ''}
+                      onChange={(e) => set('compRateNormalDayoff', Number(e.target.value))}
+                    />
+                  </label>
+                  <label className={fieldRow}>
+                    <span className={fieldRowLabel}>
+                      วันหยุด (Day Off) — OT นอกเวลา <span className={requiredMark}>*</span> :
+                    </span>
+                    <input
+                      required
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      className={`${fieldControl} max-w-32`}
+                      value={draft.compRateOtDayoff ?? ''}
+                      onChange={(e) => set('compRateOtDayoff', Number(e.target.value))}
+                    />
+                  </label>
+                  <label className={fieldRow}>
+                    <span className={fieldRowLabel}>
+                      วันหยุดพิเศษ (Holiday) — OT ในเวลา <span className={requiredMark}>*</span> :
+                    </span>
+                    <input
+                      required
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      className={`${fieldControl} max-w-32`}
+                      value={draft.compRateNormalHoliday ?? ''}
+                      onChange={(e) => set('compRateNormalHoliday', Number(e.target.value))}
+                    />
+                  </label>
+                  <label className={fieldRow}>
+                    <span className={fieldRowLabel}>
+                      วันหยุดพิเศษ (Holiday) — OT นอกเวลา <span className={requiredMark}>*</span> :
+                    </span>
+                    <input
+                      required
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      className={`${fieldControl} max-w-32`}
+                      value={draft.compRateOtHoliday ?? ''}
+                      onChange={(e) => set('compRateOtHoliday', Number(e.target.value))}
+                    />
+                  </label>
+
+                  <label className={fieldRow}>
+                    <span className={fieldRowLabel}>การปัดเศษยอดสะสม :</span>
+                    <select
+                      className={`${fieldControl} max-w-40`}
+                      value={draft.compRoundingMinutes}
+                      onChange={(e) =>
+                        set(
+                          'compRoundingMinutes',
+                          Number(e.target.value) as OvertimeGroupInput['compRoundingMinutes']
+                        )
+                      }
+                    >
+                      {OVERTIME_ROUNDING_MINUTES.map((minutes) => (
+                        <option key={minutes} value={minutes}>
+                          {COMP_ROUNDING_LABELS[minutes]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className={fieldRow}>
+                    <span className={fieldRowLabel}>
+                      <input
+                        type="checkbox"
+                        className="mr-2 align-middle"
+                        checked={draft.compAnnualCapEnabled}
+                        onChange={(e) => toggleCompAnnualCapEnabled(e.target.checked)}
+                      />
+                      จำกัดจำนวนชั่วโมงสูงสุดทั้งปี :
+                    </span>
+                    {draft.compAnnualCapEnabled && (
+                      <span className="flex items-center gap-2">
+                        <input
+                          required
+                          type="number"
+                          min={1}
+                          step={1}
+                          className={`${fieldControl} max-w-32`}
+                          value={
+                            draft.compAnnualCapMinutes === null
+                              ? ''
+                              : Math.round(draft.compAnnualCapMinutes / 60)
+                          }
+                          onChange={(e) => set('compAnnualCapMinutes', Number(e.target.value) * 60)}
+                        />
+                        <span className={muted}>ชั่วโมง / ปี</span>
+                      </span>
+                    )}
+                  </label>
+                  {draft.compAnnualCapEnabled && (
+                    <p className={muted}>
+                      เมื่อยอดสะสมของพนักงานถึงเพดานนี้แล้ว OT ส่วนที่เกินจะจ่ายเป็นเงินตามอัตรา OT ปกติแทน
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
 
           <section className={`${card} mb-4`}>

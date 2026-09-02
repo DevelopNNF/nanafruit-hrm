@@ -19,6 +19,7 @@ import {
   type OvertimeBulkCreateOutcome,
   type OvertimeBulkCreateResponse,
   type OvertimeBulkRequestInput,
+  type OvertimeCompTimeEligibilityResponse,
   type OvertimeEligibleEmployeesResponse,
   type OvertimeRequestDetailResponse,
   type OvertimeRequestInput,
@@ -48,6 +49,7 @@ import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
 import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
 import { reclassifyAttendanceEvents } from '../attendanceReclassify.js'
+import { postCompTimeAccrualForApprovedRange } from '../compTimeQueries.js'
 import {
   approvedOvertimeMinutesInWeek,
   approvedOvertimeMinutesInWeekBulk,
@@ -63,6 +65,7 @@ import {
   rowToOvertimeRequest,
   type OvertimeRequestRow,
 } from '../overtimeRequestQueries.js'
+import { findOvertimeGroupById } from '../overtimeGroupQueries.js'
 
 export const overtimeRequestsRouter = Router()
 
@@ -203,7 +206,16 @@ function parseOvertimeRequestInput(body: unknown): ParseResult<OvertimeRequestIn
     return { ok: false, message: 'reason is required and must be 1000 characters or fewer' }
   }
 
-  return { ok: true, value: { otDate: otDateRaw, startTime, endTime, reason } }
+  // Absent entirely (an older client, or the toggle never shown because the
+  // employee's group doesn't offer it) is the same as false, not an error —
+  // only an explicit non-boolean value is rejected.
+  const compTimeRequestedRaw = raw['compTimeRequested']
+  if (compTimeRequestedRaw !== undefined && typeof compTimeRequestedRaw !== 'boolean') {
+    return { ok: false, message: 'compTimeRequested must be a boolean' }
+  }
+  const compTimeRequested = compTimeRequestedRaw === true
+
+  return { ok: true, value: { otDate: otDateRaw, startTime, endTime, reason, compTimeRequested } }
 }
 
 /** Same fields as parseOvertimeRequestInput plus employeeIds — POST
@@ -305,6 +317,7 @@ type ValidationOutcome =
   | { kind: 'ok'; snapshot: OvertimeSnapshot }
   | { kind: 'employee-not-found' }
   | { kind: 'no-overtime-group' }
+  | { kind: 'comp-time-not-allowed' }
   | { kind: 'too-short' }
   | { kind: 'too-long' }
   | { kind: 'backdated' }
@@ -347,6 +360,11 @@ async function validateOvertimeRequestInput(
 
   const overtimeGroupId = employee.employment.overtimeGroupId
   if (overtimeGroupId === null) return { kind: 'no-overtime-group' }
+
+  if (input.compTimeRequested) {
+    const group = await findOvertimeGroupById(overtimeGroupId, db)
+    if (!group || !group.compTimeEnabled) return { kind: 'comp-time-not-allowed' }
+  }
 
   const requestedMinutes = computeOvertimeMinutes(input.startTime, input.endTime)
   if (requestedMinutes === null || requestedMinutes < OVERTIME_MIN_MINUTES) {
@@ -415,6 +433,12 @@ function describeValidationOutcome(outcome: Exclude<ValidationOutcome, { kind: '
     return {
       status: 400,
       message: 'ยังไม่ได้กำหนดกลุ่มการทำงานล่วงเวลาให้พนักงานคนนี้ จึงยังคำนวณค่า OT ไม่ได้ กรุณาติดต่อ HR',
+    }
+  }
+  if (outcome.kind === 'comp-time-not-allowed') {
+    return {
+      status: 400,
+      message: 'กลุ่มการทำงานล่วงเวลาของพนักงานคนนี้ยังไม่เปิดให้ขอเป็นวันหยุดสะสม',
     }
   }
   if (outcome.kind === 'too-short') {
@@ -491,6 +515,13 @@ function approvalStaleFail(res: Response, outcome: Exclude<ValidationOutcome, { 
       'พนักงานคนนี้ยังไม่ได้ถูกกำหนดกลุ่มการทำงานล่วงเวลา จึงยังคำนวณค่า OT ไม่ได้ กรุณากำหนดกลุ่มในหน้าข้อมูลพนักงานก่อน'
     )
   }
+  if (outcome.kind === 'comp-time-not-allowed') {
+    return fail(
+      res,
+      409,
+      'กลุ่มการทำงานล่วงเวลาของพนักงานคนนี้ถูกปิดการขอวันหยุดสะสมไปแล้วหลังยื่นคำขอ กรุณาปฏิเสธคำขอนี้'
+    )
+  }
   // Everything else (length bounds, hire date, missing employee, backdating —
   // the last of which isn't even checked here any more, see
   // validateOvertimeRequestInput's checkBackdate) was already true at
@@ -520,8 +551,9 @@ overtimeRequestsRouter.post('/overtime-requests', async (req: Request, res: Resp
            (employee_id, ot_date, start_time, end_time, requested_minutes,
             day_status, day_label, shift_id, shift_start_time, shift_end_time,
             overtime_group_id, reason,
-            requires_supervisor_approval, supervisor_employee_id, current_stage)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            requires_supervisor_approval, supervisor_employee_id, current_stage,
+            comp_time_requested)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING id`,
         [
           employeeId,
@@ -539,6 +571,7 @@ overtimeRequestsRouter.post('/overtime-requests', async (req: Request, res: Resp
           snapshot.requiresSupervisorApproval,
           snapshot.supervisorEmployeeId,
           currentStage,
+          input.compTimeRequested,
         ]
       )
       const created = rows[0]
@@ -553,6 +586,7 @@ overtimeRequestsRouter.post('/overtime-requests', async (req: Request, res: Resp
           startTime: input.startTime,
           endTime: input.endTime,
           requestedMinutes: snapshot.requestedMinutes,
+          compTimeRequested: input.compTimeRequested,
         },
       })
 
@@ -592,6 +626,27 @@ overtimeRequestsRouter.get('/overtime-requests/me', async (req: Request, res: Re
     handleUnexpected(res, err)
   }
 })
+
+// Whether the LIFF request form should show the comp-time-off toggle at
+// all — deliberately just the one boolean, not the group's actual rate
+// configuration, which is none of an employee's business to see.
+overtimeRequestsRouter.get(
+  '/overtime-requests/comp-time-eligibility',
+  async (req: Request, res: Response) => {
+    const employeeId = requireEmployeeId(req, res)
+    if (employeeId === null) return
+
+    try {
+      const employee = await findEmployeeById(employeeId)
+      const overtimeGroupId = employee?.employment.overtimeGroupId ?? null
+      const group = overtimeGroupId === null ? null : await findOvertimeGroupById(overtimeGroupId)
+      const body: OvertimeCompTimeEligibilityResponse = { compTimeEnabled: group?.compTimeEnabled ?? false }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
 
 // Editable only while pending — replaces the whole request rather than
 // patching one field, same body shape as creation. The snapshots are taken
@@ -649,6 +704,7 @@ overtimeRequestsRouter.put('/overtime-requests/:id', async (req: Request, res: R
              shift_start_time = $9, shift_end_time = $10,
              overtime_group_id = $11, reason = $12,
              requires_supervisor_approval = $13, supervisor_employee_id = $14, current_stage = $15,
+             comp_time_requested = $16,
              supervisor_approved_by_oid = NULL, supervisor_approved_by_name = NULL, supervisor_approved_at = NULL,
              updated_at = now()
          WHERE id = $1`,
@@ -668,6 +724,7 @@ overtimeRequestsRouter.put('/overtime-requests/:id', async (req: Request, res: R
           snapshot.requiresSupervisorApproval,
           snapshot.supervisorEmployeeId,
           currentStage,
+          input.compTimeRequested,
         ]
       )
 
@@ -891,6 +948,12 @@ overtimeRequestsRouter.post('/overtime-requests/bulk', async (req: Request, res:
               startTime: input.startTime,
               endTime: input.endTime,
               reason: input.reason,
+              // A Bulk OT Request is filed by a supervisor/HR/Admin on behalf
+              // of several employees at once — comp-time is a per-employee
+              // choice each employee makes for themselves on their own
+              // request, not something a filer can decide for them, so bulk
+              // rows are always money.
+              compTimeRequested: false,
             },
             null,
             client
@@ -1103,8 +1166,10 @@ overtimeRequestsRouter.post(
           status: string
           current_stage: string | null
           supervisor_employee_id: string | null
+          comp_time_requested: boolean
         }>(
-          `SELECT employee_id, ot_date, start_time, end_time, reason, status, current_stage, supervisor_employee_id
+          `SELECT employee_id, ot_date, start_time, end_time, reason, status, current_stage,
+                  supervisor_employee_id, comp_time_requested
            FROM overtime_requests WHERE id = $1 FOR UPDATE`,
           [id]
         )
@@ -1150,6 +1215,7 @@ overtimeRequestsRouter.post(
             startTime: row.start_time,
             endTime: row.end_time,
             reason: row.reason,
+            compTimeRequested: row.comp_time_requested,
           },
           id,
           client,
@@ -1238,6 +1304,17 @@ overtimeRequestsRouter.post(
           Number(row.employee_id),
           addDays(row.ot_date, -1),
           addDays(row.ot_date, 1),
+          client
+        )
+
+        // Same window as the recompute above, and must run after it — see
+        // postCompTimeAccrualForApprovedRange's own comment for why.
+        await postCompTimeAccrualForApprovedRange(
+          Number(row.employee_id),
+          addDays(row.ot_date, -1),
+          addDays(row.ot_date, 1),
+          actorInfo.oid,
+          actorInfo.name,
           client
         )
 
@@ -1462,8 +1539,9 @@ overtimeRequestsRouter.post(
               end_time: string
               reason: string
               status: string
+              comp_time_requested: boolean
             }>(
-              `SELECT ot_date, start_time, end_time, reason, status
+              `SELECT ot_date, start_time, end_time, reason, status, comp_time_requested
                FROM overtime_requests WHERE id = $1 FOR UPDATE`,
               [id]
             )
@@ -1491,6 +1569,7 @@ overtimeRequestsRouter.post(
                 startTime: row.start_time,
                 endTime: row.end_time,
                 reason: row.reason,
+                compTimeRequested: row.comp_time_requested,
               },
               id,
               client,
@@ -1562,6 +1641,17 @@ overtimeRequestsRouter.post(
               employeeId,
               addDays(row.ot_date, -1),
               addDays(row.ot_date, 1),
+              client
+            )
+
+            // Same window, and must run after the recompute above — see
+            // postCompTimeAccrualForApprovedRange's own comment.
+            await postCompTimeAccrualForApprovedRange(
+              employeeId,
+              addDays(row.ot_date, -1),
+              addDays(row.ot_date, 1),
+              actor.oid,
+              actor.name,
               client
             )
 

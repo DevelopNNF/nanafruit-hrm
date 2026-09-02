@@ -52,6 +52,14 @@ const RATE_FIELDS = [
   'rateOtHoliday',
 ] as const
 
+const COMP_RATE_FIELDS = [
+  'compRateOtWorkday',
+  'compRateNormalDayoff',
+  'compRateOtDayoff',
+  'compRateNormalHoliday',
+  'compRateOtHoliday',
+] as const
+
 function parseOvertimeGroupInput(body: unknown): ParseResult<OvertimeGroupInput> {
   if (typeof body !== 'object' || body === null) {
     return { ok: false, message: 'body must be a JSON object' }
@@ -87,6 +95,55 @@ function parseOvertimeGroupInput(body: unknown): ParseResult<OvertimeGroupInput>
     return { ok: false, message: 'isActive must be a boolean' }
   }
 
+  const compTimeEnabledRaw = raw['compTimeEnabled']
+  if (typeof compTimeEnabledRaw !== 'boolean') {
+    return { ok: false, message: 'compTimeEnabled must be a boolean' }
+  }
+
+  // The five comp rates and the cap are only meaningful when comp-time is
+  // enabled — required-and-validated in that case, forced to null otherwise
+  // so a group that later disables the feature doesn't carry stale rates.
+  const compRates: Record<(typeof COMP_RATE_FIELDS)[number], number | null> = {} as never
+  if (compTimeEnabledRaw) {
+    for (const key of COMP_RATE_FIELDS) {
+      const value = requiredPositiveNumber(raw, key)
+      if (value === null) {
+        return { ok: false, message: `${key} is required and must be a positive number when compTimeEnabled is true` }
+      }
+      compRates[key] = value
+    }
+  } else {
+    for (const key of COMP_RATE_FIELDS) compRates[key] = null
+  }
+
+  const compAnnualCapEnabledRaw = raw['compAnnualCapEnabled']
+  if (typeof compAnnualCapEnabledRaw !== 'boolean') {
+    return { ok: false, message: 'compAnnualCapEnabled must be a boolean' }
+  }
+  if (compAnnualCapEnabledRaw && !compTimeEnabledRaw) {
+    return { ok: false, message: 'compAnnualCapEnabled requires compTimeEnabled' }
+  }
+
+  let compAnnualCapMinutes: number | null = null
+  if (compAnnualCapEnabledRaw) {
+    const value = requiredPositiveNumber(raw, 'compAnnualCapMinutes')
+    if (value === null) {
+      return { ok: false, message: 'compAnnualCapMinutes is required and must be a positive number when compAnnualCapEnabled is true' }
+    }
+    compAnnualCapMinutes = value
+  }
+
+  const compRoundingMinutesRaw = raw['compRoundingMinutes']
+  if (
+    typeof compRoundingMinutesRaw !== 'number' ||
+    !(OVERTIME_ROUNDING_MINUTES as readonly number[]).includes(compRoundingMinutesRaw)
+  ) {
+    return {
+      ok: false,
+      message: `compRoundingMinutes must be one of: ${OVERTIME_ROUNDING_MINUTES.join(', ')}`,
+    }
+  }
+
   return {
     ok: true,
     value: {
@@ -99,6 +156,15 @@ function parseOvertimeGroupInput(body: unknown): ParseResult<OvertimeGroupInput>
       rateOtHoliday: rates.rateOtHoliday,
       roundingMinutes: roundingMinutesRaw as OvertimeGroupInput['roundingMinutes'],
       isActive: isActiveRaw,
+      compTimeEnabled: compTimeEnabledRaw,
+      compRateOtWorkday: compRates.compRateOtWorkday,
+      compRateNormalDayoff: compRates.compRateNormalDayoff,
+      compRateOtDayoff: compRates.compRateOtDayoff,
+      compRateNormalHoliday: compRates.compRateNormalHoliday,
+      compRateOtHoliday: compRates.compRateOtHoliday,
+      compAnnualCapEnabled: compAnnualCapEnabledRaw,
+      compAnnualCapMinutes,
+      compRoundingMinutes: compRoundingMinutesRaw as OvertimeGroupInput['compRoundingMinutes'],
     },
   }
 }
@@ -155,8 +221,11 @@ overtimeGroupsRouter.post('/overtime-groups', canWrite, async (req: Request, res
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO master_overtime_groups
            (group_code, group_name, rate_ot_workday, rate_normal_dayoff, rate_ot_dayoff,
-            rate_normal_holiday, rate_ot_holiday, rounding_minutes, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            rate_normal_holiday, rate_ot_holiday, rounding_minutes, is_active,
+            comp_time_enabled, comp_rate_ot_workday, comp_rate_normal_dayoff, comp_rate_ot_dayoff,
+            comp_rate_normal_holiday, comp_rate_ot_holiday, comp_annual_cap_enabled,
+            comp_annual_cap_minutes, comp_rounding_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
          RETURNING id`,
         [
           input.groupCode,
@@ -168,6 +237,15 @@ overtimeGroupsRouter.post('/overtime-groups', canWrite, async (req: Request, res
           input.rateOtHoliday,
           input.roundingMinutes,
           input.isActive,
+          input.compTimeEnabled,
+          input.compRateOtWorkday,
+          input.compRateNormalDayoff,
+          input.compRateOtDayoff,
+          input.compRateNormalHoliday,
+          input.compRateOtHoliday,
+          input.compAnnualCapEnabled,
+          input.compAnnualCapMinutes,
+          input.compRoundingMinutes,
         ]
       )
       const created = rows[0]
@@ -211,7 +289,10 @@ overtimeGroupsRouter.put('/overtime-groups/:id', canWrite, async (req: Request, 
         `UPDATE master_overtime_groups SET
            group_code = $2, group_name = $3, rate_ot_workday = $4, rate_normal_dayoff = $5,
            rate_ot_dayoff = $6, rate_normal_holiday = $7, rate_ot_holiday = $8,
-           rounding_minutes = $9, is_active = $10, updated_at = now()
+           rounding_minutes = $9, is_active = $10, comp_time_enabled = $11,
+           comp_rate_ot_workday = $12, comp_rate_normal_dayoff = $13, comp_rate_ot_dayoff = $14,
+           comp_rate_normal_holiday = $15, comp_rate_ot_holiday = $16, comp_annual_cap_enabled = $17,
+           comp_annual_cap_minutes = $18, comp_rounding_minutes = $19, updated_at = now()
          WHERE id = $1`,
         [
           id,
@@ -224,6 +305,15 @@ overtimeGroupsRouter.put('/overtime-groups/:id', canWrite, async (req: Request, 
           input.rateOtHoliday,
           input.roundingMinutes,
           input.isActive,
+          input.compTimeEnabled,
+          input.compRateOtWorkday,
+          input.compRateNormalDayoff,
+          input.compRateOtDayoff,
+          input.compRateNormalHoliday,
+          input.compRateOtHoliday,
+          input.compAnnualCapEnabled,
+          input.compAnnualCapMinutes,
+          input.compRoundingMinutes,
         ]
       )
       if (rowCount === 0) return false

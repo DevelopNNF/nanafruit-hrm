@@ -147,7 +147,7 @@ export function computeAttendanceDay(day: MatchedAttendanceDay): AttendanceDayVe
  * and the batch job must not fail over a group that is missing from a day
  * with no overtime on it.
  */
-async function getOvertimeRoundingMinutes(
+export async function getOvertimeRoundingMinutes(
   employeeId: number,
   db: Queryable
 ): Promise<OvertimeRoundingMinutes> {

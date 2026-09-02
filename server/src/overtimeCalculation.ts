@@ -193,6 +193,220 @@ export function overtimeAmount(input: {
   return (normalHours * normalRate + extraHours * extraRate) * input.hourlyWage
 }
 
+/* Comp-time-off split -------------------------------------------------------
+ * Turning a day's already-priced normal/extra minutes into, per individual
+ * overtime_requests row, how much converts to accrued comp-time-off versus
+ * how much stays payable as money — the piece that lets comp-time be chosen
+ * per REQUEST while OT itself is still computed and rounded per DAY (see
+ * computeOvertimeForDay above). Everything here is pure, same discipline as
+ * the rest of this file: given the same inputs, the same answer forever, so
+ * the split frozen onto an approved request (Phase 5) can be trusted not to
+ * silently drift if this logic is ever re-run.
+ */
+
+export type OvertimeRequestInterval = { requestId: number; startAt: string; endAt: string }
+
+/** Per-request actual (punch-intersected, unrounded) minutes for one day's
+ *  approved requests — the same intersect-against-presence math
+ *  computeOvertimeForDay applies to the day's MERGED intervals, applied here
+ *  to each request's own interval individually so the day's total can later
+ *  be distributed back to the requests that make it up (see
+ *  allocateOvertimeDayMinutesToRequests below). A request whose interval
+ *  never overlapped the actual presence window gets 0, and a missing punch
+ *  zeroes every request for the day — both mirror computeOvertimeForDay's
+ *  own rules, not a separate policy invented here. */
+export function actualMinutesPerRequest(
+  requests: OvertimeRequestInterval[],
+  actualCheckInAt: string | null,
+  actualCheckOutAt: string | null
+): Map<number, number> {
+  if (actualCheckInAt === null || actualCheckOutAt === null) {
+    return new Map(requests.map((r) => [r.requestId, 0]))
+  }
+  const present: Interval = { start: Date.parse(actualCheckInAt), end: Date.parse(actualCheckOutAt) }
+  const result = new Map<number, number>()
+  for (const r of requests) {
+    result.set(r.requestId, totalMinutes(intersect(toIntervals([r]), present)))
+  }
+  return result
+}
+
+export type OvertimeRequestAllocation = { requestId: number; normalMinutes: number; extraMinutes: number }
+
+/**
+ * Distributes a day's already-rounded ot_normal_minutes/ot_extra_minutes
+ * (computeOvertimeForDay's output for the day) across that day's individual
+ * approved requests, so a per-request choice made later — pay as money vs.
+ * accrue as comp-time — can be applied to the right slice of the day.
+ *
+ * Two passes, both driven by the requests' own raw actual minutes
+ * (actualMinutesPerRequest), in start_time order:
+ *
+ * 1. Rounding down at the day level can drop a few minutes relative to the
+ *    sum of each request's raw actual minutes, since rounding applies to the
+ *    day's TOTAL, not per request. That loss is taken from the LAST
+ *    request(s) of the day, walking backward — an employee's earliest OT
+ *    block of the day never loses minutes to rounding, only later ones do.
+ * 2. The normal/extra 8-hour threshold is a property of the whole day, so
+ *    it's applied to a running total across requests in start_time order —
+ *    the same min/max computeOvertimeForDay applies to the day's single
+ *    total, just walked incrementally so it lands on the right request.
+ *
+ * Callers must pass requests already in start_time order; this function
+ * doesn't sort them, since that ordering is a property of how they were
+ * queried, not something a pure function should assume how to obtain.
+ *
+ * The two passes together guarantee the returned allocations sum to exactly
+ * dayNormalMinutes/dayExtraMinutes — this is the regression guard a caller
+ * building payroll from these allocations depends on (see buildOvertimeLines,
+ * Phase 6).
+ */
+export function allocateOvertimeDayMinutesToRequests(input: {
+  dayStatus: CalendarDayStatus
+  dayNormalMinutes: number
+  dayExtraMinutes: number
+  requests: { requestId: number; actualMinutes: number }[]
+}): OvertimeRequestAllocation[] {
+  const { dayStatus, dayNormalMinutes, dayExtraMinutes, requests } = input
+  const payableTotal = dayNormalMinutes + dayExtraMinutes
+  const totalActual = requests.reduce((sum, r) => sum + r.actualMinutes, 0)
+
+  if (totalActual === 0 || requests.length === 0) {
+    return requests.map((r) => ({ requestId: r.requestId, normalMinutes: 0, extraMinutes: 0 }))
+  }
+
+  // Pass 1: take the rounding loss off the last request(s), walking backward.
+  let remainingLoss = Math.max(0, totalActual - payableTotal)
+  const allocatedActual = new Map<number, number>()
+  for (let i = requests.length - 1; i >= 0; i--) {
+    const r = requests[i]!
+    const deduct = Math.min(r.actualMinutes, remainingLoss)
+    allocatedActual.set(r.requestId, r.actualMinutes - deduct)
+    remainingLoss -= deduct
+  }
+
+  // Pass 2: split each request's allocated minutes at the day's 8-hour
+  // threshold, walking forward against a running total.
+  const workday = isWorkingDay(dayStatus)
+  let runningTotal = 0
+  return requests.map((r) => {
+    const allocated = allocatedActual.get(r.requestId) ?? 0
+    if (workday) {
+      runningTotal += allocated
+      return { requestId: r.requestId, normalMinutes: 0, extraMinutes: allocated }
+    }
+    const normalHeadroom = Math.max(0, DAY_OFF_NORMAL_MINUTES - runningTotal)
+    const normalPortion = Math.min(allocated, normalHeadroom)
+    const extraPortion = allocated - normalPortion
+    runningTotal += allocated
+    return { requestId: r.requestId, normalMinutes: normalPortion, extraMinutes: extraPortion }
+  })
+}
+
+/** Which of master_overtime_groups' five comp-time CONVERSION rates each
+ *  bucket uses — identical selection logic to overtimeRatesFor, over the
+ *  group's comp_rate_* columns instead of its money rate_* columns. Callers
+ *  must only reach this when group.compTimeEnabled is true (the five comp
+ *  rate columns are null otherwise, by the DB CHECK on master_overtime_groups)
+ *  — it throws rather than silently coercing null to NaN, since a caller
+ *  getting here without checking the flag first is a bug to surface loudly,
+ *  not a data question to paper over. */
+export function compConversionRatesFor(
+  status: CalendarDayStatus,
+  group: OvertimeGroup
+): { normalRate: number; extraRate: number } {
+  if (!group.compTimeEnabled) {
+    throw new Error(`compConversionRatesFor called on group ${group.id}, which has compTimeEnabled = false`)
+  }
+  if (isWorkingDay(status)) {
+    if (group.compRateOtWorkday === null) {
+      throw new Error(`overtime group ${group.id} is missing compRateOtWorkday`)
+    }
+    return { normalRate: group.compRateOtWorkday, extraRate: group.compRateOtWorkday }
+  }
+  if (status === 'holiday') {
+    if (group.compRateNormalHoliday === null || group.compRateOtHoliday === null) {
+      throw new Error(`overtime group ${group.id} is missing a comp holiday rate`)
+    }
+    return { normalRate: group.compRateNormalHoliday, extraRate: group.compRateOtHoliday }
+  }
+  if (group.compRateNormalDayoff === null || group.compRateOtDayoff === null) {
+    throw new Error(`overtime group ${group.id} is missing a comp day-off rate`)
+  }
+  return { normalRate: group.compRateNormalDayoff, extraRate: group.compRateOtDayoff }
+}
+
+/** Rounds to the NEAREST multiple of step, always returning a whole number
+ *  of minutes — distinct from roundMinutes() above, which always rounds
+ *  down. Money rounding discards partial minutes so nobody is paid for time
+ *  not worked; an accrual protects no such asymmetry, so nearest is the
+ *  natural default for comp-time (see comp_rounding_minutes' migration
+ *  comment). Ties round up, matching Math.round's own behavior. */
+export function roundMinutesNearest(minutes: number, step: OvertimeRoundingMinutes): number {
+  if (step === 0) return Math.round(minutes)
+  return Math.round(minutes / step) * step
+}
+
+/** One request's allocated normal+extra minutes, converted to candidate
+ *  comp-time-off minutes via the group's comp conversion rates, then rounded
+ *  by the group's comp_rounding_minutes. "Candidate" because this is before
+ *  the annual cap is checked — see splitCompTimeForAnnualCap. */
+export function candidateCompAccrualMinutes(input: {
+  status: CalendarDayStatus
+  allocatedNormalMinutes: number
+  allocatedExtraMinutes: number
+  group: OvertimeGroup
+}): number {
+  const { status, allocatedNormalMinutes, allocatedExtraMinutes, group } = input
+  const rates = compConversionRatesFor(status, group)
+  const raw = allocatedNormalMinutes * rates.normalRate + allocatedExtraMinutes * rates.extraRate
+  return roundMinutesNearest(raw, group.compRoundingMinutes)
+}
+
+/** Given one request's candidate comp-time accrual and how much this
+ *  employee has already accrued this year, splits it at the group's annual
+ *  cap (if any): the portion up to the cap accrues, the remainder converts
+ *  back to money — priced from the ORIGINAL OT minutes that produced the
+ *  overflow share of the candidate accrual (sourceMinutes), not from the
+ *  accrual minutes themselves, since comp-time minutes and OT minutes are
+ *  different units related only by the group's conversion rate.
+ *  moneySourceMinutesFromOverflow is the overflow share of the accrual
+ *  converted back through that same ratio — exact only when
+ *  candidateAccrualMinutes and sourceMinutes came from the same call to
+ *  candidateCompAccrualMinutes for the same request (see the caller,
+ *  postCompTimeAccrualForApprovedDay, Phase 5).
+ *
+ *  Returns the full candidate as accrualMinutes and 0 overflow when the
+ *  group has no cap, or when there is enough headroom left this year. */
+export function splitCompTimeForAnnualCap(input: {
+  candidateAccrualMinutes: number
+  sourceMinutes: number
+  alreadyAccruedThisYearMinutes: number
+  group: OvertimeGroup
+}): { accrualMinutes: number; moneySourceMinutesFromOverflow: number } {
+  const { candidateAccrualMinutes, sourceMinutes, alreadyAccruedThisYearMinutes, group } = input
+
+  if (!group.compAnnualCapEnabled || group.compAnnualCapMinutes === null) {
+    return { accrualMinutes: candidateAccrualMinutes, moneySourceMinutesFromOverflow: 0 }
+  }
+
+  const headroom = Math.max(0, group.compAnnualCapMinutes - alreadyAccruedThisYearMinutes)
+  const accrualMinutes = Math.min(candidateAccrualMinutes, headroom)
+  const overflowAccrualMinutes = candidateAccrualMinutes - accrualMinutes
+
+  if (overflowAccrualMinutes <= 0 || candidateAccrualMinutes === 0) {
+    return { accrualMinutes, moneySourceMinutesFromOverflow: 0 }
+  }
+
+  // candidateAccrualMinutes and sourceMinutes were produced by the same
+  // (possibly blended normal+extra) conversion, so their ratio holds for any
+  // sub-portion of the same request — including the overflow share.
+  const moneySourceMinutesFromOverflow = Math.round(
+    (overflowAccrualMinutes / candidateAccrualMinutes) * sourceMinutes
+  )
+  return { accrualMinutes, moneySourceMinutesFromOverflow }
+}
+
 /* Payslip buckets -----------------------------------------------------------
  * Which of the five payroll_entry_lines codes (Phase 3) one day's overtime
  * belongs to. Kept apart from overtimeAmount above because a payslip line is

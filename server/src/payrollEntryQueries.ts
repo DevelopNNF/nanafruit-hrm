@@ -596,21 +596,22 @@ async function buildMonthlyEntry(
   }
 }
 
-type OvertimeDayRow = {
-  work_date: string
+type OvertimeRequestPriceRow = {
+  ot_date: string
   day_status: string
-  approved_ot_minutes: number
-  ot_normal_minutes: number
-  ot_extra_minutes: number
-  group_id: string | null
-  group_code: string | null
-  group_name: string | null
-  rate_ot_workday: string | null
-  rate_normal_dayoff: string | null
-  rate_ot_dayoff: string | null
-  rate_normal_holiday: string | null
-  rate_ot_holiday: string | null
-  rounding_minutes: number | null
+  comp_time_requested: boolean
+  comp_time_allocated_normal_minutes: number
+  comp_time_allocated_extra_minutes: number
+  comp_time_money_source_minutes: number
+  group_id: string
+  group_code: string
+  group_name: string
+  rate_ot_workday: string
+  rate_normal_dayoff: string
+  rate_ot_dayoff: string
+  rate_normal_holiday: string
+  rate_ot_holiday: string
+  rounding_minutes: number
   shift_start_time: string | null
   shift_end_time: string | null
   break_start_time: string | null
@@ -619,29 +620,62 @@ type OvertimeDayRow = {
   wage_amount: string | null
 }
 
+/** Splits a request's still-money-payable total (comp_time_money_source_minutes)
+ *  back into normal/extra shares, proportional to how the day's allocation
+ *  (comp_time_allocated_normal/extra_minutes) split between them — the same
+ *  ratio the request's own comp-time conversion used, so the money side and
+ *  the comp-time side never disagree about which minutes were "normal" vs
+ *  "extra". The remainder (not a second rounded share) is what makes the two
+ *  always sum to exactly moneyTotal, avoiding a stray minute lost to
+ *  independent rounding on each side. */
+function splitMoneyMinutes(
+  allocatedNormal: number,
+  allocatedExtra: number,
+  moneyTotal: number
+): { normal: number; extra: number } {
+  const allocatedTotal = allocatedNormal + allocatedExtra
+  if (allocatedTotal === 0 || moneyTotal === 0) return { normal: 0, extra: 0 }
+  const normal = Math.round((moneyTotal * allocatedNormal) / allocatedTotal)
+  return { normal, extra: moneyTotal - normal }
+}
+
 /**
  * One employee's overtime lines for the period — the five buckets
- * master_overtime_groups' five rates define, each summed across every day in
- * [periodStart, periodEnd] that carried approved OT.
+ * master_overtime_groups' five rates define, each summed across every
+ * APPROVED overtime_requests row in [periodStart, periodEnd].
+ *
+ * Reads overtime_requests directly, one row per request, rather than
+ * attendance_daily's day-level aggregate: since Phase 4/5 let a request be
+ * taken as comp-time-off instead of money, the day-level total can no longer
+ * be priced as a whole — a day carrying two requests, one money and one
+ * comp-time, must only pay the money one. comp_time_allocated_normal/extra_minutes
+ * and comp_time_money_source_minutes (frozen at approval time by
+ * postCompTimeAccrualForApprovedRange, see compTimeQueries.ts) are exactly
+ * "this request's share of its day" and "how much of that share is still
+ * payable" — reading them here means payroll never has to re-run the
+ * allocator itself, and always agrees with whatever was posted to the
+ * comp-time ledger.
+ *
+ * overtime_group_id is NOT NULL on overtime_requests (a request cannot be
+ * submitted without one — see migration 039), so master_overtime_groups joins
+ * unconditionally here; there is no "day has approved OT but no group"
+ * fallback to fall back to any more, since attendance_daily.approved_ot_minutes
+ * was itself always derived from at least one such request in the first place.
  *
  * Deliberately its own step, called once per employee regardless of
  * wage_type: OT pricing (overtimeAmount/overtimeRatesFor, imported unchanged
  * from overtimeCalculation.ts — never reimplemented here) does not depend on
  * whether the employee is paid daily or monthly.
  *
- * Query shape mirrors SELECT_REPORT_ROWS in overtimeReportQueries.ts (LATERAL
- * join to snapshot the overtime group actually approved that day, COALESCE to
- * the employee's current group only as a fallback for a since-deleted
- * request) — not reused directly because that query is a multi-employee,
- * multi-week aggregate and this is single-employee, period-scoped.
- *
- * Per-day bucket routing (which of the five payslip codes a day's minutes
- * belong to, and their amount) is bucketOvertimeDay() in
- * overtimeCalculation.ts — this function only sums that across the period.
- * rate on each line is the bucket's multiplier (e.g. group.rateOtWorkday),
- * not the hourly wage: a raise mid-period prices different days' minutes at
- * different hourly wages, so no single rate reads correctly for the bucket as
- * a whole — only quantity (minutes) and amount (baht) are exact sums.
+ * Per-request bucket routing (which of the five payslip codes a request's
+ * money-payable minutes belong to, and their amount) is still
+ * bucketOvertimeDay() in overtimeCalculation.ts, fed the money-only share
+ * rather than the full allocated share — it has no idea comp-time exists,
+ * and doesn't need to. rate on each line is the bucket's multiplier (e.g.
+ * group.rateOtWorkday), not the hourly wage: a raise mid-period prices
+ * different requests' minutes at different hourly wages, so no single rate
+ * reads correctly for the bucket as a whole — only quantity (minutes) and
+ * amount (baht) are exact sums.
  */
 async function buildOvertimeLines(
   employeeId: number,
@@ -649,29 +683,21 @@ async function buildOvertimeLines(
   periodEnd: string,
   db: Queryable
 ): Promise<{ lines: DraftLine[]; reviewReasons: PayrollEntryReviewReason[] }> {
-  const { rows } = await db.query<OvertimeDayRow>(
-    `SELECT d.work_date, d.day_status, d.approved_ot_minutes,
-            d.ot_normal_minutes, d.ot_extra_minutes,
+  const { rows } = await db.query<OvertimeRequestPriceRow>(
+    `SELECT otr.ot_date, otr.day_status, otr.comp_time_requested,
+            otr.comp_time_allocated_normal_minutes, otr.comp_time_allocated_extra_minutes,
+            otr.comp_time_money_source_minutes,
             mog.id AS group_id, mog.group_code, mog.group_name,
             mog.rate_ot_workday, mog.rate_normal_dayoff, mog.rate_ot_dayoff,
             mog.rate_normal_holiday, mog.rate_ot_holiday, mog.rounding_minutes,
             ms.shift_start_time, ms.shift_end_time, ms.break_start_time, ms.break_end_time,
             wage_on_date.wage_type, wage_on_date.wage_amount
-     FROM attendance_daily d
-     JOIN employment_details ed ON ed.employee_id = d.employee_id
-     LEFT JOIN master_shifts ms ON ms.id = d.shift_id
-     LEFT JOIN LATERAL (
-       SELECT otr.overtime_group_id FROM overtime_requests otr
-       WHERE otr.employee_id = d.employee_id AND otr.ot_date = d.work_date
-         AND otr.status = 'approved'
-       ORDER BY otr.start_time LIMIT 1
-     ) snap ON true
-     LEFT JOIN master_overtime_groups mog
-       ON mog.id = COALESCE(snap.overtime_group_id, ed.overtime_group_id)
-     ${wageJoinSqlForDate('d.employee_id', 'd.work_date')}
-     WHERE d.employee_id = $1 AND d.work_date BETWEEN $2 AND $3
-       AND d.approved_ot_minutes > 0
-     ORDER BY d.work_date`,
+     FROM overtime_requests otr
+     JOIN master_overtime_groups mog ON mog.id = otr.overtime_group_id
+     LEFT JOIN master_shifts ms ON ms.id = otr.shift_id
+     ${wageJoinSqlForDate('otr.employee_id', 'otr.ot_date')}
+     WHERE otr.employee_id = $1 AND otr.ot_date BETWEEN $2 AND $3 AND otr.status = 'approved'
+     ORDER BY otr.ot_date, otr.start_time`,
     [employeeId, periodStart, periodEnd]
   )
 
@@ -685,17 +711,10 @@ async function buildOvertimeLines(
   const reviewReasons = new ReviewReasons()
 
   for (const row of rows) {
-    if (row.group_id === null) {
-      // Neither the day's approved request nor the employee's current
-      // assignment resolved to an overtime group — cannot even pick a rate,
-      // let alone price it.
-      reviewReasons.flag('unpriceable_overtime', row.work_date)
-      continue
-    }
     const group: OvertimeGroup = {
       id: Number(row.group_id),
-      groupCode: row.group_code ?? '',
-      groupName: row.group_name ?? '',
+      groupCode: row.group_code,
+      groupName: row.group_name,
       rateOtWorkday: Number(row.rate_ot_workday),
       rateNormalDayoff: Number(row.rate_normal_dayoff),
       rateOtDayoff: Number(row.rate_ot_dayoff),
@@ -703,6 +722,19 @@ async function buildOvertimeLines(
       rateOtHoliday: Number(row.rate_ot_holiday),
       roundingMinutes: (row.rounding_minutes ?? 0) as OvertimeRoundingMinutes,
       isActive: true,
+      // Only rate*/roundingMinutes feed bucketOvertimeDay() below — the split
+      // between money and comp-time already happened at approval time
+      // (postCompTimeAccrualForApprovedRange), so this function only ever
+      // prices the money share, and never needs the group's comp_* fields.
+      compTimeEnabled: false,
+      compRateOtWorkday: null,
+      compRateNormalDayoff: null,
+      compRateOtDayoff: null,
+      compRateNormalHoliday: null,
+      compRateOtHoliday: null,
+      compAnnualCapEnabled: false,
+      compAnnualCapMinutes: null,
+      compRoundingMinutes: 0,
     }
     const status = row.day_status as CalendarDayStatus
     const workMinutes = shiftWorkMinutes(
@@ -720,21 +752,29 @@ async function buildOvertimeLines(
             shiftWorkMinutes: workMinutes,
           })
 
+    const moneyMinutes = row.comp_time_requested
+      ? splitMoneyMinutes(
+          row.comp_time_allocated_normal_minutes,
+          row.comp_time_allocated_extra_minutes,
+          row.comp_time_money_source_minutes
+        )
+      : { normal: row.comp_time_allocated_normal_minutes, extra: row.comp_time_allocated_extra_minutes }
+
     const shares = bucketOvertimeDay({
       status,
-      normalMinutes: row.ot_normal_minutes,
-      extraMinutes: row.ot_extra_minutes,
+      normalMinutes: moneyMinutes.normal,
+      extraMinutes: moneyMinutes.extra,
       group,
       hourlyWage: wage,
     })
     for (const share of shares) {
-      // A share with 0 minutes (e.g. a holiday day whose OT was entirely
-      // "extra", leaving its "normal" share empty) has nothing to price —
-      // skip before the null check below, or an unresolvable wage on an
-      // empty share would flag a review reason for a bucket that owes nothing.
+      // A share with 0 minutes (e.g. entirely converted to comp-time, or a
+      // holiday whose OT was entirely "extra") has nothing to price — skip
+      // before the null check below, or an unresolvable wage on an empty
+      // share would flag a review reason for a bucket that owes nothing.
       if (share.minutes === 0) continue
       if (share.amount === null) {
-        reviewReasons.flag('unpriceable_overtime', row.work_date)
+        reviewReasons.flag('unpriceable_overtime', row.ot_date)
         continue
       }
       const total = totals[share.code]

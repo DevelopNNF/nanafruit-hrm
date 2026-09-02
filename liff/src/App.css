@@ -1312,6 +1312,22 @@
   flex: 1;
 }
 
+.request-form .field-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--display);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.request-form .field-checkbox input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--accent);
+}
+
 .leave-type-gauge-box {
   background: var(--card-bg);
   border: 1px solid var(--border);

@@ -7,6 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "migrate": "tsx src/migrate.ts",
     "attendance:compute": "tsx src/computeAttendanceDaily.ts",
+    "backfill:comp-time": "tsx src/backfillCompTimeAllocation.ts",
     "build": "tsc",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "start": "node dist/index.js",

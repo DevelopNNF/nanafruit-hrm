@@ -19,14 +19,30 @@ export type OvertimeGroupRow = {
   rate_ot_holiday: string
   rounding_minutes: number
   is_active: boolean
+  comp_time_enabled: boolean
+  comp_rate_ot_workday: string | null
+  comp_rate_normal_dayoff: string | null
+  comp_rate_ot_dayoff: string | null
+  comp_rate_normal_holiday: string | null
+  comp_rate_ot_holiday: string | null
+  comp_annual_cap_enabled: boolean
+  comp_annual_cap_minutes: number | null
+  comp_rounding_minutes: number
 }
 
 export const SELECT_OVERTIME_GROUP = `
   SELECT id, group_code, group_name,
          rate_ot_workday, rate_normal_dayoff, rate_ot_dayoff,
-         rate_normal_holiday, rate_ot_holiday, rounding_minutes, is_active
+         rate_normal_holiday, rate_ot_holiday, rounding_minutes, is_active,
+         comp_time_enabled, comp_rate_ot_workday, comp_rate_normal_dayoff,
+         comp_rate_ot_dayoff, comp_rate_normal_holiday, comp_rate_ot_holiday,
+         comp_annual_cap_enabled, comp_annual_cap_minutes, comp_rounding_minutes
   FROM master_overtime_groups
 `
+
+function toNumberOrNull(value: string | null): number | null {
+  return value === null ? null : Number(value)
+}
 
 export function rowToOvertimeGroup(row: OvertimeGroupRow): OvertimeGroup {
   return {
@@ -40,6 +56,15 @@ export function rowToOvertimeGroup(row: OvertimeGroupRow): OvertimeGroup {
     rateOtHoliday: Number(row.rate_ot_holiday),
     roundingMinutes: row.rounding_minutes as OvertimeRoundingMinutes,
     isActive: row.is_active,
+    compTimeEnabled: row.comp_time_enabled,
+    compRateOtWorkday: toNumberOrNull(row.comp_rate_ot_workday),
+    compRateNormalDayoff: toNumberOrNull(row.comp_rate_normal_dayoff),
+    compRateOtDayoff: toNumberOrNull(row.comp_rate_ot_dayoff),
+    compRateNormalHoliday: toNumberOrNull(row.comp_rate_normal_holiday),
+    compRateOtHoliday: toNumberOrNull(row.comp_rate_ot_holiday),
+    compAnnualCapEnabled: row.comp_annual_cap_enabled,
+    compAnnualCapMinutes: row.comp_annual_cap_minutes,
+    compRoundingMinutes: row.comp_rounding_minutes as OvertimeRoundingMinutes,
   }
 }
 
