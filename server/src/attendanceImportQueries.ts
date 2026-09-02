@@ -104,6 +104,7 @@ type BatchRow = {
   employee_count: number
   event_count: number
   skipped_duplicate_count: number
+  manual_override_count: number
   unmatched_codes: string[]
   imported_by_name: string | null
   imported_at: string
@@ -120,6 +121,7 @@ function rowToBatch(row: BatchRow): AttendanceImportBatch {
     employeeCount: row.employee_count,
     eventCount: row.event_count,
     skippedDuplicateCount: row.skipped_duplicate_count,
+    manualOverrideCount: row.manual_override_count,
     unmatchedCodes: row.unmatched_codes,
     importedByName: row.imported_by_name,
     importedAt: new Date(row.imported_at).toISOString(),
@@ -135,6 +137,7 @@ export type CreateImportBatchParams = {
   employeeCount: number
   eventCount: number
   skippedDuplicateCount: number
+  manualOverrideCount: number
   unmatchedCodes: string[]
   importedByOid: string
   importedByName: string | null
@@ -147,9 +150,9 @@ export async function createImportBatch(
   const { rows } = await db.query<{ id: string }>(
     `INSERT INTO attendance_import_batches
        (file_name, file_size_bytes, range_from, range_to, generated_on,
-        employee_count, event_count, skipped_duplicate_count, unmatched_codes,
-        imported_by_oid, imported_by_name)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        employee_count, event_count, skipped_duplicate_count, manual_override_count,
+        unmatched_codes, imported_by_oid, imported_by_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING id`,
     [
       params.fileName,
@@ -160,6 +163,7 @@ export async function createImportBatch(
       params.employeeCount,
       params.eventCount,
       params.skippedDuplicateCount,
+      params.manualOverrideCount,
       params.unmatchedCodes,
       params.importedByOid,
       params.importedByName,
@@ -175,8 +179,8 @@ const BATCH_LIST_LIMIT = 200
 export async function listImportBatches(db: Queryable = pool): Promise<AttendanceImportBatch[]> {
   const { rows } = await db.query<BatchRow>(
     `SELECT id, file_name, file_size_bytes, range_from, range_to, generated_on,
-            employee_count, event_count, skipped_duplicate_count, unmatched_codes,
-            imported_by_name, imported_at
+            employee_count, event_count, skipped_duplicate_count, manual_override_count,
+            unmatched_codes, imported_by_name, imported_at
      FROM attendance_import_batches
      ORDER BY imported_at DESC
      LIMIT ${BATCH_LIST_LIMIT}`

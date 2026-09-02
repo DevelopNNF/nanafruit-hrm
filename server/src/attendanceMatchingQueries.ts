@@ -15,6 +15,16 @@
 // *next* day's assignment, not the shift that actually started the evening
 // before. This module resolves the expected window independently, anchored
 // to a work_date, so that bug can't leak into attendance matching.
+//
+// attendance_events.confirmed_work_date is the one exception, and the
+// opposite kind of column: set only when a human explicitly reviewed and
+// confirmed which work-date a punch belongs to (currently: the attendance
+// import's punch editor, overriding the classifier's own guess). Unlike
+// shift_id it earns direct trust — matchAttendanceForDates claims a
+// confirmed event for its work-date unconditionally, without checking
+// MATCH_BUFFER_MINUTES at all, which is the point: it exists for OT that ran
+// long enough to fall outside any buffer the matcher could reasonably use by
+// default.
 
 import type pg from 'pg'
 import type { CalendarDayStatus } from '@hrm/shared'
@@ -598,8 +608,11 @@ export type MatchedAttendanceDay = ExpectedShiftWindow & {
 type RawEvent = { id: number; eventType: 'check_in' | 'check_out'; eventTime: Date }
 
 /** Every attendance_events row for one employee whose event_time falls in
- *  [from, to], ordered ascending. No join — this is a matching query, not a
- *  display one, unlike SELECT_ATTENDANCE_EVENT in attendanceQueries.ts. */
+ *  [from, to], ordered ascending — excluding anything with a
+ *  confirmed_work_date, which is claimed outright by loadConfirmedEvents
+ *  instead and must never also compete for a neighboring date's buffered
+ *  window. No join — this is a matching query, not a display one, unlike
+ *  SELECT_ATTENDANCE_EVENT in attendanceQueries.ts. */
 async function loadEventsInRange(
   employeeId: number,
   from: Date,
@@ -608,7 +621,7 @@ async function loadEventsInRange(
 ): Promise<RawEvent[]> {
   const { rows } = await db.query<{ id: string; event_type: string; event_time: string }>(
     `SELECT id, event_type, event_time FROM attendance_events
-     WHERE employee_id = $1 AND event_time BETWEEN $2 AND $3
+     WHERE employee_id = $1 AND event_time BETWEEN $2 AND $3 AND confirmed_work_date IS NULL
      ORDER BY event_time ASC`,
     [employeeId, from.toISOString(), to.toISOString()]
   )
@@ -617,6 +630,74 @@ async function loadEventsInRange(
     eventType: row.event_type as 'check_in' | 'check_out',
     eventTime: new Date(row.event_time),
   }))
+}
+
+/** Every attendance_events row whose confirmed_work_date names one of
+ *  `dates`, grouped by that date — claimed unconditionally by
+ *  matchAttendanceForDates, with no buffer check, because a human already
+ *  reviewed and confirmed the attribution. A separate query rather than a
+ *  wider loadEventsInRange call: an override can move a punch further than
+ *  the buffered range built from the *expected* windows would ever reach —
+ *  the "เลือกวันที่อื่น" escape hatch in the import editor is exactly for
+ *  that — so this has to look up confirmed events by date directly. */
+async function loadConfirmedEvents(
+  employeeId: number,
+  dates: string[],
+  db: Queryable
+): Promise<Map<string, RawEvent[]>> {
+  const byWorkDate = new Map<string, RawEvent[]>()
+  if (dates.length === 0) return byWorkDate
+
+  const { rows } = await db.query<{
+    id: string
+    event_type: string
+    event_time: string
+    confirmed_work_date: string
+  }>(
+    `SELECT id, event_type, event_time, confirmed_work_date FROM attendance_events
+     WHERE employee_id = $1 AND confirmed_work_date = ANY($2::date[])
+     ORDER BY event_time ASC`,
+    [employeeId, dates]
+  )
+  for (const row of rows) {
+    const list = byWorkDate.get(row.confirmed_work_date) ?? []
+    list.push({
+      id: Number(row.id),
+      eventType: row.event_type as 'check_in' | 'check_out',
+      eventTime: new Date(row.event_time),
+    })
+    byWorkDate.set(row.confirmed_work_date, list)
+  }
+  return byWorkDate
+}
+
+/** The verdict for one work-date: earliest check-in and latest check-out
+ *  across both a buffer-matched set and a confirmed set, since either can
+ *  supply either end (an ordinary check-in the buffer already found, paired
+ *  with an overridden check-out the buffer never could). Pure so it can be
+ *  unit-tested without a database — see attendanceMatchingQueries.test.ts. */
+export function mergeMatchedDay(
+  window: ExpectedShiftWindow,
+  bufferMatched: RawEvent[],
+  confirmed: RawEvent[]
+): MatchedAttendanceDay {
+  const all = [...bufferMatched, ...confirmed]
+  const checkIns = all
+    .filter((e) => e.eventType === 'check_in')
+    .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime())
+  const checkOuts = all
+    .filter((e) => e.eventType === 'check_out')
+    .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime())
+  const firstCheckIn = checkIns[0] ?? null
+  const lastCheckOut = checkOuts[checkOuts.length - 1] ?? null
+
+  return {
+    ...window,
+    actualCheckInAt: firstCheckIn ? firstCheckIn.eventTime.toISOString() : null,
+    actualCheckInEventId: firstCheckIn ? firstCheckIn.id : null,
+    actualCheckOutAt: lastCheckOut ? lastCheckOut.eventTime.toISOString() : null,
+    actualCheckOutEventId: lastCheckOut ? lastCheckOut.id : null,
+  }
 }
 
 /**
@@ -707,13 +788,19 @@ export async function resolveMatchWindow(
  *  buffered range with a neighbor (most commonly: an overnight shift's
  *  checkout the next morning followed shortly after by a day-shift's
  *  check-in) can contest the same punch — resolved by processing windows in
- *  chronological order and letting the earlier work-date claim first. */
+ *  chronological order and letting the earlier work-date claim first.
+ *
+ *  A confirmed event (see confirmed_work_date above) is claimed for its date
+ *  unconditionally alongside whatever the buffer pass finds, so a manually
+ *  reviewed check-out can complete a day the buffer alone would still report
+ *  incomplete. */
 export async function matchAttendanceForDates(
   employeeId: number,
   dates: string[],
   db: Queryable = pool
 ): Promise<MatchedAttendanceDay[]> {
   const windows = await resolveExpectedShiftWindows(employeeId, dates, db)
+  const confirmedByWorkDate = await loadConfirmedEvents(employeeId, dates, db)
 
   // Ordered by when each date's punches could start, which is not always the
   // shift's own start: a date with no shift but approved OT is matchable too
@@ -749,31 +836,33 @@ export async function matchAttendanceForDates(
       // be picked up again by a neighboring date's overlapping window.
       for (const e of inWindow) claimed.add(e.id)
 
-      const checkIns = inWindow.filter((e) => e.eventType === 'check_in')
-      const checkOuts = inWindow.filter((e) => e.eventType === 'check_out')
-      const firstCheckIn = checkIns[0] ?? null
-      const lastCheckOut = checkOuts[checkOuts.length - 1] ?? null
-
-      matchedByWorkDate.set(window.workDate, {
-        ...window,
-        actualCheckInAt: firstCheckIn ? firstCheckIn.eventTime.toISOString() : null,
-        actualCheckInEventId: firstCheckIn ? firstCheckIn.id : null,
-        actualCheckOutAt: lastCheckOut ? lastCheckOut.eventTime.toISOString() : null,
-        actualCheckOutEventId: lastCheckOut ? lastCheckOut.id : null,
-      })
+      matchedByWorkDate.set(
+        window.workDate,
+        mergeMatchedDay(window, inWindow, confirmedByWorkDate.get(window.workDate) ?? [])
+      )
     }
   }
 
-  return windows.map(
-    (window) =>
-      matchedByWorkDate.get(window.workDate) ?? {
+  return windows.map((window) => {
+    const already = matchedByWorkDate.get(window.workDate)
+    if (already) return already
+
+    // A date outside `matchable` (no shift assigned, no approved OT) still
+    // has to honor a confirmed event — an override doesn't require the
+    // target date to already expect anything, same as an ordinary unmatched
+    // punch reports the day as unscheduled_work rather than being dropped.
+    const confirmed = confirmedByWorkDate.get(window.workDate) ?? []
+    if (confirmed.length === 0) {
+      return {
         ...window,
         actualCheckInAt: null,
         actualCheckInEventId: null,
         actualCheckOutAt: null,
         actualCheckOutEventId: null,
       }
-  )
+    }
+    return mergeMatchedDay(window, [], confirmed)
+  })
 }
 
 /**

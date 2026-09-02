@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   chooseAttendanceWindow,
   computeShiftWindow,
+  mergeMatchedDay,
   resolveOvertimeOwnerDate,
   type MatchedAttendanceDay,
 } from './attendanceMatchingQueries.js'
@@ -135,6 +136,66 @@ describe('chooseAttendanceWindow', () => {
     const today = noShift('2026-08-20')
     const now = new Date('2026-08-20T05:00:00Z')
     assert.equal(chooseAttendanceWindow(yesterday, today, now).workDate, '2026-08-20')
+  })
+})
+
+describe('mergeMatchedDay', () => {
+  /** A raw event as loadEventsInRange/loadConfirmedEvents return it. */
+  function rawEvent(id: number, eventType: 'check_in' | 'check_out', iso: string) {
+    return { id, eventType, eventTime: new Date(iso) }
+  }
+
+  it('completes a day the buffer alone left incomplete, with a confirmed check-out far outside it', () => {
+    // 16:30-02:00 shift; buffer only reaches 04:00, but the real check-out
+    // (confirmed by an import override, not found by the buffer pass) was
+    // 05:07 — the TEMP-0417 case from the import editor.
+    const window = workday('2026-08-26', '16:30:00', '02:00:00')
+    const bufferMatched = [rawEvent(1, 'check_in', '2026-08-26T09:28:00.000Z')] // 16:28 Bangkok
+    const confirmed = [rawEvent(2, 'check_out', '2026-08-26T22:07:00.000Z')] // 05:07 Bangkok next day
+
+    const merged = mergeMatchedDay(window, bufferMatched, confirmed)
+
+    assert.equal(merged.actualCheckInAt, '2026-08-26T09:28:00.000Z')
+    assert.equal(merged.actualCheckInEventId, 1)
+    assert.equal(merged.actualCheckOutAt, '2026-08-26T22:07:00.000Z')
+    assert.equal(merged.actualCheckOutEventId, 2)
+  })
+
+  it('picks the earliest check-in and latest check-out across both sources, not just the confirmed one', () => {
+    const window = workday('2026-08-26', '08:00:00', '17:00:00')
+    const bufferMatched = [
+      rawEvent(1, 'check_in', '2026-08-26T01:05:00.000Z'), // 08:05
+      rawEvent(2, 'check_out', '2026-08-26T09:00:00.000Z'), // 16:00, a lunch-run style mid punch
+    ]
+    const confirmed = [rawEvent(3, 'check_out', '2026-08-26T10:30:00.000Z')] // 17:30, the real close-out
+
+    const merged = mergeMatchedDay(window, bufferMatched, confirmed)
+
+    assert.equal(merged.actualCheckInAt, '2026-08-26T01:05:00.000Z')
+    assert.equal(merged.actualCheckInEventId, 1)
+    // Latest check-out wins even though it came from the confirmed set.
+    assert.equal(merged.actualCheckOutAt, '2026-08-26T10:30:00.000Z')
+    assert.equal(merged.actualCheckOutEventId, 3)
+  })
+
+  it('reports a confirmed-only day (nothing from the buffer pass) using just the confirmed events', () => {
+    const window = workday('2026-08-26', '08:00:00', '17:00:00')
+    const confirmed = [
+      rawEvent(1, 'check_in', '2026-08-26T01:00:00.000Z'),
+      rawEvent(2, 'check_out', '2026-08-26T10:00:00.000Z'),
+    ]
+
+    const merged = mergeMatchedDay(window, [], confirmed)
+
+    assert.equal(merged.actualCheckInEventId, 1)
+    assert.equal(merged.actualCheckOutEventId, 2)
+  })
+
+  it('stays fully null when neither source has anything for the day', () => {
+    const window = workday('2026-08-26', '08:00:00', '17:00:00')
+    const merged = mergeMatchedDay(window, [], [])
+    assert.equal(merged.actualCheckInAt, null)
+    assert.equal(merged.actualCheckOutAt, null)
   })
 })
 

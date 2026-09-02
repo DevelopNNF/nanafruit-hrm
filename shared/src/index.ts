@@ -1816,7 +1816,9 @@ export type AttendanceListResponse = {
 
 /** One punch, as the preview explains it back to HR. */
 export type AttendanceImportPunchPreview = {
-  /** ISO 8601. */
+  /** ISO 8601. Fixed — what the terminal recorded. Never changes, including
+   *  under a manual override: only the eventType/workDate interpretation of
+   *  that instant can be corrected, never the instant itself. */
   eventTime: string
   eventType: AttendanceEventType
   /** The work-date the punch was attributed to — not always the calendar day
@@ -1829,6 +1831,32 @@ export type AttendanceImportPunchPreview = {
   /** Already present in attendance_events — it will be skipped, not written
    *  twice. Re-uploading an overlapping period is expected, not a mistake. */
   duplicate: boolean
+  /** True when an AttendanceImportOverride matched this punch, so eventType
+   *  and workDate above are HR's correction rather than the system's own
+   *  reading. */
+  overridden: boolean
+  /** What the system read before the override — only present when
+   *  overridden, so the editor can show "originally read as…" and undo. */
+  original?: { eventType: AttendanceEventType; workDate: string }
+}
+
+/**
+ * A manual correction to one punch's in/out or work-date reading, submitted
+ * alongside the file on both /preview and /import.
+ *
+ * Keyed by fingerprintCode + eventTime rather than an id, because those are
+ * the two things that stay stable across a preview → confirm round trip that
+ * re-parses the same file from scratch — see the module comment above. An
+ * override whose key matches nothing in the freshly parsed file (the file
+ * changed since the override was made) is silently dropped and counted in
+ * the preview's warnings rather than erroring the whole import.
+ */
+export type AttendanceImportOverride = {
+  fingerprintCode: string
+  /** ISO 8601 — must equal a punch's eventTime exactly. */
+  eventTime: string
+  eventType: AttendanceEventType
+  workDate: string
 }
 
 export type AttendanceImportEmployeePreview = {
@@ -1864,6 +1892,8 @@ export type AttendanceImportPreview = {
   warnings: string[]
   totalNewCount: number
   totalDuplicateCount: number
+  /** How many punches an AttendanceImportOverride corrected. */
+  totalOverriddenCount: number
 }
 
 export type AttendanceImportPreviewResponse = { preview: AttendanceImportPreview }
@@ -1875,6 +1905,7 @@ export type AttendanceImportResult = {
   skippedDuplicateCount: number
   employeeCount: number
   unmatchedCodes: string[]
+  manualOverrideCount: number
   /** False when the daily report could not be rebuilt because the attendance
    *  job already held its lock — the import itself still committed, and the
    *  next scheduled run picks the dates up. */
@@ -1896,6 +1927,7 @@ export type AttendanceImportBatch = {
   employeeCount: number
   eventCount: number
   skippedDuplicateCount: number
+  manualOverrideCount: number
   unmatchedCodes: string[]
   /** Display name of whoever uploaded it. */
   importedByName: string | null

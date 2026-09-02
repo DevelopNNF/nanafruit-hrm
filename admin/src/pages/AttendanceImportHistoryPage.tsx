@@ -102,13 +102,21 @@ export function AttendanceImportHistoryPage() {
             <table className="w-full border-collapse [&_tbody_tr:last-child_td]:border-b-0">
               <thead>
                 <tr>
-                  {['นำเข้าเมื่อ', 'โดย', 'ไฟล์', 'ช่วงวันที่', 'พนักงาน', 'บันทึก', 'ข้ามซ้ำ', 'รหัสที่ไม่พบ'].map(
-                    (h) => (
-                      <th key={h} className={th}>
-                        {h}
-                      </th>
-                    )
-                  )}
+                  {[
+                    'นำเข้าเมื่อ',
+                    'โดย',
+                    'ไฟล์',
+                    'ช่วงวันที่',
+                    'พนักงาน',
+                    'บันทึก',
+                    'ข้ามซ้ำ',
+                    'แก้ไขเอง',
+                    'รหัสที่ไม่พบ',
+                  ].map((h) => (
+                    <th key={h} className={th}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -130,6 +138,9 @@ export function AttendanceImportHistoryPage() {
                     </td>
                     <td className={`${td} whitespace-nowrap tabular-nums`}>
                       {batch.skippedDuplicateCount}
+                    </td>
+                    <td className={`${td} whitespace-nowrap tabular-nums`}>
+                      {batch.manualOverrideCount === 0 ? '—' : batch.manualOverrideCount}
                     </td>
                     <td className={`${td} max-w-[14rem] break-words`}>
                       {batch.unmatchedCodes.length === 0 ? '—' : batch.unmatchedCodes.join(', ')}

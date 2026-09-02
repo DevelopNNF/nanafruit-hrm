@@ -6,18 +6,31 @@
 // preview's rows back from the browser, so what lands in the ledger is what the
 // file says and not what a round-trip claims it said.
 //
-// The upload is the raw .xlsx bytes with the name in a query parameter, rather
-// than multipart: nothing else in this API takes a file inline (photos and
-// attachments go straight to R2 via a presigned PUT), and a body parser mounted
-// on two routes is a smaller thing to own than a multipart dependency for a
-// single spreadsheet.
+// The upload is multipart/form-data: a `file` part (the .xlsx) plus an
+// optional `overrides` text part — HR's manual corrections to punches the
+// classifier's shift-window buffer read the wrong way round (an OT departure
+// that runs past MATCH_BUFFER_MINUTES gets attributed to the wrong work-date
+// or the wrong in/out). overrides used to ride as a query parameter, but that
+// put it under Node's ~16KB request-header ceiling — a handful of corrections
+// fit, but nothing stopped the list from growing past it, and once it did the
+// request failed as 431 before it ever reached this file. A body has no such
+// ceiling.
+//
+// overrides is re-applied to a freshly classified plan on every call —
+// preview and confirm alike — rather than trusted as a finished answer, for
+// the same reason the file itself is re-parsed on confirm: what lands in the
+// ledger has to be re-derived from scratch each time, never accepted as a
+// browser's claim about an earlier response.
 
-import express, { Router } from 'express'
-import type { Request, Response } from 'express'
+import { Router } from 'express'
+import type { NextFunction, Request, Response } from 'express'
+import multer, { MulterError } from 'multer'
 import {
   ROLES,
+  type AttendanceEventType,
   type AttendanceImportBatchListResponse,
   type AttendanceImportEmployeePreview,
+  type AttendanceImportOverride,
   type AttendanceImportPreviewResponse,
   type AttendanceImportPunchPreview,
   type AttendanceImportResponse,
@@ -55,18 +68,37 @@ const canImport = requireRole('HRM.HR', 'HRM.Admin')
 // list beside it.
 const canReadHistory = requireRole(...ROLES)
 
-const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 /** 10 MB. A month of punches for a few hundred people is well under a
  *  megabyte; this is a ceiling on nonsense, not a working limit. */
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
-/** Some browsers send a generic type for a file picked off disk, so the parser
- *  — not the Content-Type — is what actually decides whether this is a
- *  workbook. Anything that is not really one fails there with a message. */
-const uploadBody = express.raw({
-  type: [XLSX_MIME, 'application/vnd.ms-excel', 'application/octet-stream'],
-  limit: MAX_UPLOAD_BYTES,
+/** Buffered in memory, same as the old raw-body parser — nothing here is big
+ *  enough to earn disk staging. No fileFilter: same reasoning as before,
+ *  the parser downstream (not the browser-supplied mimetype) decides whether
+ *  the `file` part is really a workbook. */
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_UPLOAD_BYTES,
+    files: 1,
+    // Only `overrides` is expected besides the file. Its own default 1MB
+    // fieldSize is already far more than any realistic correction list.
+    fields: 1,
+  },
 })
+
+/** Wraps multer's single-file parser so a malformed or oversized upload comes
+ *  back as this API's usual JSON error shape instead of multer's default
+ *  Express error page. */
+function uploadFile(req: Request, res: Response, next: NextFunction) {
+  upload.single('file')(req, res, (err: unknown) => {
+    if (!err) return next()
+    if (err instanceof MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return fail(res, 413, 'ไฟล์ใหญ่เกินไป — จำกัดไม่เกิน 10 MB')
+    }
+    return fail(res, 400, 'อัปโหลดไฟล์ไม่สำเร็จ — กรุณาลองใหม่อีกครั้ง')
+  })
+}
 
 /** An admin actor, which is what a batch row records. Employee tokens never
  *  reach here — requireRole already refuses them — but the type is a union and
@@ -76,11 +108,19 @@ function adminActor(req: Request): Extract<AuthUser, { kind: 'admin' }> | null {
   return auth && auth.kind === 'admin' ? auth : null
 }
 
+type PlannedPunch = ClassifiedPunch & {
+  duplicate: boolean
+  overridden: boolean
+  /** The classifier's own reading, before the override — only set when
+   *  overridden, so the UI can show "read as…" and offer to undo. */
+  original: { eventType: AttendanceEventType; workDate: string } | null
+}
+
 type PlannedEmployee = {
   fingerprintCode: string
   nameInFile: string | null
   match: ImportEmployeeMatch | null
-  punches: (ClassifiedPunch & { duplicate: boolean })[]
+  punches: PlannedPunch[]
 }
 
 type ImportPlan = {
@@ -88,15 +128,33 @@ type ImportPlan = {
   rangeTo: string
   generatedOn: string | null
   /** The dates the daily report has to be rebuilt over: a day either side of
-   *  the file's own period, since an overnight shift's punches straddle it. */
+   *  the file's own period (since an overnight shift's punches straddle it),
+   *  widened further to cover any work-date an override moved a punch to. */
   recomputeFrom: string
   recomputeTo: string
   employees: PlannedEmployee[]
   unmatchedCodes: string[]
   warnings: string[]
+  overriddenCount: number
 }
 
 type PlanResult = { ok: true; plan: ImportPlan } | { ok: false; status: number; message: string }
+
+/** fingerprintCode + eventTime is what stays stable for the same punch across
+ *  a preview → confirm round trip that re-parses the file from scratch — see
+ *  the module comment. */
+function overrideKey(fingerprintCode: string, eventTime: string): string {
+  return `${fingerprintCode}|${eventTime}`
+}
+
+/** How far an override may move a punch from the calendar date it actually
+ *  happened on. See its one call site. */
+const REJECTED_OVERRIDE_MAX_DAYS = 7
+
+function daysBetween(fromDate: string, toDate: string): number {
+  const msPerDay = 24 * 60 * 60 * 1000
+  return Math.round((Date.parse(`${toDate}T00:00:00Z`) - Date.parse(`${fromDate}T00:00:00Z`)) / msPerDay)
+}
 
 /**
  * Everything the import decides, without writing any of it.
@@ -105,7 +163,11 @@ type PlanResult = { ok: true; plan: ImportPlan } | { ok: false; status: number; 
  * own client for the confirm step, so the plan that gets written is derived
  * inside the same transaction that writes it.
  */
-async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult> {
+async function buildImportPlan(
+  file: Buffer,
+  db: Queryable,
+  overrides: AttendanceImportOverride[]
+): Promise<PlanResult> {
   const parsed = await parseAttendanceImport(file)
   if (!parsed.ok) return { ok: false, status: 400, message: parsed.message }
   const sheet = parsed.value
@@ -133,6 +195,12 @@ async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult>
   const dates: string[] = []
   for (let date = recomputeFrom; date <= recomputeTo; date = addDays(date, 1)) dates.push(date)
 
+  const overrideByKey = new Map(
+    overrides.map((o) => [overrideKey(o.fingerprintCode, o.eventTime), o] as const)
+  )
+  const matchedOverrideKeys = new Set<string>()
+  let rejectedOverrideCount = 0
+
   const employees: PlannedEmployee[] = []
   const unmatchedCodes: string[] = []
 
@@ -148,12 +216,50 @@ async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult>
     // client, and a client cannot run two queries at once.
     const windows = await resolveExpectedShiftWindows(match.employeeId, dates, db)
     const classified = classifyImportedPunches(parsedEmployee.punches, windows)
+    const punches: PlannedPunch[] = classified.map((punch) => {
+      const key = overrideKey(parsedEmployee.fingerprintCode, punch.eventTime)
+      const override = overrideByKey.get(key)
+      if (!override) return { ...punch, duplicate: false, overridden: false, original: null }
+      matchedOverrideKeys.add(key)
+
+      // The editor's own UI never offers anything this far away — this is a
+      // backstop against a stale client or a direct API call, not a limit
+      // real HR usage should ever brush up against.
+      const calendarDate = toThailandDateString(new Date(punch.eventTime))
+      if (Math.abs(daysBetween(calendarDate, override.workDate)) > REJECTED_OVERRIDE_MAX_DAYS) {
+        rejectedOverrideCount++
+        return { ...punch, duplicate: false, overridden: false, original: null }
+      }
+
+      return {
+        ...punch,
+        eventType: override.eventType,
+        workDate: override.workDate,
+        duplicate: false,
+        overridden: true,
+        original: { eventType: punch.eventType, workDate: punch.workDate },
+      }
+    })
     employees.push({
       fingerprintCode: parsedEmployee.fingerprintCode,
       nameInFile: parsedEmployee.nameInFile,
       match,
-      punches: classified.map((punch) => ({ ...punch, duplicate: false })),
+      punches,
     })
+  }
+
+  const warnings = [...sheet.warnings]
+  if (rejectedOverrideCount > 0) {
+    warnings.push(
+      `การแก้ไข ${rejectedOverrideCount} รายการถูกข้าม เพราะย้ายวันที่ห่างจากวันที่ปั๊มจริงเกิน ${REJECTED_OVERRIDE_MAX_DAYS} วัน`
+    )
+  }
+  const unmatchedOverrideCount = overrides.length - matchedOverrideKeys.size
+  if (unmatchedOverrideCount > 0) {
+    warnings.push(
+      `การแก้ไข ${unmatchedOverrideCount} รายการที่ส่งมาไม่ตรงกับรายการในไฟล์นี้แล้ว — ` +
+        'อาจเป็นเพราะเลือกไฟล์ใหม่ตั้งแต่แก้ไขครั้งล่าสุด จึงถูกข้ามไป'
+    )
   }
 
   // One query for every employee's existing punches, then flag in memory —
@@ -178,34 +284,94 @@ async function buildImportPlan(file: Buffer, db: Queryable): Promise<PlanResult>
     }
   }
 
+  // An override can move a punch's work-date further than the ±1 day the
+  // classifier itself ever reaches for (see `dates` above) — that is the
+  // whole point of the "เลือกวันที่อื่น" escape hatch in the editor. Widen the
+  // recompute range to cover wherever HR actually sent a punch, not just
+  // where the classifier would have looked on its own.
+  let finalRecomputeFrom = recomputeFrom
+  let finalRecomputeTo = recomputeTo
+  let overriddenCount = 0
+  for (const employee of employees) {
+    for (const punch of employee.punches) {
+      if (punch.overridden) overriddenCount++
+      if (punch.workDate < finalRecomputeFrom) finalRecomputeFrom = punch.workDate
+      if (punch.workDate > finalRecomputeTo) finalRecomputeTo = punch.workDate
+    }
+  }
+
   return {
     ok: true,
     plan: {
       rangeFrom: sheet.rangeFrom,
       rangeTo: sheet.rangeTo,
       generatedOn: sheet.generatedOn,
-      recomputeFrom,
-      recomputeTo,
+      recomputeFrom: finalRecomputeFrom,
+      recomputeTo: finalRecomputeTo,
       employees,
       unmatchedCodes,
-      warnings: sheet.warnings,
+      warnings,
+      overriddenCount,
     },
   }
 }
 
 /** The uploaded bytes, or an answer already sent. */
 function uploadedFile(req: Request, res: Response): Buffer | null {
-  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+  if (!req.file || req.file.buffer.length === 0) {
     fail(res, 415, 'กรุณาแนบไฟล์ Excel (.xlsx) ของรายงานการลงเวลา')
     return null
   }
-  return req.body
+  return req.file.buffer
 }
 
+/** multer captures the part's own filename, so this no longer needs its own
+ *  query parameter — call after uploadedFile has confirmed req.file exists. */
 function uploadedFileName(req: Request): string {
-  const raw = req.query['fileName']
-  const name = typeof raw === 'string' ? raw.trim() : ''
+  const name = (req.file?.originalname ?? '').trim()
   return (name === '' ? 'attendance.xlsx' : name).slice(0, 255)
+}
+
+const EVENT_TYPES: readonly AttendanceEventType[] = ['check_in', 'check_out']
+const WORK_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+function isOverride(value: unknown): value is AttendanceImportOverride {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v['fingerprintCode'] === 'string' &&
+    v['fingerprintCode'] !== '' &&
+    typeof v['eventTime'] === 'string' &&
+    !Number.isNaN(Date.parse(v['eventTime'])) &&
+    typeof v['eventType'] === 'string' &&
+    EVENT_TYPES.includes(v['eventType'] as AttendanceEventType) &&
+    typeof v['workDate'] === 'string' &&
+    WORK_DATE_RE.test(v['workDate'])
+  )
+}
+
+/** The `overrides` form field, or an answer already sent. Absent or empty
+ *  parses to an empty list — most imports have none. */
+function uploadedOverrides(req: Request, res: Response): AttendanceImportOverride[] | null {
+  const raw: unknown = req.body?.overrides
+  if (raw === undefined || raw === '') return []
+  if (typeof raw !== 'string') {
+    fail(res, 400, 'ฟิลด์ overrides มีรูปแบบไม่ถูกต้อง')
+    return null
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    fail(res, 400, 'พารามิเตอร์ overrides ไม่ใช่ JSON ที่ถูกต้อง')
+    return null
+  }
+  if (!Array.isArray(parsed) || !parsed.every(isOverride)) {
+    fail(res, 400, 'พารามิเตอร์ overrides มีรูปแบบไม่ถูกต้อง')
+    return null
+  }
+  return parsed
 }
 
 function toEmployeePreview(employee: PlannedEmployee): AttendanceImportEmployeePreview {
@@ -215,6 +381,8 @@ function toEmployeePreview(employee: PlannedEmployee): AttendanceImportEmployeeP
     workDate: punch.workDate,
     matchedShift: punch.matchedShift,
     duplicate: punch.duplicate,
+    overridden: punch.overridden,
+    ...(punch.original ? { original: punch.original } : {}),
   }))
   return {
     fingerprintCode: employee.fingerprintCode,
@@ -232,13 +400,15 @@ function toEmployeePreview(employee: PlannedEmployee): AttendanceImportEmployeeP
 attendanceImportRouter.post(
   '/attendance/import/preview',
   canImport,
-  uploadBody,
+  uploadFile,
   async (req: Request, res: Response) => {
     const file = uploadedFile(req, res)
     if (file === null) return
+    const overrides = uploadedOverrides(req, res)
+    if (overrides === null) return
 
     try {
-      const result = await buildImportPlan(file, pool)
+      const result = await buildImportPlan(file, pool, overrides)
       if (!result.ok) return fail(res, result.status, result.message)
       const { plan } = result
 
@@ -254,6 +424,7 @@ attendanceImportRouter.post(
           warnings: plan.warnings,
           totalNewCount: employees.reduce((sum, employee) => sum + employee.newCount, 0),
           totalDuplicateCount: employees.reduce((sum, employee) => sum + employee.duplicateCount, 0),
+          totalOverriddenCount: plan.overriddenCount,
         },
       }
       res.json(body)
@@ -270,19 +441,21 @@ const INSERT_CHUNK_ROWS = 500
 attendanceImportRouter.post(
   '/attendance/import',
   canImport,
-  uploadBody,
+  uploadFile,
   async (req: Request, res: Response) => {
     const actor = adminActor(req)
     if (!actor) return fail(res, 500, 'server misconfigured')
 
     const file = uploadedFile(req, res)
     if (file === null) return
+    const overrides = uploadedOverrides(req, res)
+    if (overrides === null) return
 
     const fileName = uploadedFileName(req)
 
     try {
       const outcome = await withTransaction(async (client) => {
-        const result = await buildImportPlan(file, client)
+        const result = await buildImportPlan(file, client, overrides)
         if (!result.ok) return result
         const { plan } = result
 
@@ -294,6 +467,10 @@ attendanceImportRouter.post(
           eventType: string
           eventTime: string
           workDate: string
+          /** Set only for a punch HR explicitly overrode — see
+           *  attendanceMatchingQueries.ts's module comment for why that earns
+           *  it the matcher's trust and an auto-stamped shift_id doesn't. */
+          confirmedWorkDate: string | null
         }[] = []
         let skippedDuplicateCount = 0
 
@@ -310,6 +487,7 @@ attendanceImportRouter.post(
               eventType: punch.eventType,
               eventTime: punch.eventTime,
               workDate: punch.workDate,
+              confirmedWorkDate: punch.overridden ? punch.workDate : null,
             })
           }
         }
@@ -326,6 +504,7 @@ attendanceImportRouter.post(
             employeeCount: touchedEmployeeIds.length,
             eventCount: toInsert.length,
             skippedDuplicateCount,
+            manualOverrideCount: plan.overriddenCount,
             unmatchedCodes: plan.unmatchedCodes,
             importedByOid: actor.oid,
             importedByName: actor.name,
@@ -356,14 +535,14 @@ attendanceImportRouter.post(
           for (const row of chunk) {
             const shiftId = await shiftIdFor(row.employeeId, row.workDate)
             const base = values.length
-            values.push(row.employeeId, row.eventType, row.eventTime, shiftId, batchId)
+            values.push(row.employeeId, row.eventType, row.eventTime, shiftId, batchId, row.confirmedWorkDate)
             tuples.push(
-              `($${base + 1}, $${base + 2}, $${base + 3}, 'fingerprint_import', $${base + 4}, $${base + 5})`
+              `($${base + 1}, $${base + 2}, $${base + 3}, 'fingerprint_import', $${base + 4}, $${base + 5}, $${base + 6})`
             )
           }
           const { rowCount } = await client.query(
             `INSERT INTO attendance_events
-               (employee_id, event_type, event_time, source, shift_id, import_batch_id)
+               (employee_id, event_type, event_time, source, shift_id, import_batch_id, confirmed_work_date)
              VALUES ${tuples.join(', ')}
              ON CONFLICT (employee_id, event_time, event_type)
                WHERE source = 'fingerprint_import'
@@ -397,6 +576,7 @@ attendanceImportRouter.post(
             rangeTo: plan.rangeTo,
             importedCount,
             skippedDuplicateCount,
+            manualOverrideCount: plan.overriddenCount,
             employeeIds: touchedEmployeeIds,
             unmatchedCodes: plan.unmatchedCodes,
           },
@@ -443,6 +623,7 @@ attendanceImportRouter.post(
           skippedDuplicateCount: outcome.skippedDuplicateCount,
           employeeCount: outcome.touchedEmployeeIds.length,
           unmatchedCodes: outcome.plan.unmatchedCodes,
+          manualOverrideCount: outcome.plan.overriddenCount,
           recomputed,
         },
       }
