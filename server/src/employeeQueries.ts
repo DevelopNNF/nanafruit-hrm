@@ -2,7 +2,7 @@
 // and the auth routes that need to know whose record a LINE account claims.
 
 import type pg from 'pg'
-import type { AuthUser, Employee } from '@hrm/shared'
+import type { AuthUser, Employee, EmployeeStatus, EmploymentType, WorkLocation } from '@hrm/shared'
 import { pool } from './db.js'
 import { currentShiftJoinSql } from './shiftAssignmentQueries.js'
 
@@ -201,6 +201,18 @@ export type EmployeeSearchFilter = {
   query?: string
   /** A specific payroll group's id, or 'none' for payroll_group_id IS NULL. */
   payrollGroupId?: number | 'none'
+  /** Restricts to employees whose department is one of these ids. Absent or
+   *  empty means no restriction — the admin list's TreeSelect filter reports
+   *  "everything checked" as an empty array rather than every id, so this
+   *  stays consistent with that rather than needing the caller to special-case
+   *  the full-selection state. */
+  departmentIds?: number[]
+  /** Same "absent or empty means no restriction" convention as departmentIds. */
+  jobIds?: number[]
+  /** Same "absent or empty means no restriction" convention as departmentIds. */
+  employmentTypes?: EmploymentType[]
+  workLocation?: WorkLocation
+  status?: EmployeeStatus
 }
 
 export type EmployeeSearchPagination = {
@@ -244,6 +256,26 @@ export async function searchEmployees(
   } else if (filter.payrollGroupId !== undefined) {
     params.push(filter.payrollGroupId)
     conditions.push(`d.payroll_group_id = $${params.length}`)
+  }
+  if (filter.departmentIds && filter.departmentIds.length > 0) {
+    params.push(filter.departmentIds)
+    conditions.push(`d.department_id = ANY($${params.length})`)
+  }
+  if (filter.jobIds && filter.jobIds.length > 0) {
+    params.push(filter.jobIds)
+    conditions.push(`d.job_id = ANY($${params.length})`)
+  }
+  if (filter.employmentTypes && filter.employmentTypes.length > 0) {
+    params.push(filter.employmentTypes)
+    conditions.push(`d.employment_type = ANY($${params.length})`)
+  }
+  if (filter.workLocation !== undefined) {
+    params.push(filter.workLocation)
+    conditions.push(`d.work_location = $${params.length}`)
+  }
+  if (filter.status !== undefined) {
+    params.push(filter.status)
+    conditions.push(`d.status = $${params.length}`)
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''

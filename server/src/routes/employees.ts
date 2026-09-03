@@ -29,6 +29,8 @@ import {
   type EmployeePhotoPresignResponse,
   type EmployeePhotoResponse,
   type EmployeeResponse,
+  type EmployeeStatus,
+  type EmploymentType,
   type LinkCodeResponse,
   type SocialSecurityType,
   type TaxType,
@@ -40,12 +42,19 @@ import {
   type WageChangeResponse,
   type WageHistoryResponse,
   type WageType,
+  type WorkLocation,
 } from '@hrm/shared'
 import { LINK_CODE_TTL_MS, generateLinkCode, hashLinkCode } from '../auth/linkCode.js'
 import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
-import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
+import {
+  fail,
+  handleUnexpected,
+  parseOptionalEnumArray,
+  parseOptionalPositiveInt,
+  parseOptionalPositiveIntArray,
+} from '../http.js'
 import {
   SELECT_EMPLOYEE,
   findEmployeeById,
@@ -765,6 +774,22 @@ function parseOptionalPayrollGroupFilter(
   return Number.isInteger(id) && id > 0 ? id : undefined
 }
 
+function parseOptionalWorkLocationFilter(value: unknown): WorkLocation | null | undefined {
+  if (value === undefined) return null
+  if (typeof value !== 'string' || !(WORK_LOCATIONS as readonly string[]).includes(value)) {
+    return undefined
+  }
+  return value as WorkLocation
+}
+
+function parseOptionalStatusFilter(value: unknown): EmployeeStatus | null | undefined {
+  if (value === undefined) return null
+  if (typeof value !== 'string' || !(EMPLOYEE_STATUSES as readonly string[]).includes(value)) {
+    return undefined
+  }
+  return value as EmployeeStatus
+}
+
 employeesRouter.get('/employees/search', canRead, async (req: Request, res: Response) => {
   const q = req.query['q']
   if (q !== undefined && typeof q !== 'string') return fail(res, 400, 'q must be a string')
@@ -776,6 +801,27 @@ employeesRouter.get('/employees/search', canRead, async (req: Request, res: Resp
     return fail(res, 400, `payrollGroupId must be 'none' or a positive integer`)
   }
 
+  const departmentIds = parseOptionalPositiveIntArray(req.query['departmentId'])
+  if (departmentIds === undefined) return fail(res, 400, 'departmentId must be a positive integer')
+
+  const jobIds = parseOptionalPositiveIntArray(req.query['jobId'])
+  if (jobIds === undefined) return fail(res, 400, 'jobId must be a positive integer')
+
+  const employmentTypes = parseOptionalEnumArray(req.query['employmentType'], EMPLOYMENT_TYPES)
+  if (employmentTypes === undefined) {
+    return fail(res, 400, `employmentType must be one of: ${EMPLOYMENT_TYPES.join(', ')}`)
+  }
+
+  const workLocation = parseOptionalWorkLocationFilter(req.query['workLocation'])
+  if (workLocation === undefined) {
+    return fail(res, 400, `workLocation must be one of: ${WORK_LOCATIONS.join(', ')}`)
+  }
+
+  const status = parseOptionalStatusFilter(req.query['status'])
+  if (status === undefined) {
+    return fail(res, 400, `status must be one of: ${EMPLOYEE_STATUSES.join(', ')}`)
+  }
+
   const page = parseOptionalPositiveInt(req.query['page'])
   if (page === undefined) return fail(res, 400, 'page must be a positive integer')
 
@@ -784,7 +830,15 @@ employeesRouter.get('/employees/search', canRead, async (req: Request, res: Resp
 
   try {
     const result = await searchEmployees(
-      { ...(q !== undefined && q !== '' && { query: q }), ...(payrollGroupId !== null && { payrollGroupId }) },
+      {
+        ...(q !== undefined && q !== '' && { query: q }),
+        ...(payrollGroupId !== null && { payrollGroupId }),
+        ...(departmentIds !== null && departmentIds.length > 0 && { departmentIds }),
+        ...(jobIds !== null && jobIds.length > 0 && { jobIds }),
+        ...(employmentTypes !== null && employmentTypes.length > 0 && { employmentTypes }),
+        ...(workLocation !== null && { workLocation }),
+        ...(status !== null && { status }),
+      },
       { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
     )
     const body: EmployeeSearchResponse = result

@@ -16,7 +16,10 @@ import type {
   EmployeePhotoResponse,
   EmployeeResponse,
   EmployeeSearchResponse,
+  EmployeeStatus,
   EmploymentInput,
+  EmploymentType,
+  WorkLocation,
   LinkCodeResponse,
   ShiftAssignment,
   WageAssignment,
@@ -39,6 +42,13 @@ export type EmployeeSearchFilter = {
   query?: string
   /** A specific payroll group's id, or 'none' for "not in any group". */
   payrollGroupId?: number | 'none'
+  /** Absent or empty means no restriction — see the server-side type's own
+   *  comment on why an empty array isn't "match nothing". */
+  departmentIds?: number[]
+  jobIds?: number[]
+  employmentTypes?: EmploymentType[]
+  workLocation?: WorkLocation
+  status?: EmployeeStatus
 }
 
 /** The admin employee list's paginated, server-filtered search — see
@@ -51,6 +61,11 @@ export async function searchEmployees(
   const params = new URLSearchParams()
   if (filter.query) params.set('q', filter.query)
   if (filter.payrollGroupId !== undefined) params.set('payrollGroupId', String(filter.payrollGroupId))
+  filter.departmentIds?.forEach((id) => params.append('departmentId', String(id)))
+  filter.jobIds?.forEach((id) => params.append('jobId', String(id)))
+  filter.employmentTypes?.forEach((type) => params.append('employmentType', type))
+  if (filter.workLocation !== undefined) params.set('workLocation', filter.workLocation)
+  if (filter.status !== undefined) params.set('status', filter.status)
   if (pagination.page !== undefined) params.set('page', String(pagination.page))
   if (pagination.pageSize !== undefined) params.set('pageSize', String(pagination.pageSize))
 
