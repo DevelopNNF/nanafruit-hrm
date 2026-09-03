@@ -321,6 +321,21 @@ function EmployeePunches({
     byWorkDate.set(punch.workDate, group)
   }
 
+  function isAbnomalPunches(punches: AttendanceImportPunchPreview[]){
+    if (!punches) return true;
+
+    if (![2,4].includes(punches.length)) return true;
+
+    const checkInCount = punches.filter(p => p.eventType === 'check_in').length;
+    const checkOutCount = punches.filter(p => p.eventType === 'check_out').length;
+
+    if (checkInCount !== checkOutCount) return true;
+
+    if (punches[0].eventType !== 'check_in' || punches[punches.length - 1].eventType !== 'check_out') return true;
+
+    return false;
+  }
+
   return (
     <div className="flex flex-col gap-1.5">
       {[...byWorkDate.entries()].map(([workDate, punches]) => (
@@ -337,6 +352,7 @@ function EmployeePunches({
               onSave={onSavePunch}
             />
           ))}
+          {isAbnomalPunches(punches) && <span className='text-[0.775rem] text-red-500 text-right w-30 shrink-0'>การลงเวลาผิดปกติ</span>}
         </div>
       ))}
     </div>
