@@ -6,6 +6,7 @@ import {
   OFF_SITE_DEFAULT_RADIUS_METERS,
   ROLES,
   WORK_LOCATIONS,
+  type AttendanceCandidatePunchesResponse,
   type AttendanceClockResponse,
   type AttendanceDailyFilter,
   type AttendanceDailyListResponse,
@@ -13,11 +14,13 @@ import {
   type AttendanceListResponse,
   type AttendanceStatusResponse,
   type AttendanceTodayStatus,
+  type ConfirmAttendancePunchResponse,
   type WorkLocation,
 } from '@hrm/shared'
-import { pool } from '../db.js'
+import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { fail, handleUnexpected } from '../http.js'
+import { recordAudit } from '../audit.js'
 import { findEmployeeById } from '../employeeQueries.js'
 import { findActiveLocations } from '../locationQueries.js'
 import { findApprovedOffSiteRequestForDate } from '../offSiteRequestQueries.js'
@@ -28,9 +31,14 @@ import {
   rowToAttendanceEvent,
   type AttendanceRow,
 } from '../attendanceQueries.js'
-import { listAttendanceDaily } from '../attendanceDailyQueries.js'
+import { listAttendanceDaily, recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
 import { buildAttendanceReportWorkbook } from '../attendanceReportExport.js'
 import { chooseAttendanceWindow, matchAttendanceForDates, resolveMatchWindow } from '../attendanceMatchingQueries.js'
+import {
+  findCandidatePunches,
+  isPeriodLockedForEdit,
+  resolvePayrollPeriodStatus,
+} from '../attendancePunchConfirmQueries.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 
 export const attendanceRouter = Router()
@@ -40,6 +48,11 @@ export const attendanceRouter = Router()
 // /api/attendance/me is admin-writable, an employee can only ever record
 // their own events.
 const canReadAdmin = requireRole(...ROLES)
+
+// Confirming a punch (and clearing that confirmation) changes what payroll
+// sees as a day's worked hours — same write bar as attendanceImport.ts's
+// canImport, stricter than canReadAdmin above which every HRM role passes.
+const canConfirmPunch = requireRole('HRM.HR', 'HRM.Admin')
 
 /** Both /clock and /me are for the employee arm of AuthUser only — an admin
  *  token has no employeeId to act as, and cannot clock in for someone else. */
@@ -344,10 +357,12 @@ attendanceRouter.get('/attendance', canReadAdmin, async (req: Request, res: Resp
   }
 })
 
-// The computed daily report. Read-only: attendance_daily is derived data
-// rebuilt by the attendance:compute job, so there is deliberately no write
-// route here — a wrong day is fixed by correcting its source (a time
-// correction, a shift change, an approved leave), not by editing the report.
+// The computed daily report. attendance_daily itself is still never written
+// directly here — it's derived data the attendance:compute job (and the
+// confirm-punch route further down) rebuilt via recomputeAttendanceDaily. A
+// wrong day is fixed by correcting its source (a time correction, a shift
+// change, an approved leave, or now, confirming which raw punch belongs to
+// it), not by editing the report row itself.
 attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res: Response) => {
   const employeeId = parseOptionalId(req.query['employeeId'])
   if (employeeId === undefined) return fail(res, 400, 'employeeId must be a positive integer')
@@ -453,3 +468,155 @@ attendanceRouter.get('/attendance/daily/export', canReadAdmin, async (req: Reque
     handleUnexpected(res, err)
   }
 })
+
+function parseRequiredId(value: string | string[] | undefined): number | null {
+  if (typeof value !== 'string') return null
+  const id = Number(value)
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
+/** Candidate punches for the confirm-punch popover — see
+ *  findCandidatePunches for what "candidate" means (unclaimed by ordinary
+ *  buffer matching on this date or either neighbour, and not confirmed to a
+ *  different date already). */
+attendanceRouter.get(
+  '/attendance/daily/:employeeId/:workDate/candidate-punches',
+  canConfirmPunch,
+  async (req: Request, res: Response) => {
+    const employeeId = parseRequiredId(req.params['employeeId'])
+    if (employeeId === null) return fail(res, 400, 'employeeId must be a positive integer')
+
+    const workDate = req.params['workDate']
+    if (typeof workDate !== 'string' || !DATE_RE.test(workDate)) return fail(res, 400, 'workDate must be YYYY-MM-DD')
+
+    try {
+      const candidates = await findCandidatePunches(employeeId, workDate)
+      const body: AttendanceCandidatePunchesResponse = { candidates }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+type ParsedConfirmInput = { eventId: number | null }
+
+function parseConfirmPunchInput(body: unknown): ParseResult<ParsedConfirmInput> {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, message: 'body must be a JSON object' }
+  }
+  const raw = body as Record<string, unknown>
+  const eventId = raw['eventId']
+  if (eventId === null) return { ok: true, value: { eventId: null } }
+  if (typeof eventId !== 'number' || !Number.isInteger(eventId) || eventId <= 0) {
+    return { ok: false, message: 'eventId must be a positive integer, or null to clear the confirmation' }
+  }
+  return { ok: true, value: { eventId } }
+}
+
+/**
+ * Sets (eventId given) or clears (eventId null) confirmed_work_date on one
+ * attendance_events row for this employee+workDate, then recomputes just the
+ * affected days and hands back the fresh attendance_daily row.
+ *
+ * Blocked once the covering payroll period has moved past draft/calculating
+ * (isPeriodLockedForEdit) — same boundary calculatePayrollEntries enforces
+ * before letting a period recalculate (payrollEntryQueries.ts) — so a
+ * confirmed slip's numbers can never shift under it without HR deliberately
+ * reopening the period first.
+ */
+attendanceRouter.post(
+  '/attendance/daily/:employeeId/:workDate/confirm-punch',
+  canConfirmPunch,
+  async (req: Request, res: Response) => {
+    const actor = req.auth
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const employeeId = parseRequiredId(req.params['employeeId'])
+    if (employeeId === null) return fail(res, 400, 'employeeId must be a positive integer')
+
+    const workDate = req.params['workDate']
+    if (typeof workDate !== 'string' || !DATE_RE.test(workDate)) return fail(res, 400, 'workDate must be YYYY-MM-DD')
+
+    const parsed = parseConfirmPunchInput(req.body)
+    if (!parsed.ok) return fail(res, 400, parsed.message)
+    const { eventId } = parsed.value
+
+    try {
+      const periodStatus = await resolvePayrollPeriodStatus(employeeId, workDate)
+      if (isPeriodLockedForEdit(periodStatus)) {
+        return fail(
+          res,
+          409,
+          `งวดเงินเดือนของวันที่นี้พ้นขั้นตอนคำนวณไปแล้ว (สถานะ: ${periodStatus}) กรุณาย้อนสถานะงวดก่อนแก้ไขเวลา`
+        )
+      }
+
+      const result = await withTransaction(async (client) => {
+        if (eventId !== null) {
+          // Re-validated inside the same transaction/client that will make
+          // the write, not trusted from whatever the browser had open —
+          // same reasoning as validateOvertimeRequestInput's re-check before
+          // an approval decides anything.
+          const candidates = await findCandidatePunches(employeeId, workDate, client)
+          const match = candidates.find((c) => c.id === eventId)
+          if (!match) {
+            return {
+              kind: 'conflict' as const,
+              message: 'รายการลงเวลานี้ไม่สามารถยืนยันเป็นวันที่นี้ได้แล้ว กรุณารีเฟรชแล้วลองใหม่',
+            }
+          }
+
+          await client.query(`UPDATE attendance_events SET confirmed_work_date = $2 WHERE id = $1`, [
+            eventId,
+            workDate,
+          ])
+
+          await recordAudit(client, {
+            actor,
+            action: 'attendance.confirm_punch',
+            entityId: eventId,
+            detail: { employeeId, workDate, eventType: match.eventType, eventTime: match.eventTime },
+          })
+        } else {
+          const { rows } = await client.query<{ id: string; event_type: string; event_time: string }>(
+            `UPDATE attendance_events SET confirmed_work_date = NULL
+             WHERE employee_id = $1 AND confirmed_work_date = $2
+             RETURNING id, event_type, event_time`,
+            [employeeId, workDate]
+          )
+          const cleared = rows[0]
+          if (cleared) {
+            await recordAudit(client, {
+              actor,
+              action: 'attendance.unconfirm_punch',
+              entityId: Number(cleared.id),
+              detail: { employeeId, workDate, eventType: cleared.event_type, eventTime: cleared.event_time },
+            })
+          }
+        }
+
+        // ±1 day, same as time-correction approvals: an overnight shift's
+        // window reaches into both neighbours, so confirming a punch here can
+        // change the verdict of the adjacent work-date too.
+        await recomputeAttendanceDaily(employeeId, addDays(workDate, -1), addDays(workDate, 1), client)
+
+        const { days } = await listAttendanceDaily(
+          { employeeId, fromDate: workDate, toDate: workDate },
+          { page: 1, pageSize: 1 },
+          client
+        )
+        const day = days[0]
+        if (!day) throw new Error(`attendance_daily has no row for employee ${employeeId} on ${workDate}`)
+        return { kind: 'ok' as const, day }
+      })
+
+      if (result.kind === 'conflict') return fail(res, 409, result.message)
+
+      const body: ConfirmAttendancePunchResponse = { day: result.day }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)

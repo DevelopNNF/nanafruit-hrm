@@ -1,18 +1,24 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Pencil } from 'lucide-react'
 import {
   ATTENDANCE_DAILY_FILTERS,
   WORK_LOCATIONS,
   attendanceBadges,
   formatWorkMinutes,
+  type AttendanceCandidatePunch,
   type AttendanceDailyFilter,
   type AttendanceDailyItem,
   type AttendanceDailySummary,
+  type AttendanceEventType,
   type Department,
   type WorkLocation,
 } from '@hrm/shared'
 import { exportAttendanceDaily, listAttendanceDaily } from '../../api/attendanceDaily'
+import { confirmAttendancePunch, fetchCandidatePunches } from '../../api/attendancePunchConfirm'
 import { listDepartments } from '../../api/departments'
+import { useCanWrite } from '../../auth/meContext'
 import { Pagination } from '../../components/Pagination'
+import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover'
 import { notify } from '../../notifications/notify'
 import {
   alert,
@@ -93,6 +99,29 @@ function formatTime(iso: string | null): string | null {
   })
 }
 
+function formatDate2(iso: string | null): string | null {
+  if (iso === null) return null
+  return new Date(iso).toLocaleString('th-TH', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  })
+}
+
+function formatDateTime(iso: string | null): string | null {
+  if (iso === null) return null
+  return new Date(iso).toLocaleString('th-TH', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Bangkok',
+  })
+}
+
+
+
 /** True when `end` lands on a later Thailand date than `start` — the marker
  *  that an overnight shift's clock-out belongs to the following day. */
 function crossesMidnight(start: string | null, end: string | null): boolean {
@@ -152,7 +181,180 @@ function TimeRange({
   )
 }
 
+function typeLabel(type: AttendanceEventType): string {
+  return type === 'check_in' ? 'เข้า' : 'ออก'
+}
+
+/** One candidate row inside PunchConfirmPopover's Available/Claimed sections —
+ *  pulled out since both sections render the same row shape. */
+function CandidatePunchRow({
+  day,
+  candidate,
+  disabled,
+  onSelect,
+}: {
+  day: AttendanceDailyItem
+  candidate: AttendanceCandidatePunch
+  disabled: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onSelect}
+      className="cursor-pointer flex flex-col gap-0.5 rounded-md border border-slate-200 px-2.5 py-1.5 text-left text-[0.775rem] hover:border-navy hover:bg-navy/5 disabled:opacity-60"
+    >
+      <span className="flex items-center justify-between">
+        <span
+          className={`${formatDate2(day.workDate) == formatDate2(candidate.eventTime) ? 'font-bold' : ''} tabular-nums text-slate-900`}
+        >
+          {formatDateTime(candidate.eventTime)} · {typeLabel(candidate.eventType)}
+        </span>
+        <span className="text-[0.7rem] text-slate-400">{candidate.source}</span>
+      </span>
+      {candidate.claimedByWorkDate !== null && (
+        <span className="text-[0.7rem] text-amber-700">
+          ปัจจุบันเป็นเวลาของวันที่ {formatDate(candidate.claimedByWorkDate)} — เลือกจะย้ายมาวันนี้แทน
+        </span>
+      )}
+    </button>
+  )
+}
+
+/**
+ * Lets HR attach an already-recorded-but-unmatched punch (see
+ * findCandidatePunches on the server) as this day's real check-in/out —
+ * for the case ordinary buffer matching can't solve on its own: a punch
+ * landed outside MATCH_BUFFER_MINUTES with no approved OT to widen the
+ * search for it. Fixes only the "worked minutes"/incomplete-day verdict —
+ * unapproved overtime still needs its own OT request, same as before.
+ *
+ * Candidates are fetched lazily on open rather than up front for every row,
+ * since most days need no correction at all.
+ */
+function PunchConfirmPopover({
+  day,
+  onUpdated,
+}: {
+  day: AttendanceDailyItem
+  onUpdated: (day: AttendanceDailyItem) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [candidates, setCandidates] = useState<AttendanceCandidatePunch[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function handleOpenChange(next: boolean) {
+    setOpen(next)
+    if (next && candidates === null) {
+      setLoading(true)
+      setError(null)
+      fetchCandidatePunches(day.employeeId, day.workDate)
+        .then((res) => setCandidates(res.candidates))
+        .catch((err: unknown) => setError(err instanceof Error ? err.message : 'โหลดรายการลงเวลาไม่สำเร็จ'))
+        .finally(() => setLoading(false))
+    }
+  }
+
+  async function handleConfirm(eventId: number | null) {
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await confirmAttendancePunch(day.employeeId, day.workDate, eventId)
+      onUpdated(res.day)
+      setOpen(false)
+      setCandidates(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'บันทึกไม่สำเร็จ')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const isConfirmed = day.actualCheckInConfirmed || day.actualCheckOutConfirmed
+  const availableCandidates = candidates?.filter((c) => c.claimedByWorkDate === null) ?? []
+  const claimedCandidates = candidates?.filter((c) => c.claimedByWorkDate !== null) ?? []
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center text-slate-400 hover:text-navy cursor-pointer"
+          title="แก้ไขเวลาจริงจากรายการลงเวลาที่มีอยู่"
+        >
+          <Pencil size={12} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start">
+        <div className="flex w-72 flex-col gap-3">
+          <div>
+            <p className="text-[0.825rem] font-bold text-slate-900">เลือกเวลาจริงของวันที่ {formatDate(day.workDate)}</p>
+            <p className="mt-0.5 text-[0.75rem] text-slate-500">
+              เลือกจากรายการลงเวลาที่มีอยู่จริงแต่ยังไม่ถูกจับคู่กับวันนี้ (เช่น ลงเวลาเลยเวลาเลิกงานไปมาก
+              โดยยังไม่มี OT อนุมัติ) จะแก้ไขแค่เวลาจริง ไม่กระทบชั่วโมง OT — พนักงานยังต้องยื่นขออนุมัติ OT
+              เองแยกต่างหาก
+            </p>
+          </div>
+
+          {loading && <p className={muted}>กำลังโหลด…</p>}
+
+          {!loading && candidates !== null && candidates.length === 0 && (
+            <p className={muted}>ไม่พบรายการลงเวลาที่ยังไม่ได้จับคู่ใกล้วันนี้</p>
+          )}
+
+          {!loading && candidates !== null && candidates.length > 0 && (
+            <div className="flex max-h-72 flex-col gap-3 overflow-y-auto">
+              <div className="flex flex-col gap-1">
+                <p className={eyebrow}>ยังไม่ถูกใช้ ({availableCandidates.length})</p>
+                {availableCandidates.length === 0 ? (
+                  <p className="text-[0.75rem] text-slate-400">ไม่มีรายการที่ว่างอยู่</p>
+                ) : (
+                  availableCandidates.map((c) => (
+                    <CandidatePunchRow key={c.id} day={day} candidate={c} disabled={saving} onSelect={() => handleConfirm(c.id)} />
+                  ))
+                )}
+              </div>
+
+              {claimedCandidates.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <p className={eyebrow}>ถูกใช้โดยวันอื่นอยู่ ({claimedCandidates.length})</p>
+                  {claimedCandidates.map((c) => (
+                    <CandidatePunchRow key={c.id} day={day} candidate={c} disabled={saving} onSelect={() => handleConfirm(c.id)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {error && <p className="text-[0.775rem] text-red-700">{error}</p>}
+
+          <div className="flex items-center gap-3">
+            {isConfirmed && (
+              <button
+                type="button"
+                disabled={saving}
+                className="text-[0.775rem] text-slate-500 hover:text-slate-700 disabled:opacity-60"
+                onClick={() => handleConfirm(null)}
+              >
+                ยกเลิกการยืนยัน
+              </button>
+            )}
+            <span className="flex-1" />
+            <button type="button" className={button()} onClick={() => setOpen(false)}>
+              ปิด
+            </button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export function AttendanceDailyListPage() {
+  const canConfirmPunch = useCanWrite()
   const initial = useMemo(() => defaultRange(), [])
   const initialFilters: Filters = {
     fromDate: initial.from,
@@ -245,6 +447,14 @@ export function AttendanceDailyListPage() {
     setFetching(true)
     setPageSize(next)
     setPage(1)
+  }
+
+  /** Swaps one row in place after a punch is confirmed/unconfirmed, so the
+   *  table reflects the new verdict without refetching the whole page. */
+  function patchDay(updated: AttendanceDailyItem) {
+    setState((prev) =>
+      prev.phase === 'ok' ? { ...prev, days: prev.days.map((d) => (d.id === updated.id ? updated : d)) } : prev
+    )
   }
 
   async function handleExport() {
@@ -461,12 +671,20 @@ export function AttendanceDailyListPage() {
                         )}
                       </td>
                       <td className={td}>
-                        <TimeRange
-                          start={day.actualCheckInAt}
-                          end={day.actualCheckOutAt}
-                          lateStart={day.lateMinutes > 0}
-                          earlyEnd={day.earlyLeaveMinutes > 0}
-                        />
+                        <div className="flex items-center gap-1.5">
+                          {canConfirmPunch && <PunchConfirmPopover day={day} onUpdated={patchDay} />}
+                          <TimeRange
+                            start={day.actualCheckInAt}
+                            end={day.actualCheckOutAt}
+                            lateStart={day.lateMinutes > 0}
+                            earlyEnd={day.earlyLeaveMinutes > 0}
+                          />
+                          {(day.actualCheckInConfirmed || day.actualCheckOutConfirmed) && (
+                            <span className="text-[0.65rem] font-medium text-navy" title="ยืนยันด้วยมือ">
+                              ✓
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className={td}>
                         {worked === null ? (

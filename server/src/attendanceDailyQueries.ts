@@ -305,6 +305,10 @@ type AttendanceDailyRow = {
   effective_check_out_at: string | null
   actual_check_in_at: string | null
   actual_check_out_at: string | null
+  actual_check_in_event_id: string | null
+  actual_check_out_event_id: string | null
+  actual_check_in_confirmed: boolean
+  actual_check_out_confirmed: boolean
   late_minutes: number
   early_leave_minutes: number
   worked_minutes: number | null
@@ -336,6 +340,10 @@ function rowToAttendanceDailyItem(row: AttendanceDailyRow): AttendanceDailyItem 
     effectiveCheckOutAt: iso(row.effective_check_out_at),
     actualCheckInAt: iso(row.actual_check_in_at),
     actualCheckOutAt: iso(row.actual_check_out_at),
+    actualCheckInEventId: row.actual_check_in_event_id === null ? null : Number(row.actual_check_in_event_id),
+    actualCheckOutEventId: row.actual_check_out_event_id === null ? null : Number(row.actual_check_out_event_id),
+    actualCheckInConfirmed: row.actual_check_in_confirmed,
+    actualCheckOutConfirmed: row.actual_check_out_confirmed,
     lateMinutes: row.late_minutes,
     earlyLeaveMinutes: row.early_leave_minutes,
     workedMinutes: row.worked_minutes,
@@ -456,6 +464,8 @@ export async function listAttendanceDaily(
     JOIN employees e ON e.id = d.employee_id
     JOIN employment_details ed ON ed.employee_id = d.employee_id
     LEFT JOIN master_shifts ms ON ms.id = d.shift_id
+    LEFT JOIN attendance_events aci ON aci.id = d.actual_check_in_event_id
+    LEFT JOIN attendance_events aco ON aco.id = d.actual_check_out_event_id
     ${where}`
 
   const [listResult, summaryResult] = await Promise.all([
@@ -467,6 +477,9 @@ export async function listAttendanceDaily(
               d.expected_check_in_at, d.expected_check_out_at,
               d.effective_check_in_at, d.effective_check_out_at,
               d.actual_check_in_at, d.actual_check_out_at,
+              d.actual_check_in_event_id, d.actual_check_out_event_id,
+              (aci.confirmed_work_date IS NOT NULL) AS actual_check_in_confirmed,
+              (aco.confirmed_work_date IS NOT NULL) AS actual_check_out_confirmed,
               d.late_minutes, d.early_leave_minutes, d.worked_minutes,
               d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.off_site_request_id, d.computed_at
        ${from}
@@ -552,6 +565,8 @@ export async function listAttendanceDailyForExport(
     LEFT JOIN master_shifts ms ON ms.id = d.shift_id
     LEFT JOIN master_departments md ON md.id = ed.department_id
     LEFT JOIN master_jobs mj ON mj.id = ed.job_id
+    LEFT JOIN attendance_events aci ON aci.id = d.actual_check_in_event_id
+    LEFT JOIN attendance_events aco ON aco.id = d.actual_check_out_event_id
     ${where}`
 
   const { rows } = await db.query<AttendanceDailyExportDbRow>(
@@ -562,6 +577,9 @@ export async function listAttendanceDailyForExport(
             d.expected_check_in_at, d.expected_check_out_at,
             d.effective_check_in_at, d.effective_check_out_at,
             d.actual_check_in_at, d.actual_check_out_at,
+            d.actual_check_in_event_id, d.actual_check_out_event_id,
+            (aci.confirmed_work_date IS NOT NULL) AS actual_check_in_confirmed,
+            (aco.confirmed_work_date IS NOT NULL) AS actual_check_out_confirmed,
             d.late_minutes, d.early_leave_minutes, d.worked_minutes,
             d.expected_work_minutes, d.leave_minutes, d.is_overnight, d.off_site_request_id, d.computed_at,
             md.dept_name AS department_name, mj.job_title, ed.work_location,

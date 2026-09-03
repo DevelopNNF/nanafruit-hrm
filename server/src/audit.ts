@@ -47,6 +47,8 @@ export type AuditAction =
   | 'location.create'
   | 'location.update'
   | 'attendance.import'
+  | 'attendance.confirm_punch'
+  | 'attendance.unconfirm_punch'
   | 'time_correction.create'
   | 'time_correction.supervisor_approve'
   | 'time_correction.approve'

@@ -38,7 +38,7 @@ type Queryable = Pick<pg.Pool, 'query'>
 /** Combines a work-date with a shift's wall-clock time into a real instant,
  *  in Thailand's fixed UTC+7 (no DST) — same standing assumption as
  *  toThailandDateString. */
-function thailandDateTime(dateStr: string, timeStr: string): Date {
+export function thailandDateTime(dateStr: string, timeStr: string): Date {
   return new Date(`${dateStr}T${timeStr}+07:00`)
 }
 

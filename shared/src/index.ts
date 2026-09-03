@@ -2143,6 +2143,18 @@ export type AttendanceDailyItem = {
   /** ISO 8601. The matched punches, or null where none was found. */
   actualCheckInAt: string | null
   actualCheckOutAt: string | null
+  /** attendance_events.id backing actualCheckInAt/actualCheckOutAt, or null
+   *  where none was found. Needed by the "confirm a punch as this day's real
+   *  time" admin action (POST .../confirm-punch) to know which raw event
+   *  underlies each side. */
+  actualCheckInEventId: number | null
+  actualCheckOutEventId: number | null
+  /** True when the underlying event's confirmed_work_date was set by hand
+   *  (see findCandidatePunches/confirm-punch) rather than found by ordinary
+   *  buffer matching. False (never null) when there's no matched punch on
+   *  that side at all. */
+  actualCheckInConfirmed: boolean
+  actualCheckOutConfirmed: boolean
   /** Minutes past the time they were due in. 0 when within the shift's grace
    *  period — grace decides whether lateness counts, not how much of it. */
   lateMinutes: number
@@ -2203,6 +2215,34 @@ export type AttendanceDailyListResponse = {
   page: number
   pageSize: number
 }
+
+/** One attendance_events row available to attach as a work-date's real
+ *  check-in/out — either never matched to any day at all (a genuine orphan,
+ *  e.g. unapproved OT that ran past MATCH_BUFFER_MINUTES) or already
+ *  confirmed to this exact date. See findCandidatePunches. */
+export type AttendanceCandidatePunch = {
+  id: number
+  eventType: AttendanceEventType
+  /** ISO 8601. */
+  eventTime: string
+  source: string
+  /** The work-date (YYYY-MM-DD) this punch currently serves as an ordinary
+   *  buffer-matched check-in/out, other than the date being asked about —
+   *  null when nothing currently uses it. Confirming a candidate with this
+   *  set moves the punch off that date, which the confirm-punch endpoint
+   *  always recomputes alongside this one. */
+  claimedByWorkDate: string | null
+}
+
+/** GET /api/attendance/daily/:employeeId/:workDate/candidate-punches */
+export type AttendanceCandidatePunchesResponse = { candidates: AttendanceCandidatePunch[] }
+
+/** POST /api/attendance/daily/:employeeId/:workDate/confirm-punch.
+ *  `eventId: null` clears the day's manual confirmation, reverting it to
+ *  ordinary buffer matching. */
+export type ConfirmAttendancePunchRequest = { eventId: number | null }
+
+export type ConfirmAttendancePunchResponse = { day: AttendanceDailyItem }
 
 /** 'X ชม.' or 'X ชม. Y นาที' — shared by the shift master forms and the
  *  attendance report/export, both of which turn a minute count into the same
