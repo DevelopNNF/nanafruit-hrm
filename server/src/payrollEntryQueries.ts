@@ -70,6 +70,7 @@ export type PayrollEntryRow = {
   net_pay: string
   needs_review: boolean
   review_reasons: PayrollEntryReviewReason[]
+  reviewed_at: string | null
   calculated_at: string
 }
 
@@ -80,7 +81,7 @@ export const SELECT_PAYROLL_ENTRY = `
          pe.late_minutes_total, pe.late_minutes_deducted,
          pe.early_leave_minutes_total, pe.early_leave_minutes_deducted,
          pe.gross_earnings, pe.total_deductions, pe.net_pay, pe.needs_review, pe.review_reasons,
-         pe.calculated_at
+         pe.reviewed_at, pe.calculated_at
   FROM payroll_entries pe
   LEFT JOIN employees e ON e.id = pe.employee_id
 `
@@ -108,6 +109,7 @@ function rowToPayrollEntry(row: PayrollEntryRow): PayrollEntry {
     netPay: Number(row.net_pay),
     needsReview: row.needs_review,
     reviewReasons: row.review_reasons,
+    reviewedAt: row.reviewed_at === null ? null : new Date(row.reviewed_at).toISOString(),
     calculatedAt: new Date(row.calculated_at).toISOString(),
   }
 }
@@ -167,6 +169,73 @@ export async function findPayrollEntryById(
   )
 
   return { ...rowToPayrollEntry(row), lines: lineRows.map(rowToPayrollEntryLine) }
+}
+
+export type SetReviewedResult =
+  | { kind: 'not_found' }
+  | { kind: 'conflict'; message: string }
+  | { kind: 'ok' }
+
+/**
+ * Marks (or unmarks) one entry as looked-at by HR, ahead of approving the
+ * whole period. Only legal while the period is 'review' — before that there
+ * is nothing frozen yet to review, and once approved the review step is over.
+ *
+ * Also only legal when needs_review is true: an entry the system did not
+ * flag has nothing HR needs to individually confirm, so there is deliberately
+ * no way to check one that calculatePayrollEntries considers unremarkable —
+ * the review step scales with what actually needs a look, not headcount.
+ *
+ * Must run inside a transaction the caller controls, same reasoning as
+ * calculatePayrollEntries: the FOR UPDATE lock and the write have to commit
+ * or roll back together.
+ */
+export async function setEntryReviewed(
+  entryId: number,
+  reviewed: boolean,
+  actor: AuthUser,
+  client: Client
+): Promise<SetReviewedResult> {
+  const { rows } = await client.query<{
+    payroll_period_id: string
+    status: string
+    needs_review: boolean
+  }>(
+    `SELECT pe.payroll_period_id, pp.status, pe.needs_review
+     FROM payroll_entries pe
+     JOIN payroll_periods pp ON pp.id = pe.payroll_period_id
+     WHERE pe.id = $1
+     FOR UPDATE OF pe`,
+    [entryId]
+  )
+  const row = rows[0]
+  if (!row) return { kind: 'not_found' }
+  if (row.status !== 'review') {
+    return {
+      kind: 'conflict',
+      message: 'ทำเครื่องหมายตรวจสอบได้เฉพาะตอนงวดอยู่ในขั้นตอนตรวจสอบเท่านั้น',
+    }
+  }
+  if (!row.needs_review) {
+    return {
+      kind: 'conflict',
+      message: 'รายการนี้ไม่ได้ถูกระบบตีเป็นรายการที่ต้องตรวจสอบ',
+    }
+  }
+
+  await client.query(
+    `UPDATE payroll_entries SET reviewed_at = $2, updated_at = now() WHERE id = $1`,
+    [entryId, reviewed ? new Date() : null]
+  )
+
+  await recordAudit(client, {
+    actor,
+    action: reviewed ? 'payroll_entry.review' : 'payroll_entry.unreview',
+    entityId: entryId,
+    detail: { payrollPeriodId: Number(row.payroll_period_id) },
+  })
+
+  return { kind: 'ok' }
 }
 
 /* Calculating ----------------------------------------------------------------

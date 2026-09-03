@@ -73,3 +73,51 @@ export async function voidPayrollPeriod(id: number, voidReason: string): Promise
   const body = await unwrap<PayrollPeriodResponse>(res)
   return body.payrollPeriod
 }
+
+/** POST /api/payroll-periods/:id/submit-for-review — 'calculating' only.
+ *  Freezes the entries: calculate refuses to run again past this point. */
+export async function submitPayrollPeriodForReview(id: number): Promise<PayrollPeriod> {
+  const res = await apiFetch(`/api/payroll-periods/${id}/submit-for-review`, {
+    method: 'POST',
+    headers: jsonHeaders,
+  })
+  const body = await unwrap<PayrollPeriodResponse>(res)
+  return body.payrollPeriod
+}
+
+/** POST /api/payroll-periods/:id/reopen — 'review' back to 'draft', so
+ *  calculate is legal again after fixing something HR found while checking. */
+export async function reopenPayrollPeriod(id: number): Promise<PayrollPeriod> {
+  const res = await apiFetch(`/api/payroll-periods/${id}/reopen`, {
+    method: 'POST',
+    headers: jsonHeaders,
+  })
+  const body = await unwrap<PayrollPeriodResponse>(res)
+  return body.payrollPeriod
+}
+
+/** POST /api/payroll-periods/:id/approve — 'review' to 'approved'. Blocked
+ *  server-side if any entry is still unreviewed unless acknowledgeUnreviewed
+ *  is sent; the caller shows a warning and resends with it true to proceed. */
+export async function approvePayrollPeriod(
+  id: number,
+  acknowledgeUnreviewed = false
+): Promise<PayrollPeriod> {
+  const res = await apiFetch(`/api/payroll-periods/${id}/approve`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({ acknowledgeUnreviewed }),
+  })
+  const body = await unwrap<PayrollPeriodResponse>(res)
+  return body.payrollPeriod
+}
+
+/** POST /api/payroll-periods/:id/unapprove — 'approved' back to 'review'. */
+export async function unapprovePayrollPeriod(id: number): Promise<PayrollPeriod> {
+  const res = await apiFetch(`/api/payroll-periods/${id}/unapprove`, {
+    method: 'POST',
+    headers: jsonHeaders,
+  })
+  const body = await unwrap<PayrollPeriodResponse>(res)
+  return body.payrollPeriod
+}

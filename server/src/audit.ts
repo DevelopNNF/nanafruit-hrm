@@ -109,6 +109,12 @@ export type AuditAction =
   | 'payroll_period.update'
   | 'payroll_period.void'
   | 'payroll_period.calculate'
+  | 'payroll_period.submit_for_review'
+  | 'payroll_period.reopen'
+  | 'payroll_period.approve'
+  | 'payroll_period.unapprove'
+  | 'payroll_entry.review'
+  | 'payroll_entry.unreview'
 
 type Entry = {
   actor: AuthUser

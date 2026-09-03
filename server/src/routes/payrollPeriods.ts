@@ -5,6 +5,7 @@ import {
   ROLES,
   type AuthUser,
   type PayrollCalculateResponse,
+  type PayrollPeriodApproveInput,
   type PayrollPeriodListResponse,
   type PayrollPeriodPreviewResponse,
   type PayrollPeriodResponse,
@@ -449,6 +450,277 @@ payrollPeriodsRouter.post(
         entryCount: result.entryCount,
         needsReviewCount: result.needsReviewCount,
       }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Freezes the entries calculate built: past this point calculate refuses to
+// run again (it only accepts 'draft'/'calculating'), so nobody's numbers can
+// shift out from under whoever is reviewing them. Reopening is the way back.
+payrollPeriodsRouter.post(
+  '/payroll-periods/:id/submit-for-review',
+  canWritePayroll,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{ status: string }>(
+          `SELECT status FROM payroll_periods WHERE id = $1 FOR UPDATE`,
+          [id]
+        )
+        const row = rows[0]
+        if (!row) return { kind: 'not_found' as const }
+
+        const status = row.status as PayrollPeriodStatus
+        if (status !== 'calculating') {
+          return {
+            kind: 'conflict' as const,
+            message: 'ส่งตรวจสอบได้เฉพาะงวดที่คำนวณแล้วเท่านั้น',
+          }
+        }
+
+        await client.query(
+          `UPDATE payroll_periods SET status = 'review', updated_at = now() WHERE id = $1`,
+          [id]
+        )
+
+        await recordAudit(client, {
+          actor,
+          action: 'payroll_period.submit_for_review',
+          entityId: id,
+          detail: { from: status },
+        })
+
+        const { rows: readBack } = await client.query<PayrollPeriodRow>(
+          `${SELECT_PAYROLL_PERIOD} WHERE p.id = $1`,
+          [id]
+        )
+        const updated = readBack[0]
+        if (!updated) throw new Error('payroll period vanished inside its own transaction')
+        return { kind: 'ok' as const, payrollPeriod: rowToPayrollPeriod(updated) }
+      })
+
+      if (result.kind === 'not_found') return fail(res, 404, `no payroll period with id ${id}`)
+      if (result.kind === 'conflict') return fail(res, 409, result.message)
+
+      const body: PayrollPeriodResponse = { payrollPeriod: result.payrollPeriod }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// The way back out of review to fix something: HR found a problem while
+// checking entries, so this drops the period to 'draft', where calculate is
+// legal again. It does not touch payroll_entries — the next calculate call
+// deletes and reinserts them anyway, which also clears every reviewed_at.
+payrollPeriodsRouter.post(
+  '/payroll-periods/:id/reopen',
+  canWritePayroll,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{ status: string }>(
+          `SELECT status FROM payroll_periods WHERE id = $1 FOR UPDATE`,
+          [id]
+        )
+        const row = rows[0]
+        if (!row) return { kind: 'not_found' as const }
+
+        const status = row.status as PayrollPeriodStatus
+        if (status !== 'review') {
+          return {
+            kind: 'conflict' as const,
+            message: 'เปิดกลับไปแก้ไขได้เฉพาะงวดที่อยู่ในขั้นตอนตรวจสอบเท่านั้น',
+          }
+        }
+
+        await client.query(
+          `UPDATE payroll_periods SET status = 'draft', updated_at = now() WHERE id = $1`,
+          [id]
+        )
+
+        await recordAudit(client, {
+          actor,
+          action: 'payroll_period.reopen',
+          entityId: id,
+          detail: { from: status },
+        })
+
+        const { rows: readBack } = await client.query<PayrollPeriodRow>(
+          `${SELECT_PAYROLL_PERIOD} WHERE p.id = $1`,
+          [id]
+        )
+        const updated = readBack[0]
+        if (!updated) throw new Error('payroll period vanished inside its own transaction')
+        return { kind: 'ok' as const, payrollPeriod: rowToPayrollPeriod(updated) }
+      })
+
+      if (result.kind === 'not_found') return fail(res, 404, `no payroll period with id ${id}`)
+      if (result.kind === 'conflict') return fail(res, 409, result.message)
+
+      const body: PayrollPeriodResponse = { payrollPeriod: result.payrollPeriod }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// The sign-off. Blocked while any needs_review entry still has
+// reviewed_at === null unless the caller explicitly says to proceed anyway —
+// acknowledgeUnreviewed is checked server-side, not just disabled in the UI,
+// because this is the step that says "pay these people" and a direct API
+// call must not skip it. Entries the system did not flag never enter this
+// count at all, matching setEntryReviewed's own needs_review guard.
+payrollPeriodsRouter.post(
+  '/payroll-periods/:id/approve',
+  canWritePayroll,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    const raw = (
+      typeof req.body === 'object' && req.body !== null ? req.body : {}
+    ) as PayrollPeriodApproveInput
+    const acknowledgeUnreviewed = raw.acknowledgeUnreviewed === true
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{ status: string }>(
+          `SELECT status FROM payroll_periods WHERE id = $1 FOR UPDATE`,
+          [id]
+        )
+        const row = rows[0]
+        if (!row) return { kind: 'not_found' as const }
+
+        const status = row.status as PayrollPeriodStatus
+        if (status !== 'review') {
+          return {
+            kind: 'conflict' as const,
+            message: 'อนุมัติได้เฉพาะงวดที่อยู่ในขั้นตอนตรวจสอบเท่านั้น',
+          }
+        }
+
+        const { rows: countRows } = await client.query<{ count: string }>(
+          `SELECT count(*) FROM payroll_entries
+           WHERE payroll_period_id = $1 AND needs_review AND reviewed_at IS NULL`,
+          [id]
+        )
+        const unreviewedCount = Number(countRows[0]?.count ?? 0)
+        if (unreviewedCount > 0 && !acknowledgeUnreviewed) {
+          return {
+            kind: 'conflict' as const,
+            message: `ยังมี ${unreviewedCount} คนที่ยังไม่ได้ทำเครื่องหมายว่าตรวจสอบแล้ว`,
+          }
+        }
+
+        await client.query(
+          `UPDATE payroll_periods SET status = 'approved', updated_at = now() WHERE id = $1`,
+          [id]
+        )
+
+        await recordAudit(client, {
+          actor,
+          action: 'payroll_period.approve',
+          entityId: id,
+          detail: unreviewedCount > 0 ? { approvedWithUnreviewed: unreviewedCount } : {},
+        })
+
+        const { rows: readBack } = await client.query<PayrollPeriodRow>(
+          `${SELECT_PAYROLL_PERIOD} WHERE p.id = $1`,
+          [id]
+        )
+        const updated = readBack[0]
+        if (!updated) throw new Error('payroll period vanished inside its own transaction')
+        return { kind: 'ok' as const, payrollPeriod: rowToPayrollPeriod(updated) }
+      })
+
+      if (result.kind === 'not_found') return fail(res, 404, `no payroll period with id ${id}`)
+      if (result.kind === 'conflict') return fail(res, 409, result.message)
+
+      const body: PayrollPeriodResponse = { payrollPeriod: result.payrollPeriod }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// Undoes an approval before Phase 8's payment file ever turns it into 'paid'
+// — HR spotted a problem after signing off. Drops back to 'review'; every
+// entry keeps whatever reviewed_at it already had, since the numbers behind
+// it have not changed.
+payrollPeriodsRouter.post(
+  '/payroll-periods/:id/unapprove',
+  canWritePayroll,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{ status: string }>(
+          `SELECT status FROM payroll_periods WHERE id = $1 FOR UPDATE`,
+          [id]
+        )
+        const row = rows[0]
+        if (!row) return { kind: 'not_found' as const }
+
+        const status = row.status as PayrollPeriodStatus
+        if (status !== 'approved') {
+          return {
+            kind: 'conflict' as const,
+            message: 'ถอนการอนุมัติได้เฉพาะงวดที่อนุมัติแล้วเท่านั้น',
+          }
+        }
+
+        await client.query(
+          `UPDATE payroll_periods SET status = 'review', updated_at = now() WHERE id = $1`,
+          [id]
+        )
+
+        await recordAudit(client, {
+          actor,
+          action: 'payroll_period.unapprove',
+          entityId: id,
+          detail: { from: status },
+        })
+
+        const { rows: readBack } = await client.query<PayrollPeriodRow>(
+          `${SELECT_PAYROLL_PERIOD} WHERE p.id = $1`,
+          [id]
+        )
+        const updated = readBack[0]
+        if (!updated) throw new Error('payroll period vanished inside its own transaction')
+        return { kind: 'ok' as const, payrollPeriod: rowToPayrollPeriod(updated) }
+      })
+
+      if (result.kind === 'not_found') return fail(res, 404, `no payroll period with id ${id}`)
+      if (result.kind === 'conflict') return fail(res, 409, result.message)
+
+      const body: PayrollPeriodResponse = { payrollPeriod: result.payrollPeriod }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)

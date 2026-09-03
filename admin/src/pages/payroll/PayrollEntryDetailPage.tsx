@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, TriangleAlert } from 'lucide-react'
-import type { PayrollEntryReviewReason, PayrollEntryWithLines } from '@hrm/shared'
-import { getPayrollEntry } from '../../api/payrollEntries'
+import type { PayrollEntryReviewReason, PayrollEntryWithLines, PayrollPeriod } from '@hrm/shared'
+import { getPayrollEntry, reviewPayrollEntry } from '../../api/payrollEntries'
+import { getPayrollPeriod } from '../../api/payrollPeriods'
+import { useCanWritePayroll } from '../../auth/meContext'
 import { PAYROLL_ENTRY_REVIEW_REASON_LABELS, formatThaiDate } from '../../components/payrollLabels'
+import { notify } from '../../notifications/notify'
 import { alert, alertDetail, alertTitle, badge, card, eyebrow, muted, pageHead, subtitle } from '../../styles'
 
 const sectionTitle =
@@ -26,10 +29,16 @@ type State =
   | { phase: 'error'; message: string }
 
 /**
- * The payslip for one employee, one period. Read-only: a payroll_entries row
- * is written exclusively by POST /payroll-periods/:id/calculate, so there is
- * nothing here to edit — correcting a figure means fixing what it derives
- * from (attendance, a wage assignment, a leave request) and recalculating.
+ * The payslip for one employee, one period. Every figure is read-only — a
+ * payroll_entries row is written exclusively by POST
+ * /payroll-periods/:id/calculate, so correcting one means fixing what it
+ * derives from (attendance, a wage assignment, a leave request) and
+ * recalculating. reviewedAt is the one exception: a checkbox here, not a
+ * derived figure, for HR to confirm they looked at this specific payslip on
+ * the way to approving the whole period. Shown only when needsReview is
+ * true — an entry nobody flagged has nothing to individually confirm — and
+ * only editable while the period is 'review'. The server enforces both
+ * rules too, this is just the UI reflecting them.
  *
  * Shows late/early minutes as both the full amount and the amount actually
  * deducted, per the phase plan: "สาย 6 นาที" on the attendance report and
@@ -38,18 +47,53 @@ type State =
 export function PayrollEntryDetailPage() {
   const params = useParams()
   const id = Number(params['id'])
+  const canWrite = useCanWritePayroll()
   const [state, setState] = useState<State>({ phase: 'loading' })
+  const [periodId, setPeriodId] = useState<number | null>(null)
+  const [period, setPeriod] = useState<PayrollPeriod | null>(null)
+  const [reviewSaving, setReviewSaving] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
     getPayrollEntry(id, controller.signal)
-      .then((entry) => setState({ phase: 'ok', entry }))
+      .then((entry) => {
+        setState({ phase: 'ok', entry })
+        setPeriodId(entry.payrollPeriodId)
+      })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({ phase: 'error', message: err instanceof Error ? err.message : 'request failed' })
       })
     return () => controller.abort()
   }, [id])
+
+  useEffect(() => {
+    if (periodId === null) return
+    const controller = new AbortController()
+    getPayrollPeriod(periodId, controller.signal)
+      .then((loaded) => setPeriod(loaded))
+      .catch(() => {
+        // Same reasoning as PayrollPeriodFormPage's secondary loads: the
+        // checkbox just stays disabled if this fails, the payslip itself
+        // still rendered fine.
+      })
+    return () => controller.abort()
+  }, [periodId])
+
+  async function handleReviewToggle(reviewed: boolean) {
+    setReviewSaving(true)
+    try {
+      const updated = await reviewPayrollEntry(id, reviewed)
+      setState({ phase: 'ok', entry: updated })
+    } catch (err) {
+      notify.error(
+        reviewed ? 'ทำเครื่องหมายตรวจสอบไม่สำเร็จ' : 'ยกเลิกเครื่องหมายตรวจสอบไม่สำเร็จ',
+        err instanceof Error ? err.message : undefined
+      )
+    } finally {
+      setReviewSaving(false)
+    }
+  }
 
   if (state.phase === 'loading') return <p className={muted}>กำลังโหลด…</p>
 
@@ -65,6 +109,7 @@ export function PayrollEntryDetailPage() {
   const entry = state.entry
   const incomeLines = entry.lines.filter((l) => l.itemType === 'income')
   const deductionLines = entry.lines.filter((l) => l.itemType !== 'income')
+  const reviewEditable = canWrite && period?.status === 'review'
 
   return (
     <>
@@ -86,6 +131,32 @@ export function PayrollEntryDetailPage() {
         </div>
         {entry.needsReview && <span className={badge('danger')}>ต้องตรวจสอบ</span>}
       </header>
+
+      {/* Only entries the system flagged (needsReview) carry this checkbox —
+          one nobody flagged has nothing for HR to individually confirm, so
+          there is nothing to check here for it. Server enforces the same
+          rule in setEntryReviewed. */}
+      {entry.needsReview && (
+        <label
+          className={`${card} mb-4 flex max-w-3xl items-center gap-2.5 text-sm ${
+            reviewEditable ? '' : 'opacity-75'
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={entry.reviewedAt !== null}
+            disabled={!reviewEditable || reviewSaving}
+            onChange={(e) => void handleReviewToggle(e.target.checked)}
+          />
+          <span className="font-medium text-slate-900">ตรวจสอบแล้ว</span>
+          {entry.reviewedAt !== null && (
+            <span className={muted}>เมื่อ {new Date(entry.reviewedAt).toLocaleString('th-TH')}</span>
+          )}
+          {!reviewEditable && entry.reviewedAt === null && period && period.status !== 'review' && (
+            <span className={muted}>ทำเครื่องหมายได้เฉพาะตอนงวดอยู่ในขั้นตอนตรวจสอบ</span>
+          )}
+        </label>
+      )}
 
       {entry.needsReview && (
         <div className={alert('danger')}>

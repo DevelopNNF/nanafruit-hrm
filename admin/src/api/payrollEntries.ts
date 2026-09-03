@@ -32,3 +32,18 @@ export async function calculatePayrollPeriod(
   })
   return unwrap<PayrollCalculateResponse>(res)
 }
+
+/** PATCH /api/payroll-entries/:id/review — only legal while the entry's
+ *  period is 'review'; the server rejects it otherwise. */
+export async function reviewPayrollEntry(
+  id: number,
+  reviewed: boolean
+): Promise<PayrollEntryWithLines> {
+  const res = await apiFetch(`/api/payroll-entries/${id}/review`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify({ reviewed }),
+  })
+  const body = await unwrap<PayrollEntryResponse>(res)
+  return body.payrollEntry
+}

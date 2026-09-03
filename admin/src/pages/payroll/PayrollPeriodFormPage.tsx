@@ -4,9 +4,13 @@ import { ArrowLeft, Calculator } from 'lucide-react'
 import type { PayrollEntry, PayrollGroup, PayrollPeriod } from '@hrm/shared'
 import { listPayrollGroups } from '../../api/payrollGroups'
 import {
+  approvePayrollPeriod,
   createPayrollPeriod,
   getPayrollPeriod,
   previewPayrollPeriod,
+  reopenPayrollPeriod,
+  submitPayrollPeriodForReview,
+  unapprovePayrollPeriod,
   updatePayrollPeriod,
   voidPayrollPeriod,
 } from '../../api/payrollPeriods'
@@ -101,6 +105,8 @@ export function PayrollPeriodFormPage() {
   const [entriesLoading, setEntriesLoading] = useState(!isNew)
   const [calculating, setCalculating] = useState(false)
   const [needsReviewOnly, setNeedsReviewOnly] = useState(false)
+  const [transitioning, setTransitioning] = useState(false)
+  const [approveOpen, setApproveOpen] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -242,6 +248,77 @@ export function PayrollPeriodFormPage() {
     }
   }
 
+  async function handleSubmitForReview() {
+    if (id === null) return
+    setTransitioning(true)
+    try {
+      const updated = await submitPayrollPeriodForReview(id)
+      setPeriod(updated)
+      notify.success('ส่งตรวจสอบแล้ว')
+    } catch (err) {
+      notify.error('ส่งตรวจสอบไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setTransitioning(false)
+    }
+  }
+
+  async function handleReopen() {
+    if (id === null) return
+    setTransitioning(true)
+    try {
+      const updated = await reopenPayrollPeriod(id)
+      setPeriod(updated)
+      notify.success('เปิดกลับไปแก้ไขแล้ว')
+    } catch (err) {
+      notify.error('เปิดกลับไปแก้ไขไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setTransitioning(false)
+    }
+  }
+
+  async function handleApprove(acknowledgeUnreviewed: boolean) {
+    if (id === null) return
+    setTransitioning(true)
+    try {
+      const updated = await approvePayrollPeriod(id, acknowledgeUnreviewed)
+      setPeriod(updated)
+      setApproveOpen(false)
+      notify.success('อนุมัติงวดแล้ว')
+    } catch (err) {
+      notify.error('อนุมัติงวดไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setTransitioning(false)
+    }
+  }
+
+  /** Approves directly when every flagged entry is already reviewed
+   *  (entries the system never flagged need no confirmation at all);
+   *  otherwise opens the warning section below instead of calling the server
+   *  blind — the server would refuse anyway without acknowledgeUnreviewed,
+   *  but showing the count before asking for confirmation is the whole
+   *  point. */
+  function handleApproveClick() {
+    if (entries.some((entry) => entry.needsReview && entry.reviewedAt === null)) {
+      setApproveOpen(true)
+      return
+    }
+    void handleApprove(false)
+  }
+
+  async function handleUnapprove() {
+    if (id === null) return
+    setTransitioning(true)
+    try {
+      const updated = await unapprovePayrollPeriod(id)
+      setPeriod(updated)
+      notify.success('ถอนการอนุมัติแล้ว')
+    } catch (err) {
+      notify.error('ถอนการอนุมัติไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setTransitioning(false)
+    }
+  }
+
   if (isNew && !canWrite) return <Navigate to="/payroll/periods" replace />
   if (loading) return <p className={muted}>กำลังโหลด…</p>
 
@@ -250,6 +327,8 @@ export function PayrollPeriodFormPage() {
   const dayCount =
     draft.periodStart && draft.periodEnd ? windowDayCount(draft.periodStart, draft.periodEnd) : null
   const visibleEntries = needsReviewOnly ? entries.filter((entry) => entry.needsReview) : entries
+  const flaggedEntries = entries.filter((entry) => entry.needsReview)
+  const unreviewedCount = flaggedEntries.filter((entry) => entry.reviewedAt === null).length
   const totals = visibleEntries.reduce(
     (sum, entry) => ({
       grossEarnings: sum.grossEarnings + entry.grossEarnings,
@@ -440,6 +519,48 @@ export function PayrollPeriodFormPage() {
               {'ยกเลิก'}
             </button>
           )}
+          {/* Freezes the entries calculate built — past this point calculate
+              refuses to run again until someone reopens the period. */}
+          {canWrite && !isNew && status === 'calculating' && (
+            <button
+              className={button('primary')}
+              type="button"
+              onClick={() => void handleSubmitForReview()}
+              disabled={transitioning}
+            >
+              ส่งตรวจสอบ
+            </button>
+          )}
+          {canWrite && !isNew && status === 'review' && (
+            <>
+              <button
+                className={button()}
+                type="button"
+                onClick={() => void handleReopen()}
+                disabled={transitioning}
+              >
+                เปิดกลับไปแก้ไข
+              </button>
+              <button
+                className={button('primary')}
+                type="button"
+                onClick={handleApproveClick}
+                disabled={transitioning}
+              >
+                อนุมัติงวด
+              </button>
+            </>
+          )}
+          {canWrite && !isNew && status === 'approved' && (
+            <button
+              className={button()}
+              type="button"
+              onClick={() => void handleUnapprove()}
+              disabled={transitioning}
+            >
+              ถอนการอนุมัติ
+            </button>
+          )}
           {/* Void, not delete: the row stays and stops blocking its month. */}
           {canWrite && !isNew && (status === 'draft' || status === 'review' || status === 'approved') && (
             <button
@@ -453,6 +574,38 @@ export function PayrollPeriodFormPage() {
           )}
         </div>
       </form>
+
+      {approveOpen && (
+        <section className={`${card} mt-4 max-w-3xl`}>
+          <h2 className={sectionTitle}>ยืนยันอนุมัติงวด</h2>
+          <div className={alert('danger')}>
+            <p className={alertTitle('danger')}>
+              ยังมี {unreviewedCount} คนที่ยังไม่ได้ทำเครื่องหมายว่าตรวจสอบแล้ว
+            </p>
+            <p className={muted}>
+              เข้าไปตรวจสอบทีละคนได้จากรายชื่อด้านล่าง หรือยืนยันเพื่ออนุมัติงวดต่อโดยไม่ตรวจสอบให้ครบก็ได้
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2.5">
+            <button
+              className={button('danger')}
+              type="button"
+              disabled={transitioning}
+              onClick={() => void handleApprove(true)}
+            >
+              ยืนยันอนุมัติทั้งที่ยังตรวจไม่ครบ
+            </button>
+            <button
+              className={button()}
+              type="button"
+              disabled={transitioning}
+              onClick={() => setApproveOpen(false)}
+            >
+              ยกเลิก
+            </button>
+          </div>
+        </section>
+      )}
 
       {voidOpen && (
         <section className={`${card} mt-4 max-w-3xl`}>
@@ -513,14 +666,21 @@ export function PayrollPeriodFormPage() {
 
           {!entriesLoading && entries.length > 0 && (
             <>
-              <label className="mb-3 flex items-center gap-2 text-xs font-medium text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={needsReviewOnly}
-                  onChange={(e) => setNeedsReviewOnly(e.target.checked)}
-                />
-                แสดงเฉพาะรายการที่ต้องตรวจสอบ
-              </label>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={needsReviewOnly}
+                    onChange={(e) => setNeedsReviewOnly(e.target.checked)}
+                  />
+                  แสดงเฉพาะรายการที่ต้องตรวจสอบ
+                </label>
+                {flaggedEntries.length > 0 && (
+                  <span className={muted}>
+                    ตรวจสอบแล้ว {flaggedEntries.length - unreviewedCount} / {flaggedEntries.length} คน
+                  </span>
+                )}
+              </div>
 
               {visibleEntries.length === 0 ? (
                 <p className={muted}>ไม่มีรายการที่ต้องตรวจสอบ</p>
@@ -530,7 +690,17 @@ export function PayrollPeriodFormPage() {
                     <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
                       <thead>
                         <tr>
-                          {['รหัส', 'รหัสลายนิ้วมือ', 'ชื่อ', 'ประเภท', 'รับรวม', 'หักรวม', 'สุทธิ', ''].map(
+                          {[
+                            'รหัส',
+                            'รหัสลายนิ้วมือ',
+                            'ชื่อ',
+                            'ประเภท',
+                            'รับรวม',
+                            'หักรวม',
+                            'สุทธิ',
+                            'ตรวจสอบ',
+                            '',
+                          ].map(
                             (h) => (
                               <th
                                 key={h}
@@ -571,6 +741,17 @@ export function PayrollPeriodFormPage() {
                               {formatAmount(entry.netPay)}
                             </td>
                             <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
+                              {entry.needsReview ? (
+                                entry.reviewedAt !== null ? (
+                                  <span className={badge('active')}>ตรวจสอบแล้ว</span>
+                                ) : (
+                                  <span className={muted}>ยังไม่ตรวจสอบ</span>
+                                )
+                              ) : (
+                                <span className={muted}>—</span>
+                              )}
+                            </td>
+                            <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
                               {entry.needsReview && <span className={badge('danger')}>ต้องตรวจสอบ</span>}
                             </td>
                           </tr>
@@ -593,6 +774,7 @@ export function PayrollPeriodFormPage() {
                           <td className="px-4 py-2.5 align-middle text-right tabular-nums font-semibold text-slate-900">
                             {formatAmount(totals.netPay)}
                           </td>
+                          <td />
                           <td />
                         </tr>
                       </tfoot>

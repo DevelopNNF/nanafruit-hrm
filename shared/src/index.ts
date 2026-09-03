@@ -1405,6 +1405,15 @@ export type PayrollPeriodPatch = {
  *  to avoid. */
 export type PayrollPeriodVoidInput = { voidReason: string }
 
+/** Body of POST /api/payroll-periods/:id/approve. acknowledgeUnreviewed only
+ *  matters when some entries still have reviewedAt === null: omitted or
+ *  false, the server refuses with 409 and the count; true lets HR approve
+ *  anyway, which is recorded on the audit entry. */
+export type PayrollPeriodApproveInput = { acknowledgeUnreviewed?: boolean }
+
+/** Body of PATCH /api/payroll-entries/:id/review. */
+export type PayrollEntryReviewInput = { reviewed: boolean }
+
 /** GET /api/payroll-periods */
 export type PayrollPeriodListResponse = { payrollPeriods: PayrollPeriod[] }
 
@@ -1655,6 +1664,11 @@ export type PayrollEntry = {
   /** Empty when needsReview is false. See PayrollEntryReviewReason for what
    *  each code means. */
   reviewReasons: PayrollEntryReviewReason[]
+  /** Set by PATCH /payroll-entries/:id/review — a human confirming they looked
+   *  at this payslip, independent of needsReview (which the system decides on
+   *  its own). Cleared back to null by the next recalculation, since a
+   *  recalculated entry needs a fresh look. */
+  reviewedAt: string | null
   calculatedAt: string
 }
 
