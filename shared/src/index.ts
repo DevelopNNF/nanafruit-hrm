@@ -1682,6 +1682,19 @@ export type PayrollEntryListResponse = { payrollEntries: PayrollEntry[] }
 /** GET /api/payroll-entries/:id */
 export type PayrollEntryResponse = { payrollEntry: PayrollEntryWithLines }
 
+/** One row of GET /api/payroll-entries/me — enough to list an employee's own
+ *  payslips (Phase 7 LIFF screen) without the full entry shape. */
+export type PayrollSlipSummary = {
+  entryId: number
+  payrollPeriodId: number
+  periodCode: string
+  payDate: string
+  netPay: number
+}
+
+/** GET /api/payroll-entries/me */
+export type PayrollSlipListResponse = { slips: PayrollSlipSummary[] }
+
 /** POST /api/payroll-periods/:id/calculate */
 export type PayrollCalculateResponse = {
   payrollPeriod: PayrollPeriod

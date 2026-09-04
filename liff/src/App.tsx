@@ -12,6 +12,7 @@ import { OffSiteRequestScreen } from './screens/OffSiteRequestScreen'
 import { ProfileScreen } from './screens/ProfileScreen'
 import { CalendarScreen } from './screens/CalendarScreen'
 import { ApprovalInboxScreen } from './screens/ApprovalInboxScreen'
+import { PayslipScreen } from './screens/PayslipScreen'
 import './App.css'
 
 type Props = {
@@ -57,6 +58,7 @@ function EmployeeHome({ employee, isSupervisor }: { employee: Employee; isSuperv
   if (screen === 'profile') return <ProfileScreen employee={employee} onBack={back} />
   if (screen === 'calendar') return <CalendarScreen onBack={back} />
   if (screen === 'approvals') return <ApprovalInboxScreen onBack={back} />
+  if (screen === 'payslip') return <PayslipScreen onBack={back} />
   return <HomeScreen employee={employee} isSupervisor={isSupervisor} onNavigate={navigate} />
 }
 

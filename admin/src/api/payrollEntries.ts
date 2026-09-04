@@ -6,7 +6,7 @@ import type {
   PayrollEntryWithLines,
   PayrollPeriod,
 } from '@hrm/shared'
-import { apiFetch, jsonHeaders, unwrap } from './client'
+import { apiFetch, ApiRequestError, jsonHeaders, unwrap } from './client'
 
 export async function listPayrollEntries(periodId: number, signal?: AbortSignal): Promise<PayrollEntry[]> {
   const res = await apiFetch(`/api/payroll-periods/${periodId}/entries`, { signal })
@@ -46,4 +46,21 @@ export async function reviewPayrollEntry(
   })
   const body = await unwrap<PayrollEntryResponse>(res)
   return body.payrollEntry
+}
+
+/** GET /api/payroll-entries/:id/pdf — no status gate on the server side, so
+ *  this works at any point in the entry's life, not just after approval. */
+export async function downloadPayrollEntryPdf(id: number): Promise<Blob> {
+  const res = await apiFetch(`/api/payroll-entries/${id}/pdf`)
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const body = (await res.json()) as { message?: string }
+      if (body.message) message = body.message
+    } catch {
+      // Non-JSON error body — the status is all we have.
+    }
+    throw new ApiRequestError(message)
+  }
+  return res.blob()
 }

@@ -21,6 +21,7 @@ export type SubScreen =
   | 'profile'
   | 'calendar'
   | 'approvals'
+  | 'payslip'
 
 type Tile = {
   screen: SubScreen
@@ -29,6 +30,7 @@ type Tile = {
 }
 
 const TILES: Tile[] = [
+  { screen: 'payslip', label: 'สลิปเงินเดือน', en: 'Payslip' },
   { screen: 'leave', label: 'ลา', en: 'Leave' },
   { screen: 'correction', label: 'แก้ไขเวลา', en: 'TimeCorrection' },
   { screen: 'shiftChange', label: 'ขอเปลี่ยนกะ', en: 'ShiftChange' },

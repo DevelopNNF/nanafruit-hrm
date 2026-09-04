@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, Download, TriangleAlert } from 'lucide-react'
 import type { PayrollEntryReviewReason, PayrollEntryWithLines, PayrollPeriod } from '@hrm/shared'
-import { getPayrollEntry, reviewPayrollEntry } from '../../api/payrollEntries'
+import { downloadPayrollEntryPdf, getPayrollEntry, reviewPayrollEntry } from '../../api/payrollEntries'
 import { getPayrollPeriod } from '../../api/payrollPeriods'
 import { useCanWritePayroll } from '../../auth/meContext'
 import { PAYROLL_ENTRY_REVIEW_REASON_LABELS, formatThaiDate } from '../../components/payrollLabels'
 import { notify } from '../../notifications/notify'
-import { alert, alertDetail, alertTitle, badge, card, eyebrow, muted, pageHead, subtitle } from '../../styles'
+import { alert, alertDetail, alertTitle, badge, button, card, eyebrow, muted, pageHead, subtitle } from '../../styles'
 
 const sectionTitle =
   'mb-5 border-b border-slate-200 pb-3 text-xs font-bold tracking-wider text-slate-500 uppercase'
@@ -52,6 +52,7 @@ export function PayrollEntryDetailPage() {
   const [periodId, setPeriodId] = useState<number | null>(null)
   const [period, setPeriod] = useState<PayrollPeriod | null>(null)
   const [reviewSaving, setReviewSaving] = useState(false)
+  const [downloading, setDownloading] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -79,6 +80,23 @@ export function PayrollEntryDetailPage() {
       })
     return () => controller.abort()
   }, [periodId])
+
+  async function handleDownloadPdf() {
+    setDownloading(true)
+    try {
+      const blob = await downloadPayrollEntryPdf(id)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = state.phase === 'ok' ? `payslip-${state.entry.employeeCode}.pdf` : `payslip-${id}.pdf`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      notify.error('ดาวน์โหลดสลิปไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   async function handleReviewToggle(reviewed: boolean) {
     setReviewSaving(true)
@@ -129,7 +147,18 @@ export function PayrollEntryDetailPage() {
             {entry.employeeCode} · {WAGE_TYPE_LABEL[entry.wageType]}
           </p>
         </div>
-        {entry.needsReview && <span className={badge('danger')}>ต้องตรวจสอบ</span>}
+        <div className="flex items-center gap-2.5">
+          {entry.needsReview && <span className={badge('danger')}>ต้องตรวจสอบ</span>}
+          <button
+            className={button()}
+            type="button"
+            disabled={downloading}
+            onClick={() => void handleDownloadPdf()}
+          >
+            <Download size={16} />
+            {downloading ? 'กำลังสร้าง…' : 'ดาวน์โหลดสลิป PDF'}
+          </button>
+        </div>
       </header>
 
       {/* Only entries the system flagged (needsReview) carry this checkbox —

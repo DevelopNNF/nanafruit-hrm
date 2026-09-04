@@ -115,6 +115,7 @@ export type AuditAction =
   | 'payroll_period.unapprove'
   | 'payroll_entry.review'
   | 'payroll_entry.unreview'
+  | 'payroll_entry.download_pdf'
 
 type Entry = {
   actor: AuthUser
