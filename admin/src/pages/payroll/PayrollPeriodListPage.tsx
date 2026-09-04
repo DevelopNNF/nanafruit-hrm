@@ -10,6 +10,7 @@ import {
 import { listPayrollGroups } from '../../api/payrollGroups'
 import { listPayrollPeriods } from '../../api/payrollPeriods'
 import { useCanWritePayroll } from '../../auth/meContext'
+import { formatBaht } from '../../overtimeFormat'
 import {
   PAYROLL_PERIOD_STATUS_LABELS,
   formatThaiDate,
@@ -161,14 +162,18 @@ export function PayrollPeriodListPage() {
             <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
               <thead>
                 <tr>
-                  {['งวด', 'กลุ่ม', 'ช่วงเวลา', 'จำนวนวัน', 'วันจ่าย', 'สถานะ'].map((h) => (
-                    <th
-                      key={h}
-                      className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
-                    >
-                      {h}
-                    </th>
-                  ))}
+                  {['งวด', 'กลุ่ม', 'ช่วงเวลา', 'จำนวนวัน', 'วันจ่าย', 'ยอดสุทธิ', 'สถานะ'].map(
+                    (h) => (
+                      <th
+                        key={h}
+                        className={`border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap ${
+                          h === 'ยอดสุทธิ' ? 'text-right' : 'text-left'
+                        }`}
+                      >
+                        {h}
+                      </th>
+                    )
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -194,6 +199,9 @@ export function PayrollPeriodListPage() {
                     </td>
                     <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
                       {formatThaiDate(period.payDate)}
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-right whitespace-nowrap font-medium text-slate-900 tabular-nums">
+                      {formatBaht(period.netTotal)}
                     </td>
                     <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
                       <span className={badge(statusTone(period.status))}>

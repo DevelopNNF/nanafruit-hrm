@@ -1375,6 +1375,8 @@ export type PayrollPeriod = {
   voidedAt: string | null
   voidReason: string | null
   createdAt: string
+  /** SUM(payroll_entries.net_pay) for this period, 0 before calculate has run. */
+  netTotal: number
 }
 
 /** Body of POST /api/payroll-periods. The window is optional: send just the

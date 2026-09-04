@@ -126,7 +126,7 @@ export async function renderPayslipPdf(data: PayslipData, generatedByLabel: stri
         { width: colWidth }
       )
     }
-    doc.text(`วันลาแบบมีเงิน: ${entry.paidLeaveDays ?? 0} วัน`, rightColX, doc.y, { width: colWidth })
+    // doc.text(`วันลาแบบมีเงิน: ${entry.paidLeaveDays ?? 0} วัน`, rightColX, doc.y, { width: colWidth })
 
     doc.moveDown(1)
     doc

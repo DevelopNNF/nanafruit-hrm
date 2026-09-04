@@ -26,12 +26,15 @@ export type PayrollPeriodRow = {
   voided_at: string | null
   void_reason: string | null
   created_at: string
+  net_total: string
 }
 
 export const SELECT_PAYROLL_PERIOD = `
   SELECT p.id, p.payroll_group_id, g.group_name AS payroll_group_name,
          p.period_code, p.period_start, p.period_end, p.pay_date,
-         p.status, p.note, p.closed_at, p.voided_at, p.void_reason, p.created_at
+         p.status, p.note, p.closed_at, p.voided_at, p.void_reason, p.created_at,
+         (SELECT COALESCE(SUM(e.net_pay), 0) FROM payroll_entries e
+          WHERE e.payroll_period_id = p.id) AS net_total
   FROM payroll_periods p
   JOIN master_payroll_groups g ON g.id = p.payroll_group_id
 `
@@ -51,6 +54,7 @@ export function rowToPayrollPeriod(row: PayrollPeriodRow): PayrollPeriod {
     voidedAt: row.voided_at === null ? null : new Date(row.voided_at).toISOString(),
     voidReason: row.void_reason,
     createdAt: new Date(row.created_at).toISOString(),
+    netTotal: Number(row.net_total),
   }
 }
 
