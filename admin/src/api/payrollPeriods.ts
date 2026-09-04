@@ -122,12 +122,52 @@ export async function unapprovePayrollPeriod(id: number): Promise<PayrollPeriod>
   return body.payrollPeriod
 }
 
+/** POST /api/payroll-periods/:id/mark-paid — 'approved' to 'paid'. No route
+ *  back from here; see the server route's own comment on why. */
+export async function markPaidPayrollPeriod(id: number): Promise<PayrollPeriod> {
+  const res = await apiFetch(`/api/payroll-periods/${id}/mark-paid`, {
+    method: 'POST',
+    headers: jsonHeaders,
+  })
+  const body = await unwrap<PayrollPeriodResponse>(res)
+  return body.payrollPeriod
+}
+
+/** POST /api/payroll-periods/:id/close — 'paid' to 'closed', the terminal
+ *  status. */
+export async function closePayrollPeriod(id: number): Promise<PayrollPeriod> {
+  const res = await apiFetch(`/api/payroll-periods/${id}/close`, {
+    method: 'POST',
+    headers: jsonHeaders,
+  })
+  const body = await unwrap<PayrollPeriodResponse>(res)
+  return body.payrollPeriod
+}
+
 /** GET /api/payroll-periods/:id/export — every entry in the period as a
  *  formatted .xlsx, generated server-side from the payroll report template.
  *  Rejected with a message (not just a status code) if the period hasn't
  *  been calculated yet or was voided — see the route's own guard. */
 export async function exportPayrollPeriod(id: number, signal?: AbortSignal): Promise<Blob> {
   const res = await apiFetch(`/api/payroll-periods/${id}/export`, { signal })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const body = (await res.json()) as { message?: string }
+      if (body.message) message = body.message
+    } catch {
+      // Non-JSON error body — the status is all we have.
+    }
+    throw new ApiRequestError(message)
+  }
+  return res.blob()
+}
+
+/** GET /api/payroll-periods/:id/payment-file — who to pay and how, as a
+ *  two-sheet .xlsx (bank transfer / cash-check). Same error shape as
+ *  exportPayrollPeriod above, and available from 'approved' onward. */
+export async function downloadPayrollPaymentFile(id: number, signal?: AbortSignal): Promise<Blob> {
+  const res = await apiFetch(`/api/payroll-periods/${id}/payment-file`, { signal })
   if (!res.ok) {
     let message = `HTTP ${res.status}`
     try {

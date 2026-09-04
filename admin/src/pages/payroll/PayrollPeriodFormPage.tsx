@@ -5,9 +5,12 @@ import type { PayrollEntry, PayrollGroup, PayrollPeriod } from '@hrm/shared'
 import { listPayrollGroups } from '../../api/payrollGroups'
 import {
   approvePayrollPeriod,
+  closePayrollPeriod,
   createPayrollPeriod,
+  downloadPayrollPaymentFile,
   exportPayrollPeriod,
   getPayrollPeriod,
+  markPaidPayrollPeriod,
   previewPayrollPeriod,
   reopenPayrollPeriod,
   submitPayrollPeriodForReview,
@@ -109,6 +112,9 @@ export function PayrollPeriodFormPage() {
   const [transitioning, setTransitioning] = useState(false)
   const [approveOpen, setApproveOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [payFileExporting, setPayFileExporting] = useState(false)
+  const [payOpen, setPayOpen] = useState(false)
+  const [closeOpen, setCloseOpen] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -198,6 +204,26 @@ export function PayrollPeriodFormPage() {
       notify.error('ส่งออกไม่สำเร็จ', err instanceof Error ? err.message : undefined)
     } finally {
       setExporting(false)
+    }
+  }
+
+  /** Downloads the two-sheet payment file (bank transfer / cash-check) —
+   *  same blob-download shape as handleExport above. */
+  async function handleDownloadPaymentFile() {
+    if (id === null || period === null) return
+    setPayFileExporting(true)
+    try {
+      const blob = await downloadPayrollPaymentFile(id)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `payment-${period.periodCode}-${period.payrollGroupName}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      notify.error('ส่งออกไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setPayFileExporting(false)
     }
   }
 
@@ -342,6 +368,36 @@ export function PayrollPeriodFormPage() {
     }
   }
 
+  async function handleMarkPaid() {
+    if (id === null) return
+    setTransitioning(true)
+    try {
+      const updated = await markPaidPayrollPeriod(id)
+      setPeriod(updated)
+      setPayOpen(false)
+      notify.success('ยืนยันจ่ายเงินแล้ว')
+    } catch (err) {
+      notify.error('ยืนยันจ่ายเงินไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setTransitioning(false)
+    }
+  }
+
+  async function handleClose() {
+    if (id === null) return
+    setTransitioning(true)
+    try {
+      const updated = await closePayrollPeriod(id)
+      setPeriod(updated)
+      setCloseOpen(false)
+      notify.success('ปิดงวดแล้ว')
+    } catch (err) {
+      notify.error('ปิดงวดไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setTransitioning(false)
+    }
+  }
+
   if (isNew && !canWrite) return <Navigate to="/payroll/periods" replace />
   if (loading) return <p className={muted}>กำลังโหลด…</p>
 
@@ -380,7 +436,17 @@ export function PayrollPeriodFormPage() {
           </p>
         </div>
         {!isNew && (
-          <span className={badge(status === 'voided' ? 'danger' : status === 'draft' ? 'inactive' : 'pending')}>
+          <span
+            className={badge(
+              status === 'voided'
+                ? 'danger'
+                : status === 'draft'
+                  ? 'inactive'
+                  : status === 'paid' || status === 'closed'
+                    ? 'active'
+                    : 'pending'
+            )}
+          >
             {PAYROLL_PERIOD_STATUS_LABELS[status]}
           </span>
         )}
@@ -550,6 +616,22 @@ export function PayrollPeriodFormPage() {
                   <span className={muted}>ต้องคำนวณงวดก่อน</span>
                 )}
               </li>
+              <li className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                <span className="text-slate-700">ไฟล์จ่ายเงิน (โอน/เงินสด-เช็ค)</span>
+                {status === 'approved' || status === 'paid' || status === 'closed' ? (
+                  <button
+                    className={button()}
+                    type="button"
+                    onClick={() => void handleDownloadPaymentFile()}
+                    disabled={payFileExporting}
+                  >
+                    <Download size={16} />
+                    {payFileExporting ? 'กำลังสร้างไฟล์…' : 'ดาวน์โหลด Excel'}
+                  </button>
+                ) : (
+                  <span className={muted}>ต้องอนุมัติงวดก่อน</span>
+                )}
+              </li>
               {/* Not implemented yet — Phase 6 (see the 10-phase plan). Listed
                   here already so this card is the one place documents get
                   added to as each one ships, instead of scattering export
@@ -616,13 +698,33 @@ export function PayrollPeriodFormPage() {
             </>
           )}
           {canWrite && !isNew && status === 'approved' && (
+            <>
+              <button
+                className={button()}
+                type="button"
+                onClick={() => void handleUnapprove()}
+                disabled={transitioning}
+              >
+                ถอนการอนุมัติ
+              </button>
+              <button
+                className={button('primary')}
+                type="button"
+                onClick={() => setPayOpen((open) => !open)}
+                disabled={transitioning}
+              >
+                ยืนยันจ่ายเงินแล้ว
+              </button>
+            </>
+          )}
+          {canWrite && !isNew && status === 'paid' && (
             <button
-              className={button()}
+              className={button('primary')}
               type="button"
-              onClick={() => void handleUnapprove()}
+              onClick={() => setCloseOpen((open) => !open)}
               disabled={transitioning}
             >
-              ถอนการอนุมัติ
+              ปิดงวด
             </button>
           )}
           {/* Void, not delete: the row stays and stops blocking its month. */}
@@ -664,6 +766,64 @@ export function PayrollPeriodFormPage() {
               type="button"
               disabled={transitioning}
               onClick={() => setApproveOpen(false)}
+            >
+              ยกเลิก
+            </button>
+          </div>
+        </section>
+      )}
+
+      {payOpen && (
+        <section className={`${card} mt-4 max-w-3xl`}>
+          <h2 className={sectionTitle}>ยืนยันจ่ายเงิน</h2>
+          <div className={alert('danger')}>
+            <p className={alertTitle('danger')}>เงินได้โอน/จ่ายให้พนักงานแล้วจริงหรือไม่</p>
+            <p className={muted}>
+              การยืนยันนี้ย้อนกลับไม่ได้ — งวดจะไม่สามารถถอนการอนุมัติหรือแก้ไขข้อมูลได้อีก
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2.5">
+            <button
+              className={button('danger')}
+              type="button"
+              disabled={transitioning}
+              onClick={() => void handleMarkPaid()}
+            >
+              ยืนยันจ่ายเงินแล้ว
+            </button>
+            <button
+              className={button()}
+              type="button"
+              disabled={transitioning}
+              onClick={() => setPayOpen(false)}
+            >
+              ยกเลิก
+            </button>
+          </div>
+        </section>
+      )}
+
+      {closeOpen && (
+        <section className={`${card} mt-4 max-w-3xl`}>
+          <h2 className={sectionTitle}>ปิดงวด</h2>
+          <div className={alert('danger')}>
+            <p className={alertTitle('danger')}>ปิดงวดนี้ถาวร</p>
+            <p className={muted}>งวดที่ปิดแล้วจะไม่สามารถแก้ไขหรือเปลี่ยนสถานะได้อีกเลย</p>
+          </div>
+          <div className="flex flex-wrap gap-2.5">
+            <button
+              className={button('danger')}
+              type="button"
+              disabled={transitioning}
+              onClick={() => void handleClose()}
+            >
+              ยืนยันปิดงวด
+            </button>
+            <button
+              className={button()}
+              type="button"
+              disabled={transitioning}
+              onClick={() => setCloseOpen(false)}
             >
               ยกเลิก
             </button>

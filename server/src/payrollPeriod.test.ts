@@ -151,6 +151,12 @@ describe('canTransition', () => {
     assert.equal(canTransition('voided', 'draft'), false)
   })
 
+  it('refuses to walk a paid period back to approved', () => {
+    // Same reasoning as refusing to void it: the fix for a wrong payment is
+    // another payment, not silently un-paying this one.
+    assert.equal(canTransition('paid', 'approved'), false)
+  })
+
   it('refuses to skip a step', () => {
     assert.equal(canTransition('draft', 'approved'), false)
     assert.equal(canTransition('draft', 'paid'), false)

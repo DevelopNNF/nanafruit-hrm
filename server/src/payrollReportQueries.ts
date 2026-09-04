@@ -7,6 +7,7 @@
 // needs to carry.
 
 import type pg from 'pg'
+import type { PaymentMethod } from '@hrm/shared'
 import { pool } from './db.js'
 
 type Queryable = Pick<pg.Pool, 'query'>
@@ -190,4 +191,59 @@ export async function listPayrollEntriesForExport(
       lineAmounts,
     }
   })
+}
+
+export type PayrollPaymentFileRow = {
+  employeeCode: string
+  employeeName: string
+  /** null when the employee has no employee_finance row at all — shouldn't
+   *  happen (calculatePayrollEntries already needs one to price the wage),
+   *  but the export falls back to listing them under "needs a manual check"
+   *  rather than dropping them silently. The English slug from
+   *  044_englishify_employee_finance_enums.sql — see employeeFinanceLabels.ts
+   *  for the Thai the export shows. */
+  paymentMethod: PaymentMethod | null
+  bankName: string | null
+  bankAccountNumber: string | null
+  bankBranchCode: string | null
+  netPay: number
+}
+
+type PaymentFileRow = {
+  employee_code: string
+  employee_name: string
+  payment_method: string | null
+  bank_name: string | null
+  bank_account_number: string | null
+  bank_branch_code: string | null
+  net_pay: string
+}
+
+/**
+ * How to pay every entry in this period — employee_finance read live (payment
+ * method and bank details are current-state facts, not figures the slip has
+ * to freeze), ordered by employee_code same as the management export above.
+ */
+export async function listPayrollEntriesForPaymentFile(
+  periodId: number,
+  db: Queryable = pool
+): Promise<PayrollPaymentFileRow[]> {
+  const { rows } = await db.query<PaymentFileRow>(
+    `SELECT pe.employee_code, pe.employee_name, pe.net_pay,
+            ef.payment_method, ef.bank_name, ef.bank_account_number, ef.bank_branch_code
+     FROM payroll_entries pe
+     LEFT JOIN employee_finance ef ON ef.employee_id = pe.employee_id
+     WHERE pe.payroll_period_id = $1
+     ORDER BY pe.employee_code`,
+    [periodId]
+  )
+  return rows.map((row) => ({
+    employeeCode: row.employee_code,
+    employeeName: row.employee_name,
+    paymentMethod: row.payment_method as PaymentMethod | null,
+    bankName: row.bank_name,
+    bankAccountNumber: row.bank_account_number,
+    bankBranchCode: row.bank_branch_code,
+    netPay: Number(row.net_pay),
+  }))
 }

@@ -25,6 +25,7 @@ import {
 } from '../payrollPeriodQueries.js'
 import { calculatePayrollEntries } from '../payrollEntryQueries.js'
 import { buildPayrollPeriodReportWorkbook } from '../payrollReportExport.js'
+import { buildPayrollPaymentFileWorkbook } from '../payrollPaymentFileExport.js'
 import {
   canTransition,
   derivePeriodWindow,
@@ -73,6 +74,56 @@ const OVERLAP_MESSAGE =
   'ช่วงวันที่ของงวดนี้ทับซ้อนกับงวดอื่นของกลุ่มเดียวกัน — วันเดียวกันจะถูกจ่ายสองรอบ'
 
 const DUPLICATE_CODE_MESSAGE = 'งวดนี้ถูกสร้างไว้แล้วสำหรับกลุ่มนี้'
+
+// Who to pay and how, as .xlsx — one sheet of bank transfers, one of
+// cash/check for HR to hand out in person. Gated one stage later than
+// /export: there is nothing to pay before HR has signed off, so 'approved'
+// is the earliest status this is useful for (draft/calculating/review/voided
+// all fall through to the same "not ready" 409 as /export uses).
+payrollPeriodsRouter.get(
+  '/payroll-periods/:id/payment-file',
+  canRead,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const payrollPeriod = await findPayrollPeriodById(id)
+      if (!payrollPeriod) return fail(res, 404, `no payroll period with id ${id}`)
+      if (
+        payrollPeriod.status !== 'approved' &&
+        payrollPeriod.status !== 'paid' &&
+        payrollPeriod.status !== 'closed'
+      ) {
+        return fail(res, 409, 'งวดนี้ยังไม่ได้รับการอนุมัติ ยังสร้างไฟล์จ่ายเงินไม่ได้')
+      }
+
+      const { buffer, transferCount, otherCount } = await buildPayrollPaymentFileWorkbook(id)
+
+      await recordAudit(pool, {
+        actor,
+        action: 'payroll_period.export_payment_file',
+        entityId: id,
+        detail: { periodCode: payrollPeriod.periodCode, transferCount, otherCount },
+      })
+
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      )
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="payment-${payrollPeriod.periodCode}-${payrollPeriod.payrollGroupId}.xlsx"`
+      )
+      res.send(buffer)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
 
 /** The window a period would get. Also used by POST when the caller sends only
  *  a group and a code, so the derivation lives in exactly one place. */
@@ -750,6 +801,140 @@ payrollPeriodsRouter.post(
         await recordAudit(client, {
           actor,
           action: 'payroll_period.unapprove',
+          entityId: id,
+          detail: { from: status },
+        })
+
+        const { rows: readBack } = await client.query<PayrollPeriodRow>(
+          `${SELECT_PAYROLL_PERIOD} WHERE p.id = $1`,
+          [id]
+        )
+        const updated = readBack[0]
+        if (!updated) throw new Error('payroll period vanished inside its own transaction')
+        return { kind: 'ok' as const, payrollPeriod: rowToPayrollPeriod(updated) }
+      })
+
+      if (result.kind === 'not_found') return fail(res, 404, `no payroll period with id ${id}`)
+      if (result.kind === 'conflict') return fail(res, 409, result.message)
+
+      const body: PayrollPeriodResponse = { payrollPeriod: result.payrollPeriod }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// The point of no return: HR confirms money has actually left the company for
+// this period. There is deliberately no route back to 'approved' —
+// canTransition only allows paid -> closed, the same one-way boundary void
+// already draws at 'paid'/'closed' ("the fix for a wrong payment is another
+// payment, recorded, not a period that quietly stops existing").
+payrollPeriodsRouter.post(
+  '/payroll-periods/:id/mark-paid',
+  canWritePayroll,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const [actorKind, actorId] = actorColumns(actor)
+
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{ status: string }>(
+          `SELECT status FROM payroll_periods WHERE id = $1 FOR UPDATE`,
+          [id]
+        )
+        const row = rows[0]
+        if (!row) return { kind: 'not_found' as const }
+
+        const status = row.status as PayrollPeriodStatus
+        if (status !== 'approved') {
+          return {
+            kind: 'conflict' as const,
+            message: 'ยืนยันจ่ายเงินได้เฉพาะงวดที่อนุมัติแล้วเท่านั้น',
+          }
+        }
+
+        await client.query(
+          `UPDATE payroll_periods
+           SET status = 'paid', paid_at = now(), paid_by_kind = $2, paid_by_id = $3, updated_at = now()
+           WHERE id = $1`,
+          [id, actorKind, actorId]
+        )
+
+        await recordAudit(client, {
+          actor,
+          action: 'payroll_period.mark_paid',
+          entityId: id,
+          detail: { from: status },
+        })
+
+        const { rows: readBack } = await client.query<PayrollPeriodRow>(
+          `${SELECT_PAYROLL_PERIOD} WHERE p.id = $1`,
+          [id]
+        )
+        const updated = readBack[0]
+        if (!updated) throw new Error('payroll period vanished inside its own transaction')
+        return { kind: 'ok' as const, payrollPeriod: rowToPayrollPeriod(updated) }
+      })
+
+      if (result.kind === 'not_found') return fail(res, 404, `no payroll period with id ${id}`)
+      if (result.kind === 'conflict') return fail(res, 409, result.message)
+
+      const body: PayrollPeriodResponse = { payrollPeriod: result.payrollPeriod }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// The last step in the lifecycle. No route leads out of 'closed' —
+// canTransition gives it no outgoing edges at all.
+payrollPeriodsRouter.post(
+  '/payroll-periods/:id/close',
+  canWritePayroll,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const [actorKind, actorId] = actorColumns(actor)
+
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{ status: string }>(
+          `SELECT status FROM payroll_periods WHERE id = $1 FOR UPDATE`,
+          [id]
+        )
+        const row = rows[0]
+        if (!row) return { kind: 'not_found' as const }
+
+        const status = row.status as PayrollPeriodStatus
+        if (status !== 'paid') {
+          return {
+            kind: 'conflict' as const,
+            message: 'ปิดงวดได้เฉพาะงวดที่จ่ายเงินแล้วเท่านั้น',
+          }
+        }
+
+        await client.query(
+          `UPDATE payroll_periods
+           SET status = 'closed', closed_at = now(), closed_by_kind = $2, closed_by_id = $3,
+               updated_at = now()
+           WHERE id = $1`,
+          [id, actorKind, actorId]
+        )
+
+        await recordAudit(client, {
+          actor,
+          action: 'payroll_period.close',
           entityId: id,
           detail: { from: status },
         })

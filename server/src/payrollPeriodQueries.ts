@@ -22,6 +22,7 @@ export type PayrollPeriodRow = {
   pay_date: string
   status: string
   note: string | null
+  paid_at: string | null
   closed_at: string | null
   voided_at: string | null
   void_reason: string | null
@@ -32,7 +33,7 @@ export type PayrollPeriodRow = {
 export const SELECT_PAYROLL_PERIOD = `
   SELECT p.id, p.payroll_group_id, g.group_name AS payroll_group_name,
          p.period_code, p.period_start, p.period_end, p.pay_date,
-         p.status, p.note, p.closed_at, p.voided_at, p.void_reason, p.created_at,
+         p.status, p.note, p.paid_at, p.closed_at, p.voided_at, p.void_reason, p.created_at,
          (SELECT COALESCE(SUM(e.net_pay), 0) FROM payroll_entries e
           WHERE e.payroll_period_id = p.id) AS net_total
   FROM payroll_periods p
@@ -50,6 +51,7 @@ export function rowToPayrollPeriod(row: PayrollPeriodRow): PayrollPeriod {
     payDate: row.pay_date,
     status: row.status as PayrollPeriodStatus,
     note: row.note,
+    paidAt: row.paid_at === null ? null : new Date(row.paid_at).toISOString(),
     closedAt: row.closed_at === null ? null : new Date(row.closed_at).toISOString(),
     voidedAt: row.voided_at === null ? null : new Date(row.voided_at).toISOString(),
     voidReason: row.void_reason,

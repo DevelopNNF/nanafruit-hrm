@@ -80,11 +80,12 @@ export async function findPayslipData(
   }
 }
 
-/** Period statuses an employee may see their own slip for. Not 'closed' only,
- *  as the plan's original Phase 7 wording assumed — paid/closed don't exist
- *  yet (Phase 8's job), and HR has already signed off by 'approved'. Tighten
- *  this to ['closed'] once Phase 8 makes that status reachable. */
-const EMPLOYEE_VISIBLE_STATUSES: readonly PayrollPeriodStatus[] = ['approved', 'paid', 'closed']
+/** Period statuses an employee may see their own slip for. 'closed' only, now
+ *  that Phase 8 makes it reachable — a payslip appears once the period is
+ *  fully finalized, not the moment HR approves or marks it paid. (Phase 7
+ *  shipped this as ['approved', 'paid', 'closed'] as a stand-in, since
+ *  paid/closed didn't exist yet.) */
+const EMPLOYEE_VISIBLE_STATUSES: readonly PayrollPeriodStatus[] = ['closed']
 
 export type PayrollSlipSummaryRow = {
   entry_id: string

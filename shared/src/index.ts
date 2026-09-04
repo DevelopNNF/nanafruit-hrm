@@ -1371,6 +1371,7 @@ export type PayrollPeriod = {
   payDate: string
   status: PayrollPeriodStatus
   note: string | null
+  paidAt: string | null
   closedAt: string | null
   voidedAt: string | null
   voidReason: string | null
