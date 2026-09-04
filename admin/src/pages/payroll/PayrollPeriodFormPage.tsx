@@ -409,9 +409,10 @@ export function PayrollPeriodFormPage() {
         </div>
       )}
 
-      <form className="max-w-3xl" onSubmit={(e) => void handleSubmit(e)}>
-        <fieldset disabled={!editable} className="min-w-0 border-0 p-0">
-          <section className={`${card} mb-4`}>
+      <form className="w-full" onSubmit={(e) => void handleSubmit(e)}>
+        <div className="mb-4 grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+        <fieldset disabled={!editable} className="flex min-w-0 flex-col gap-4 border-0 p-0">
+          <section className={card}>
             <h2 className={sectionTitle}>งวด (Period)</h2>
             <div className={fieldStack}>
               <label className={fieldRow}>
@@ -468,7 +469,7 @@ export function PayrollPeriodFormPage() {
             </div>
           </section>
 
-          <section className={`${card} mb-4`}>
+          <section className={card}>
             <h2 className={sectionTitle}>ช่วงเวลา (Window)</h2>
             <p className={`${muted} mb-3`}>
               คำนวณให้อัตโนมัติจากวันตัดรอบของกลุ่ม แก้ได้ตอนที่งวดยังเป็นร่างเท่านั้น
@@ -526,6 +527,46 @@ export function PayrollPeriodFormPage() {
           </section>
         </fieldset>
 
+        {/* Outside the fieldset on purpose — editable gates the period's own
+            fields (draft only), not this: a document only becomes exportable
+            once the period leaves draft, which is the opposite condition. */}
+        {!isNew && (
+          <section className={card} style={{height: '100%'}}>
+            <h2 className={sectionTitle}>เอกสาร (Documents)</h2>
+            <ul className="flex flex-col divide-y divide-slate-200">
+              <li className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                <span className="text-slate-700">รายงานผลการคำนวณเงินเดือนสุทธิ</span>
+                {status !== 'draft' && status !== 'voided' ? (
+                  <button
+                    className={button()}
+                    type="button"
+                    onClick={() => void handleExport()}
+                    disabled={exporting}
+                  >
+                    <Download size={16} />
+                    {exporting ? 'กำลังสร้างไฟล์…' : 'ดาวน์โหลด Excel'}
+                  </button>
+                ) : (
+                  <span className={muted}>ต้องคำนวณงวดก่อน</span>
+                )}
+              </li>
+              {/* Not implemented yet — Phase 6 (see the 10-phase plan). Listed
+                  here already so this card is the one place documents get
+                  added to as each one ships, instead of scattering export
+                  buttons around the page. */}
+              <li className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                <span className="text-slate-400">ภงด.1</span>
+                <span className={muted}>เร็วๆ นี้</span>
+              </li>
+              <li className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                <span className="text-slate-400">ภงด.1ก สรุปรายปี</span>
+                <span className={muted}>เร็วๆ นี้</span>
+              </li>
+            </ul>
+          </section>
+        )}
+        </div>
+
         <div className="flex flex-wrap items-center gap-2.5 pt-1">
           {editable && (
             <button className={button('primary')} type="submit" disabled={saving}>
@@ -540,19 +581,6 @@ export function PayrollPeriodFormPage() {
               disabled={saving}
               >
               {'ยกเลิก'}
-            </button>
-          )}
-          {/* Open to every role that can see this page, not just canWrite —
-              exporting a report is a read, same as the entries table below it. */}
-          {!isNew && status !== 'draft' && status !== 'voided' && (
-            <button
-              className={button()}
-              type="button"
-              onClick={() => void handleExport()}
-              disabled={exporting}
-            >
-              <Download size={16} />
-              {exporting ? 'กำลังสร้างไฟล์…' : 'ส่งออก Excel'}
             </button>
           )}
           {/* Freezes the entries calculate built — past this point calculate
