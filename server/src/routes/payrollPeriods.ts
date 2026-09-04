@@ -11,7 +11,7 @@ import {
   type PayrollPeriodResponse,
   type PayrollPeriodStatus,
 } from '@hrm/shared'
-import { withTransaction } from '../db.js'
+import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
@@ -24,6 +24,7 @@ import {
   type PayrollPeriodRow,
 } from '../payrollPeriodQueries.js'
 import { calculatePayrollEntries } from '../payrollEntryQueries.js'
+import { buildPayrollPeriodReportWorkbook } from '../payrollReportExport.js'
 import {
   canTransition,
   derivePeriodWindow,
@@ -165,6 +166,51 @@ payrollPeriodsRouter.get('/payroll-periods/:id', canRead, async (req: Request, r
     handleUnexpected(res, err)
   }
 })
+
+// A management report of every entry in the period, as .xlsx — draft and
+// voided are excluded because calculate has either never run (draft) or the
+// figures were abandoned (voided); everything from 'calculating' onward has
+// real entries worth exporting.
+payrollPeriodsRouter.get(
+  '/payroll-periods/:id/export',
+  canRead,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    try {
+      const payrollPeriod = await findPayrollPeriodById(id)
+      if (!payrollPeriod) return fail(res, 404, `no payroll period with id ${id}`)
+      if (payrollPeriod.status === 'draft' || payrollPeriod.status === 'voided') {
+        return fail(res, 409, 'งวดนี้ยังไม่ได้เริ่มคำนวณ หรือถูกยกเลิกไปแล้ว ส่งออกไม่ได้')
+      }
+
+      const { buffer, entryCount } = await buildPayrollPeriodReportWorkbook(id, payrollPeriod.periodCode)
+
+      await recordAudit(pool, {
+        actor,
+        action: 'payroll_period.export',
+        entityId: id,
+        detail: { periodCode: payrollPeriod.periodCode, entryCount },
+      })
+
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      )
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="payroll-${payrollPeriod.periodCode}-${payrollPeriod.payrollGroupId}.xlsx"`
+      )
+      res.send(buffer)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
 
 // The window is derived from the group's cut-off day unless the caller sends
 // one, which is what the form does after HR edits the derived dates. Storing it

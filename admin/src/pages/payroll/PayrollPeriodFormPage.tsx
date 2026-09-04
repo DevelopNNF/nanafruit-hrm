@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Calculator } from 'lucide-react'
+import { ArrowLeft, Calculator, Download } from 'lucide-react'
 import type { PayrollEntry, PayrollGroup, PayrollPeriod } from '@hrm/shared'
 import { listPayrollGroups } from '../../api/payrollGroups'
 import {
   approvePayrollPeriod,
   createPayrollPeriod,
+  exportPayrollPeriod,
   getPayrollPeriod,
   previewPayrollPeriod,
   reopenPayrollPeriod,
@@ -107,6 +108,7 @@ export function PayrollPeriodFormPage() {
   const [needsReviewOnly, setNeedsReviewOnly] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
   const [approveOpen, setApproveOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -175,6 +177,27 @@ export function PayrollPeriodFormPage() {
       notify.error('คำนวณไม่สำเร็จ', err instanceof Error ? err.message : undefined)
     } finally {
       setCalculating(false)
+    }
+  }
+
+  /** Downloads the report template filled with every entry in this period —
+   *  disabled by the button's own visibility for 'draft'/'voided', the same
+   *  gate the server route re-checks. */
+  async function handleExport() {
+    if (id === null || period === null) return
+    setExporting(true)
+    try {
+      const blob = await exportPayrollPeriod(id)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `payroll-${period.periodCode}-${period.payrollGroupName}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      notify.error('ส่งออกไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -517,6 +540,19 @@ export function PayrollPeriodFormPage() {
               disabled={saving}
               >
               {'ยกเลิก'}
+            </button>
+          )}
+          {/* Open to every role that can see this page, not just canWrite —
+              exporting a report is a read, same as the entries table below it. */}
+          {!isNew && status !== 'draft' && status !== 'voided' && (
+            <button
+              className={button()}
+              type="button"
+              onClick={() => void handleExport()}
+              disabled={exporting}
+            >
+              <Download size={16} />
+              {exporting ? 'กำลังสร้างไฟล์…' : 'ส่งออก Excel'}
             </button>
           )}
           {/* Freezes the entries calculate built — past this point calculate

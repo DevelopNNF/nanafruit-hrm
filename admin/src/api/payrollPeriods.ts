@@ -7,7 +7,7 @@ import type {
   PayrollPeriodResponse,
   PayrollPeriodStatus,
 } from '@hrm/shared'
-import { apiFetch, jsonHeaders, unwrap } from './client'
+import { apiFetch, ApiRequestError, jsonHeaders, unwrap } from './client'
 
 export async function listPayrollPeriods(
   filter: { groupId?: number; status?: PayrollPeriodStatus } = {},
@@ -120,4 +120,23 @@ export async function unapprovePayrollPeriod(id: number): Promise<PayrollPeriod>
   })
   const body = await unwrap<PayrollPeriodResponse>(res)
   return body.payrollPeriod
+}
+
+/** GET /api/payroll-periods/:id/export — every entry in the period as a
+ *  formatted .xlsx, generated server-side from the payroll report template.
+ *  Rejected with a message (not just a status code) if the period hasn't
+ *  been calculated yet or was voided — see the route's own guard. */
+export async function exportPayrollPeriod(id: number, signal?: AbortSignal): Promise<Blob> {
+  const res = await apiFetch(`/api/payroll-periods/${id}/export`, { signal })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const body = (await res.json()) as { message?: string }
+      if (body.message) message = body.message
+    } catch {
+      // Non-JSON error body — the status is all we have.
+    }
+    throw new ApiRequestError(message)
+  }
+  return res.blob()
 }

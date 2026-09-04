@@ -113,6 +113,7 @@ export type AuditAction =
   | 'payroll_period.reopen'
   | 'payroll_period.approve'
   | 'payroll_period.unapprove'
+  | 'payroll_period.export'
   | 'payroll_entry.review'
   | 'payroll_entry.unreview'
   | 'payroll_entry.download_pdf'
