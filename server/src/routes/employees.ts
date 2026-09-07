@@ -55,13 +55,7 @@ import {
   parseOptionalPositiveInt,
   parseOptionalPositiveIntArray,
 } from '../http.js'
-import {
-  SELECT_EMPLOYEE,
-  findEmployeeById,
-  rowToEmployee,
-  searchEmployees,
-  type EmployeeRow,
-} from '../employeeQueries.js'
+import { findEmployeeById, listEmployees, searchEmployees } from '../employeeQueries.js'
 import {
   findEmployeeFinanceById,
   rowToEmployeeFinance,
@@ -748,12 +742,22 @@ function parseShiftChangeInput(body: unknown): ParseResult<ShiftChangeInput> {
   return { ok: true, value: { shiftId, effectiveFrom, effectiveTo, note } }
 }
 
-employeesRouter.get('/employees', canRead, async (_req: Request, res: Response) => {
+employeesRouter.get('/employees', canRead, async (req: Request, res: Response) => {
+  const auth = actorOf(req)
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
-    const { rows } = await pool.query<EmployeeRow>(
-      `${SELECT_EMPLOYEE} ORDER BY e.employee_code`
-    )
-    const body: EmployeeListResponse = { employees: rows.map(rowToEmployee) }
+    const scope = await resolveSupervisorScope(auth)
+    // 'none' means this account isn't HR/Admin and isn't anyone's supervisor
+    // either — same as the pending-approval inboxes, an empty list rather
+    // than an error.
+    if (scope.kind === 'none') {
+      const body: EmployeeListResponse = { employees: [] }
+      return res.json(body)
+    }
+
+    const employees = await listEmployees(scope.kind === 'team' ? scope.employeeIds : null)
+    const body: EmployeeListResponse = { employees }
     res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
@@ -828,9 +832,24 @@ employeesRouter.get('/employees/search', canRead, async (req: Request, res: Resp
   const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
   if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
 
+  const auth = actorOf(req)
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
+    const scope = await resolveSupervisorScope(auth)
+    if (scope.kind === 'none') {
+      const body: EmployeeSearchResponse = {
+        employees: [],
+        page: page ?? 1,
+        pageSize: pageSize ?? 50,
+        total: 0,
+      }
+      return res.json(body)
+    }
+
     const result = await searchEmployees(
       {
+        ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
         ...(q !== undefined && q !== '' && { query: q }),
         ...(payrollGroupId !== null && { payrollGroupId }),
         ...(departmentIds !== null && departmentIds.length > 0 && { departmentIds }),
@@ -852,7 +871,13 @@ employeesRouter.get('/employees/:id', canRead, async (req: Request, res: Respons
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
 
+  const auth = actorOf(req)
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
+    const scope = await resolveSupervisorScope(auth)
+    if (!scopeAllows(scope, id)) return fail(res, 404, `no employee with id ${id}`)
+
     const employee = await findEmployeeById(id)
     if (!employee) return fail(res, 404, `no employee with id ${id}`)
 
@@ -1472,16 +1497,11 @@ employeesRouter.get(
         return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์มอบหมายกะ', 'FORBIDDEN')
       }
 
-      const { rows } = await pool.query<EmployeeRow>(
-        scope.kind === 'all'
-          ? `${SELECT_EMPLOYEE} ORDER BY e.employee_code`
-          : `${SELECT_EMPLOYEE} WHERE e.id = ANY($1::bigint[]) ORDER BY e.employee_code`,
-        scope.kind === 'all' ? [] : [scope.employeeIds]
-      )
+      const employees = await listEmployees(scope.kind === 'team' ? scope.employeeIds : null)
 
       const body: DailyShiftAssignmentEligibleResponse = {
         scope: scope.kind === 'all' ? 'all' : 'team',
-        employees: rows.map(rowToEmployee),
+        employees,
       }
       res.json(body)
     } catch (err) {

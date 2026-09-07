@@ -23,7 +23,7 @@ import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../em
 import { notify } from '../notifications/dispatch.js'
 import { findLeaveTypeById } from '../leaveTypeQueries.js'
 import { listLeaveBalanceSummaries } from '../leaveBalanceQueries.js'
-import { resolveSupervisorScope } from '../supervisorScope.js'
+import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 import {
   SELECT_LEAVE_REQUEST,
   computeTotalDays,
@@ -475,9 +475,26 @@ leaveRequestsRouter.get('/leave-requests', canReadAdmin, async (req: Request, re
   const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
   if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
 
+  const auth = actorOf(req)
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
+    const scope = await resolveSupervisorScope(auth)
+    if (scope.kind === 'none') {
+      const body: LeaveRequestListResponse = {
+        requests: [],
+        page: page ?? 1,
+        pageSize: pageSize ?? 50,
+        total: 0,
+      }
+      return res.json(body)
+    }
+
     const result = await listLeaveRequests(
-      { status: statusResult.value },
+      {
+        status: statusResult.value,
+        ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
+      },
       { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
     )
     const body: LeaveRequestListResponse = result
@@ -517,11 +534,23 @@ leaveRequestsRouter.get('/leave-requests/:id', canReadAdmin, async (req: Request
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
 
+  const auth = actorOf(req)
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
     const request = await findLeaveRequestById(id)
     if (!request) return fail(res, 404, `no leave request with id ${id}`)
 
-    const canDecide = await computeCanDecide(actorOf(req), request, pool)
+    const canDecide = await computeCanDecide(auth, request, pool)
+    // View is allowed for the request's current team (scopeAllows) as well
+    // as anyone who can decide it — the latter covers a supervisor whose
+    // team composition changed after this request's supervisor_employee_id
+    // was snapshotted, same as the pending-approval inbox already relies on.
+    const scope = await resolveSupervisorScope(auth)
+    if (!scopeAllows(scope, request.employeeId) && !canDecide) {
+      return fail(res, 404, `no leave request with id ${id}`)
+    }
+
     const body: LeaveRequestDetailResponse = { request, canDecide }
     res.json(body)
   } catch (err) {

@@ -40,6 +40,7 @@ import {
   resolvePayrollPeriodStatus,
 } from '../attendancePunchConfirmQueries.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
+import { resolveSupervisorScope } from '../supervisorScope.js'
 
 export const attendanceRouter = Router()
 
@@ -341,10 +342,25 @@ attendanceRouter.get('/attendance', canReadAdmin, async (req: Request, res: Resp
   const pageSize = parseOptionalId(req.query['pageSize'])
   if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
 
+  const auth = req.auth
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
+    const scope = await resolveSupervisorScope(auth)
+    if (scope.kind === 'none') {
+      const body: AttendanceListResponse = {
+        events: [],
+        page: page ?? 1,
+        pageSize: pageSize ?? 50,
+        total: 0,
+      }
+      return res.json(body)
+    }
+
     const result = await listAttendanceEvents(
       {
         ...(employeeId !== null && { employeeId }),
+        ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
         ...(fromDate !== null && { fromDate }),
         ...(toDate !== null && { toDate }),
       },
@@ -395,10 +411,25 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
   const pageSize = parseOptionalId(req.query['pageSize'])
   if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
 
+  const auth = req.auth
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
+    const scope = await resolveSupervisorScope(auth)
+    if (scope.kind === 'none') {
+      const body: AttendanceDailyListResponse = {
+        days: [],
+        summary: { total: 0, present: 0, late: 0, earlyLeave: 0, absent: 0, incomplete: 0, lastComputedAt: null },
+        page: page ?? 1,
+        pageSize: pageSize ?? 50,
+      }
+      return res.json(body)
+    }
+
     const result = await listAttendanceDaily(
       {
         ...(employeeId !== null && { employeeId }),
+        ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
         ...(departmentId !== null && { departmentId }),
         ...(fromDate !== null && { fromDate }),
         ...(toDate !== null && { toDate }),
@@ -449,9 +480,16 @@ attendanceRouter.get('/attendance/daily/export', canReadAdmin, async (req: Reque
   const search = req.query['search']
   if (search !== undefined && typeof search !== 'string') return fail(res, 400, 'search must be a string')
 
+  const auth = req.auth
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
+    const scope = await resolveSupervisorScope(auth)
+    if (scope.kind === 'none') return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ดูรายงานนี้', 'FORBIDDEN')
+
     const buffer = await buildAttendanceReportWorkbook({
       ...(employeeId !== null && { employeeId }),
+      ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
       ...(departmentId !== null && { departmentId }),
       ...(fromDate !== null && { fromDate }),
       ...(toDate !== null && { toDate }),

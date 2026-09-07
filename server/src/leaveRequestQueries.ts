@@ -149,9 +149,10 @@ export type LeaveRequestsPagination = {
 }
 
 /** Admin's review queue across every employee, most recent first, optionally
- *  filtered to one status. */
+ *  filtered to one status and/or (for a resolved supervisor's 'team' scope)
+ *  to a fixed set of employee ids. */
 export async function listLeaveRequests(
-  filter: { status?: LeaveRequestStatus },
+  filter: { status?: LeaveRequestStatus; employeeIds?: number[] },
   pagination: LeaveRequestsPagination = {},
   db: Queryable = pool
 ): Promise<{ requests: LeaveRequestListItem[]; page: number; pageSize: number; total: number }> {
@@ -162,8 +163,17 @@ export async function listLeaveRequests(
       : DEFAULT_PAGE_SIZE
   const offset = (page - 1) * pageSize
 
-  const where = filter.status !== undefined ? 'WHERE lr.status = $1' : ''
-  const params = filter.status !== undefined ? [filter.status] : []
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (filter.status !== undefined) {
+    params.push(filter.status)
+    conditions.push(`lr.status = $${params.length}`)
+  }
+  if (filter.employeeIds && filter.employeeIds.length > 0) {
+    params.push(filter.employeeIds)
+    conditions.push(`lr.employee_id = ANY($${params.length})`)
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
   const [listResult, countResult] = await Promise.all([
     db.query<LeaveRequestListRow>(

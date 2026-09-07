@@ -41,7 +41,11 @@ export async function buildMonthScheduleForAllEmployees(
   year: number,
   month: number,
   pagination: WorkSchedulePagination = {},
-  db: Queryable = pool
+  db: Queryable = pool,
+  /** Restricts the grid to these employee ids — a resolved supervisor's
+   *  'team' scope (see supervisorScope.ts). Absent means every active
+   *  employee (HR/Admin's 'all' scope). */
+  employeeIds?: number[]
 ): Promise<{ employees: EmployeeWorkSchedule[]; page: number; pageSize: number; total: number }> {
   const page = pagination.page !== undefined && pagination.page > 1 ? Math.floor(pagination.page) : 1
   const pageSize =
@@ -50,6 +54,9 @@ export async function buildMonthScheduleForAllEmployees(
       : DEFAULT_PAGE_SIZE
   const offset = (page - 1) * pageSize
 
+  const scopeCondition = employeeIds && employeeIds.length > 0 ? ` AND e.id = ANY($1)` : ''
+  const scopeParams: unknown[] = employeeIds && employeeIds.length > 0 ? [employeeIds] : []
+
   // Sequential, not Promise.all: db may be a single transaction client (the
   // pattern this codebase verifies queries with — a client, not the pool,
   // cannot run overlapping queries).
@@ -57,13 +64,14 @@ export async function buildMonthScheduleForAllEmployees(
     `SELECT e.id, e.employee_code, e.title, e.first_name_th, e.last_name_th
      FROM employees e
      JOIN employment_details d ON d.employee_id = e.id
-     WHERE d.status = 'Active'
+     WHERE d.status = 'Active'${scopeCondition}
      ORDER BY e.employee_code
-     LIMIT $1 OFFSET $2`,
-    [pageSize, offset]
+     LIMIT $${scopeParams.length + 1} OFFSET $${scopeParams.length + 2}`,
+    [...scopeParams, pageSize, offset]
   )
   const { rows: countRows } = await db.query<{ total: string }>(
-    `SELECT count(*) AS total FROM employees e JOIN employment_details d ON d.employee_id = e.id WHERE d.status = 'Active'`
+    `SELECT count(*) AS total FROM employees e JOIN employment_details d ON d.employee_id = e.id WHERE d.status = 'Active'${scopeCondition}`,
+    scopeParams
   )
   const total = Number(countRows[0]?.total ?? 0)
 

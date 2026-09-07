@@ -399,25 +399,27 @@ export function EmployeeListPage() {
                   className="w-full"
                 />
               </label>
-              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
-                <span className="w-28 shrink-0 text-right">กลุ่มเงินเดือน :</span>
-                <select
-                  className={`${fieldControl} w-full`}
-                  value={typeof groupFilter === 'number' ? String(groupFilter) : groupFilter}
-                  onChange={(e) => {
-                    const value = e.target.value
-                    handleGroupFilterChange(value === 'all' || value === 'none' ? value : Number(value))
-                  }}
-                >
-                  <option value="all">— ทั้งหมด —</option>
-                  <option value="none">ยังไม่อยู่กลุ่มใด</option>
-                  {payrollGroups.map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.groupName}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {canWritePayroll &&
+                <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
+                  <span className="w-28 shrink-0 text-right">กลุ่มเงินเดือน :</span>
+                  <select
+                    className={`${fieldControl} w-full`}
+                    value={typeof groupFilter === 'number' ? String(groupFilter) : groupFilter}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      handleGroupFilterChange(value === 'all' || value === 'none' ? value : Number(value))
+                    }}
+                  >
+                    <option value="all">— ทั้งหมด —</option>
+                    <option value="none">ยังไม่อยู่กลุ่มใด</option>
+                    {payrollGroups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.groupName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              }
               <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
                 <span className="w-28 shrink-0 text-right">สถานที่ปฏิบัติงาน :</span>
                 <select

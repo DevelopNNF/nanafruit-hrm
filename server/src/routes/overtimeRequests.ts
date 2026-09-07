@@ -1053,9 +1053,26 @@ overtimeRequestsRouter.get(
     const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
     if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
 
+    const auth = actorOf(req)
+    if (!auth) return fail(res, 500, 'server misconfigured')
+
     try {
+      const scope = await resolveSupervisorScope(auth)
+      if (scope.kind === 'none') {
+        const body: OvertimeRequestListResponse = {
+          requests: [],
+          page: page ?? 1,
+          pageSize: pageSize ?? 50,
+          total: 0,
+        }
+        return res.json(body)
+      }
+
       const result = await listOvertimeRequests(
-        { status: statusResult.value },
+        {
+          status: statusResult.value,
+          ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
+        },
         { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
       )
       const body: OvertimeRequestListResponse = result
@@ -1101,11 +1118,19 @@ overtimeRequestsRouter.get(
     const id = parseId(req.params['id'])
     if (id === null) return fail(res, 400, 'id must be a positive integer')
 
+    const auth = actorOf(req)
+    if (!auth) return fail(res, 500, 'server misconfigured')
+
     try {
       const request = await findOvertimeRequestById(id)
       if (!request) return fail(res, 404, `no overtime request with id ${id}`)
 
-      const canDecide = await computeCanDecide(actorOf(req), request, pool)
+      const canDecide = await computeCanDecide(auth, request, pool)
+      const scope = await resolveSupervisorScope(auth)
+      if (!scopeAllows(scope, request.employeeId) && !canDecide) {
+        return fail(res, 404, `no overtime request with id ${id}`)
+      }
+
       const body: OvertimeRequestDetailResponse = { request, canDecide }
       res.json(body)
     } catch (err) {

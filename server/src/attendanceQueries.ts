@@ -124,6 +124,10 @@ export async function findLastAttendanceEvent(
 
 export type AttendanceListFilter = {
   employeeId?: number
+  /** Restricts to these employee ids — how a supervisor's 'team' scope (see
+   *  supervisorScope.ts) narrows the list when no single employeeId filter
+   *  is given. Absent means no restriction. */
+  employeeIds?: number[]
   /** Inclusive, 'YYYY-MM-DD'. */
   fromDate?: string
   /** Inclusive, 'YYYY-MM-DD'. */
@@ -163,6 +167,10 @@ export async function listAttendanceEvents(
   if (filter.employeeId !== undefined) {
     params.push(filter.employeeId)
     conditions.push(`a.employee_id = $${params.length}`)
+  }
+  if (filter.employeeIds && filter.employeeIds.length > 0) {
+    params.push(filter.employeeIds)
+    conditions.push(`a.employee_id = ANY($${params.length})`)
   }
   if (filter.fromDate !== undefined) {
     params.push(filter.fromDate)

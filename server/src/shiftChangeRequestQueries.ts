@@ -156,9 +156,10 @@ export type ShiftChangeRequestsPagination = {
 }
 
 /** Admin's review queue across every employee, most recent first, optionally
- *  filtered to one status. */
+ *  filtered to one status and/or (for a resolved supervisor's 'team' scope)
+ *  to a fixed set of employee ids. */
 export async function listShiftChangeRequests(
-  filter: { status?: ShiftChangeRequestStatus },
+  filter: { status?: ShiftChangeRequestStatus; employeeIds?: number[] },
   pagination: ShiftChangeRequestsPagination = {},
   db: Queryable = pool
 ): Promise<{ requests: ShiftChangeRequestListItem[]; page: number; pageSize: number; total: number }> {
@@ -169,8 +170,17 @@ export async function listShiftChangeRequests(
       : DEFAULT_PAGE_SIZE
   const offset = (page - 1) * pageSize
 
-  const where = filter.status !== undefined ? 'WHERE scr.status = $1' : ''
-  const params = filter.status !== undefined ? [filter.status] : []
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (filter.status !== undefined) {
+    params.push(filter.status)
+    conditions.push(`scr.status = $${params.length}`)
+  }
+  if (filter.employeeIds && filter.employeeIds.length > 0) {
+    params.push(filter.employeeIds)
+    conditions.push(`scr.employee_id = ANY($${params.length})`)
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
   const [listResult, countResult] = await Promise.all([
     db.query<ShiftChangeRequestListRow>(

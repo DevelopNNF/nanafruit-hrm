@@ -160,6 +160,24 @@ export async function findEmployeeById(
   return row ? rowToEmployee(row) : null
 }
 
+/** The unbounded roster behind GET /employees and every `<select>` picker
+ *  that needs the whole list in one shot (see searchEmployees' doc for why
+ *  that endpoint stays separate). `employeeIds` narrows it to a supervisor's
+ *  scope — pass null/undefined for the full roster (HR/Admin, or callers
+ *  that don't scope at all). */
+export async function listEmployees(
+  employeeIds?: number[] | null,
+  db: Queryable = pool
+): Promise<Employee[]> {
+  const { rows } = employeeIds
+    ? await db.query<EmployeeRow>(
+        `${SELECT_EMPLOYEE} WHERE e.id = ANY($1) ORDER BY e.employee_code`,
+        [employeeIds]
+      )
+    : await db.query<EmployeeRow>(`${SELECT_EMPLOYEE} ORDER BY e.employee_code`)
+  return rows.map(rowToEmployee)
+}
+
 export async function findEmployeeByLineUserId(
   lineUserId: string,
   db: Queryable = pool
@@ -195,6 +213,10 @@ const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 200
 
 export type EmployeeSearchFilter = {
+  /** Restricts results to these employee ids — how a supervisor's 'team'
+   *  scope (see supervisorScope.ts) narrows the search. Absent means no
+   *  restriction (HR/Admin's 'all' scope, or callers that don't scope). */
+  employeeIds?: number[]
   /** Matched against employee_code, both Thai/English names, nickname, and
    *  job title — the same fields EmployeeListPage's client-side search used
    *  to check before this moved server-side. */
@@ -241,6 +263,11 @@ export async function searchEmployees(
 
   const conditions: string[] = []
   const params: unknown[] = []
+
+  if (filter.employeeIds && filter.employeeIds.length > 0) {
+    params.push(filter.employeeIds)
+    conditions.push(`e.id = ANY($${params.length})`)
+  }
 
   const query = filter.query?.trim()
   if (query) {

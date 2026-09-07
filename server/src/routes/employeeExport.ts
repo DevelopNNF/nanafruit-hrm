@@ -1,13 +1,14 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import type ExcelJS from 'exceljs'
-import { ROLES, type AuthUser } from '@hrm/shared'
+import { ROLES, type AuthUser, type Employee } from '@hrm/shared'
 import { pool } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected } from '../http.js'
-import { SELECT_EMPLOYEE, rowToEmployee, type EmployeeRow } from '../employeeQueries.js'
+import { SELECT_EMPLOYEE, listEmployees, rowToEmployee, type EmployeeRow } from '../employeeQueries.js'
 import { buildEmployeeWorkbook, buildTempWorkerEmployeeWorkbook } from '../employeeExport.js'
+import { resolveSupervisorScope } from '../supervisorScope.js'
 
 export const employeeExportRouter = Router()
 
@@ -39,8 +40,9 @@ employeeExportRouter.get('/employees/export', canRead, async (req: Request, res:
   if (!actor) return fail(res, 500, 'server misconfigured')
 
   try {
-    const { rows } = await pool.query<EmployeeRow>(`${SELECT_EMPLOYEE} ORDER BY e.employee_code`)
-    const employees = rows.map(rowToEmployee)
+    const scope = await resolveSupervisorScope(actor)
+    const employees =
+      scope.kind === 'none' ? [] : await listEmployees(scope.kind === 'team' ? scope.employeeIds : null)
     const buffer = await buildEmployeeWorkbook(employees)
 
     await recordAudit(pool, {
@@ -69,11 +71,17 @@ employeeExportRouter.get(
     if (!actor) return fail(res, 500, 'server misconfigured')
 
     try {
-      const { rows } = await pool.query<EmployeeRow>(
-        `${SELECT_EMPLOYEE} WHERE d.employment_type = $1 ORDER BY e.employee_code`,
-        ['ชั่วคราว']
-      )
-      const employees = rows.map(rowToEmployee)
+      const scope = await resolveSupervisorScope(actor)
+      let employees: Employee[] = []
+      if (scope.kind !== 'none') {
+        const { rows } = await pool.query<EmployeeRow>(
+          scope.kind === 'team'
+            ? `${SELECT_EMPLOYEE} WHERE d.employment_type = $1 AND e.id = ANY($2) ORDER BY e.employee_code`
+            : `${SELECT_EMPLOYEE} WHERE d.employment_type = $1 ORDER BY e.employee_code`,
+          scope.kind === 'team' ? ['ชั่วคราว', scope.employeeIds] : ['ชั่วคราว']
+        )
+        employees = rows.map(rowToEmployee)
+      }
       const buffer = await buildTempWorkerEmployeeWorkbook(employees)
 
       await recordAudit(pool, {

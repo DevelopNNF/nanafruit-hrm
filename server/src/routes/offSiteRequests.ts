@@ -21,7 +21,7 @@ import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
 import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { notify } from '../notifications/dispatch.js'
-import { resolveSupervisorScope } from '../supervisorScope.js'
+import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 import {
   SELECT_OFF_SITE_WORK_REQUEST,
   findOffSiteWorkRequestById,
@@ -378,9 +378,26 @@ offSiteRequestsRouter.get('/off-site-work-requests', canReadAdmin, async (req: R
   const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
   if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
 
+  const auth = actorOf(req)
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
+    const scope = await resolveSupervisorScope(auth)
+    if (scope.kind === 'none') {
+      const body: OffSiteWorkRequestListResponse = {
+        requests: [],
+        page: page ?? 1,
+        pageSize: pageSize ?? 50,
+        total: 0,
+      }
+      return res.json(body)
+    }
+
     const result = await listOffSiteWorkRequests(
-      { status: statusResult.value },
+      {
+        status: statusResult.value,
+        ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
+      },
       { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
     )
     const body: OffSiteWorkRequestListResponse = result
@@ -421,11 +438,19 @@ offSiteRequestsRouter.get('/off-site-work-requests/:id', canReadAdmin, async (re
   const id = parseId(req.params['id'])
   if (id === null) return fail(res, 400, 'id must be a positive integer')
 
+  const auth = actorOf(req)
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
     const request = await findOffSiteWorkRequestById(id)
     if (!request) return fail(res, 404, `no off-site work request with id ${id}`)
 
-    const canDecide = await computeCanDecide(actorOf(req), request, pool)
+    const canDecide = await computeCanDecide(auth, request, pool)
+    const scope = await resolveSupervisorScope(auth)
+    if (!scopeAllows(scope, request.employeeId) && !canDecide) {
+      return fail(res, 404, `no off-site work request with id ${id}`)
+    }
+
     const body: OffSiteWorkRequestDetailResponse = { request, canDecide }
     res.json(body)
   } catch (err) {

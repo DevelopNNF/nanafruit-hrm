@@ -3,7 +3,9 @@ import type { Request, Response } from 'express'
 import { ROLES, type WorkScheduleResponse } from '@hrm/shared'
 import { requireRole } from '../auth/middleware.js'
 import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
+import { pool } from '../db.js'
 import { buildMonthScheduleForAllEmployees } from '../scheduleQueries.js'
+import { resolveSupervisorScope } from '../supervisorScope.js'
 
 export const scheduleRouter = Router()
 
@@ -36,11 +38,33 @@ scheduleRouter.get('/schedule', canReadAdmin, async (req: Request, res: Response
   const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
   if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
 
+  const auth = req.auth
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
   try {
-    const result = await buildMonthScheduleForAllEmployees(year, month, {
-      ...(page !== null && { page }),
-      ...(pageSize !== null && { pageSize }),
-    })
+    const scope = await resolveSupervisorScope(auth)
+    if (scope.kind === 'none') {
+      const body: WorkScheduleResponse = {
+        year,
+        month,
+        employees: [],
+        page: page ?? 1,
+        pageSize: pageSize ?? 20,
+        total: 0,
+      }
+      return res.json(body)
+    }
+
+    const result = await buildMonthScheduleForAllEmployees(
+      year,
+      month,
+      {
+        ...(page !== null && { page }),
+        ...(pageSize !== null && { pageSize }),
+      },
+      pool,
+      scope.kind === 'team' ? scope.employeeIds : undefined
+    )
     const body: WorkScheduleResponse = { year, month, ...result }
     res.json(body)
   } catch (err) {

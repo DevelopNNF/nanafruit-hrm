@@ -373,6 +373,10 @@ export type AttendanceDailyFilterInput = {
   fromDate?: string
   toDate?: string
   employeeId?: number
+  /** Restricts to these employee ids — how a supervisor's 'team' scope (see
+   *  supervisorScope.ts) narrows the list/export when no single employeeId
+   *  filter is given. Absent means no restriction. */
+  employeeIds?: number[]
   departmentId?: number
   status?: AttendanceDailyFilter
   workLocation?: WorkLocation
@@ -404,6 +408,10 @@ function buildAttendanceDailyConditions(filter: AttendanceDailyFilterInput): {
   if (filter.employeeId !== undefined) {
     params.push(filter.employeeId)
     conditions.push(`d.employee_id = $${params.length}`)
+  }
+  if (filter.employeeIds && filter.employeeIds.length > 0) {
+    params.push(filter.employeeIds)
+    conditions.push(`d.employee_id = ANY($${params.length})`)
   }
   if (filter.departmentId !== undefined) {
     params.push(filter.departmentId)

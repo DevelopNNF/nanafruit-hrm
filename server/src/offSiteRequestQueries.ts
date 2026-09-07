@@ -128,9 +128,10 @@ export type OffSiteWorkRequestsPagination = {
 }
 
 /** Admin's review queue across every employee, most recent first, optionally
- *  filtered to one status. */
+ *  filtered to one status and/or (for a resolved supervisor's 'team' scope)
+ *  to a fixed set of employee ids. */
 export async function listOffSiteWorkRequests(
-  filter: { status?: OffSiteWorkRequestStatus },
+  filter: { status?: OffSiteWorkRequestStatus; employeeIds?: number[] },
   pagination: OffSiteWorkRequestsPagination = {},
   db: Queryable = pool
 ): Promise<{ requests: OffSiteWorkRequestListItem[]; page: number; pageSize: number; total: number }> {
@@ -141,8 +142,17 @@ export async function listOffSiteWorkRequests(
       : DEFAULT_PAGE_SIZE
   const offset = (page - 1) * pageSize
 
-  const where = filter.status !== undefined ? 'WHERE r.status = $1' : ''
-  const params = filter.status !== undefined ? [filter.status] : []
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (filter.status !== undefined) {
+    params.push(filter.status)
+    conditions.push(`r.status = $${params.length}`)
+  }
+  if (filter.employeeIds && filter.employeeIds.length > 0) {
+    params.push(filter.employeeIds)
+    conditions.push(`r.employee_id = ANY($${params.length})`)
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
   const [listResult, countResult] = await Promise.all([
     db.query<OffSiteWorkRequestListRow>(
