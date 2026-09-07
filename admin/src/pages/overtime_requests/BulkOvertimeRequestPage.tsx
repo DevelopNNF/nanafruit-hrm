@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { OvertimeBulkCreateOutcome, OvertimeEligibleEmployee } from '@hrm/shared'
+import { computeOvertimeMinutes, type OvertimeBulkCreateOutcome, type OvertimeEligibleEmployee } from '@hrm/shared'
 import { ApiRequestError } from '../../api/client'
 import { createBulkOvertimeRequest, fetchOvertimeEligibleEmployees } from '../../api/overtimeRequests'
 import { DatePicker } from '../../components/DatePicker'
 import { TransferList } from '../../components/TransferList'
 import { notify } from '../../notifications/notify'
-import { formatDecimalHours } from '../../overtimeFormat'
+import { formatDecimalHours, formatOvertimeHours } from '../../overtimeFormat'
 import {
   alert,
   alertDetail,
@@ -88,6 +88,8 @@ export function BulkOvertimeRequestPage() {
       })
     return () => controller.abort()
   }, [date])
+
+  const requestedMinutes = useMemo(() => computeOvertimeMinutes(startTime, endTime), [startTime, endTime])
 
   const employees = eligibleState.phase === 'ok' ? eligibleState.employees : []
   const employeeById = new Map(employees.map((e) => [e.employeeId, e]))
@@ -225,6 +227,9 @@ export function BulkOvertimeRequestPage() {
                 onChange={(e) => setEndTime(e.target.value)}
               />
             </label>
+          {requestedMinutes !== null && (
+            <p className={`${muted} mb-4`}>รวม {formatOvertimeHours(requestedMinutes)}</p>
+          )}
           </div>
 
           <label className={`${fieldLabel} mb-4`}>
