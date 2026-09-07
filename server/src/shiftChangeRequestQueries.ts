@@ -216,6 +216,16 @@ export async function listShiftChangeRequestsPendingApproval(
   return rows.map(rowToShiftChangeRequestListItem)
 }
 
+/** Total requests at status='pending' regardless of current_stage — see
+ *  countLeaveRequestsPending's comment for why this differs from the
+ *  team-scoped supervisor count. */
+export async function countShiftChangeRequestsPending(db: Queryable = pool): Promise<number> {
+  const { rows } = await db.query<{ total: string }>(
+    `SELECT count(*) AS total FROM shift_change_requests WHERE status = 'pending'`
+  )
+  return Number(rows[0]?.total ?? 0)
+}
+
 /** Requests this specific supervisor has already decided themselves, via
  *  LIFF — scoped by the synthetic `employee:<id>` oid (see describeActor in
  *  employeeQueries.ts) rather than just supervisor_employee_id, so a

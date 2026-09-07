@@ -235,6 +235,43 @@ export async function listLeaveRequestsDecidedBySupervisor(
   return rows.map(rowToLeaveRequestListItem)
 }
 
+/** Employees on approved leave covering `today` ('YYYY-MM-DD') — the
+ *  dashboard's "on leave today" widget. Company-wide, no supervisor-scope
+ *  filtering (see DashboardOnLeaveTodayResponse's comment), and deliberately
+ *  omits leave type/reason. DISTINCT is safe over the full row here since
+ *  employee_code/employee_name are functionally dependent on employee_id. */
+export async function listEmployeesOnLeaveToday(
+  today: string,
+  db: Queryable = pool
+): Promise<{ employeeId: number; employeeCode: string; employeeName: string }[]> {
+  const { rows } = await db.query<{ employee_id: string; employee_code: string; employee_name: string }>(
+    `SELECT DISTINCT e.id AS employee_id, e.employee_code,
+            (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
+     FROM leave_requests lr
+     JOIN employees e ON e.id = lr.employee_id
+     WHERE lr.status = 'approved' AND lr.start_date <= $1 AND lr.end_date >= $1
+     ORDER BY employee_name`,
+    [today]
+  )
+  return rows.map((row) => ({
+    employeeId: Number(row.employee_id),
+    employeeCode: row.employee_code,
+    employeeName: row.employee_name,
+  }))
+}
+
+/** Total requests at status='pending' regardless of current_stage — the
+ *  dashboard's HR/Admin pending-approvals count, since HR/Admin may decide
+ *  at either stage. A team-scoped supervisor's count instead comes from
+ *  listLeaveRequestsPendingApproval(supervisorEmployeeId).length, which is
+ *  correctly narrowed to current_stage='supervisor'. */
+export async function countLeaveRequestsPending(db: Queryable = pool): Promise<number> {
+  const { rows } = await db.query<{ total: string }>(
+    `SELECT count(*) AS total FROM leave_requests WHERE status = 'pending'`
+  )
+  return Number(rows[0]?.total ?? 0)
+}
+
 /** Does this employee already have a pending/approved request whose date
  *  range intersects [startDate, endDate]? Cancelled/rejected requests never
  *  block — they never held a real claim on the calendar. */

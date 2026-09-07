@@ -33,6 +33,7 @@ import { shiftChangeRequestsRouter } from './routes/shiftChangeRequests.js'
 import { dayOffSwapRequestsRouter } from './routes/dayOffSwapRequests.js'
 import { overtimeRequestsRouter } from './routes/overtimeRequests.js'
 import { compTimeOffRequestsRouter } from './routes/compTimeOffRequests.js'
+import { dashboardRouter } from './routes/dashboard.js'
 import { overtimeReportRouter } from './routes/overtimeReport.js'
 import { calendarRouter } from './routes/calendar.js'
 import { scheduleRouter } from './routes/schedule.js'
@@ -127,6 +128,7 @@ app.use('/api', authenticate, shiftChangeRequestsRouter)
 app.use('/api', authenticate, dayOffSwapRequestsRouter)
 app.use('/api', authenticate, overtimeRequestsRouter)
 app.use('/api', authenticate, compTimeOffRequestsRouter)
+app.use('/api', authenticate, dashboardRouter)
 app.use('/api', authenticate, overtimeReportRouter)
 app.use('/api', authenticate, calendarRouter)
 app.use('/api', authenticate, scheduleRouter)

@@ -187,6 +187,16 @@ export async function listOffSiteWorkRequestsPendingApproval(
   return rows.map(rowToOffSiteWorkRequestListItem)
 }
 
+/** Total requests at status='pending' regardless of current_stage — see
+ *  countLeaveRequestsPending's comment for why this differs from the
+ *  team-scoped supervisor count. */
+export async function countOffSiteWorkRequestsPending(db: Queryable = pool): Promise<number> {
+  const { rows } = await db.query<{ total: string }>(
+    `SELECT count(*) AS total FROM off_site_work_requests WHERE status = 'pending'`
+  )
+  return Number(rows[0]?.total ?? 0)
+}
+
 export type ApprovedOffSitePoint = {
   id: number
   placeName: string

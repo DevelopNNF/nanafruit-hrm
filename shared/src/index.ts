@@ -3517,6 +3517,43 @@ export type CompTimeOffRequestDetailResponse = { request: CompTimeOffRequestList
  *  required every time, never optional. */
 export type CompTimeOffRequestRejectRequest = { reason: string }
 
+/* Dashboard ------------------------------------------------------------------
+ *
+ * Two admin/ dashboard widgets. Neither reuses PendingApprovalItem above —
+ * that type merges full request rows for the LIFF inbox; the dashboard only
+ * ever needs a per-type count, so a flat number per resource is enough and
+ * avoids fetching (and re-fetching, on every dashboard load) up to 500 rows
+ * per type just to read their .length.
+ */
+
+/** GET /api/dashboard/on-leave-today — who is on approved leave covering
+ *  today, company-wide (not filtered by resolveSupervisorScope: this is an
+ *  informational "who's out" overview, not an approval action, so every
+ *  role sees the same list). Deliberately omits leave type and reason. */
+export type DashboardOnLeaveTodayItem = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+}
+
+export type DashboardOnLeaveTodayResponse = { employees: DashboardOnLeaveTodayItem[] }
+
+/** GET /api/dashboard/pending-approvals-summary — one count per request
+ *  type, scoped by resolveSupervisorScope like every other admin/ request
+ *  list: 'team' counts only what's waiting on this caller as supervisor
+ *  (current_stage='supervisor'); 'all' (HR/Admin) counts every pending
+ *  request regardless of stage, since HR/Admin may decide at either one;
+ *  'none' (not anyone's supervisor) is all zeros. */
+export type DashboardPendingApprovalsSummaryResponse = {
+  scope: 'all' | 'team' | 'none'
+  leave: number
+  offSite: number
+  overtime: number
+  shiftChange: number
+  dayOffSwap: number
+  timeCorrection: number
+}
+
 /* Health ------------------------------------------------------------------ */
 
 /** GET /api/health */

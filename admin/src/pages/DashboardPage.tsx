@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CalendarDays, Plus, UserCheck, UserX, Users, type LucideIcon } from 'lucide-react'
+import { CalendarDays, UserCheck, UserX, Users } from 'lucide-react'
 import { EMPLOYMENT_TYPES, type Employee } from '@hrm/shared'
 import { listEmployees } from '../api/employees'
-import { useCanWrite, useMe } from '../auth/meContext'
+import { useMe } from '../auth/meContext'
+import { OnLeaveTodayCard } from '../components/OnLeaveTodayCard'
+import { PendingApprovalsSummary } from '../components/PendingApprovalsSummary'
+import { StatCard } from '../components/StatCard'
 import {
   alert,
   alertDetail,
   alertTitle,
-  button,
   card,
   cardHead,
   eyebrow,
@@ -79,7 +81,6 @@ type State =
 
 export function DashboardPage() {
   const [state, setState] = useState<State>({ phase: 'loading' })
-  const canWrite = useCanWrite()
   const me = useMe()
 
   useEffect(() => {
@@ -113,18 +114,18 @@ export function DashboardPage() {
           <h1>สวัสดี {firstName}</h1>
           <p className={subtitle}>สรุปข้อมูลทะเบียนพนักงาน ณ วันนี้</p>
         </div>
-        {canWrite && (
-          <Link className={button('primary')} to="/employees/new">
-            <Plus size={16} />
-            เพิ่มพนักงาน
-          </Link>
-        )}
       </header>
+
+      <PendingApprovalsSummary />
+
+      <div className="mb-5">
+        <OnLeaveTodayCard />
+      </div>
 
       {state.phase === 'loading' && (
         <div className={`${fluidGrid('13rem')} mb-5`}>
           {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="h-[8.5rem] rounded-lg border border-dashed border-slate-200 bg-slate-50" />
+            <div key={i} className="h-34 rounded-lg border border-dashed border-slate-200 bg-slate-50" />
           ))}
         </div>
       )}
@@ -252,39 +253,5 @@ export function DashboardPage() {
         </>
       )}
     </>
-  )
-}
-
-const STAT_TONES = {
-  navy: 'bg-navy/7 text-navy',
-  ok: 'bg-green-100 text-green-700',
-  warn: 'bg-amber-100 text-amber-700',
-  muted: 'bg-slate-100 text-slate-500',
-} as const
-
-function StatCard({
-  icon: IconComponent,
-  label,
-  value,
-  tone,
-  note,
-}: {
-  icon: LucideIcon
-  label: string
-  value: number
-  tone: keyof typeof STAT_TONES
-  note?: string
-}) {
-  return (
-    <article className={`${card} flex flex-col gap-1`}>
-      <div className={`mb-1 grid size-9 place-items-center rounded-md ${STAT_TONES[tone]}`}>
-        <IconComponent size={18} />
-      </div>
-      <p className="text-sm text-slate-500">{label}</p>
-      <p className="text-[1.875rem] leading-tight font-semibold tracking-tight text-slate-900 tabular-nums">
-        {value.toLocaleString('th-TH')}
-      </p>
-      {note && <p className="mt-0.5 text-[0.725rem] text-slate-500">{note}</p>}
-    </article>
   )
 }
