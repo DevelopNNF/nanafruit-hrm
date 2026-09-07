@@ -240,6 +240,7 @@ export function ShiftFormPage() {
                     required
                     value={draft.shiftStartTime}
                     onChange={(v) => set('shiftStartTime', v)}
+                    quickTimes={['08:00', '09:00']}
                   />
                 </label>
                 <label className={fieldLabel}>
@@ -250,6 +251,7 @@ export function ShiftFormPage() {
                     required
                     value={draft.shiftEndTime}
                     onChange={(v) => set('shiftEndTime', v)}
+                    quickTimes={['17:00', '18:00']}
                   />
                   <span className="font-normal text-slate-400">
                     ถ้าเวลาออกกะน้อยกว่าเวลาเข้ากะ ระบบจะถือว่ากะนี้ข้ามเที่ยงคืน
@@ -276,6 +278,7 @@ export function ShiftFormPage() {
                       required
                       value={draft.breakStartTime ?? ''}
                       onChange={(v) => set('breakStartTime', v || null)}
+                      quickTimes={['12:00', '13:00']}
                     />
                   </label>
                   <label className={fieldLabel}>
@@ -286,6 +289,7 @@ export function ShiftFormPage() {
                       required
                       value={draft.breakEndTime ?? ''}
                       onChange={(v) => set('breakEndTime', v || null)}
+                      quickTimes={['13:00', '14:00']}
                     />
                   </label>
                 </div>
