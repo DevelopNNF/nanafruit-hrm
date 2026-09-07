@@ -66,6 +66,16 @@ function formatDate(dateOnly: string): string {
   })
 }
 
+/** 'HH:MM:SS' -> 'HH:MM'; drop the seconds a round-trip through Postgres adds. */
+function formatTime(time: string): string {
+  return time.slice(0, 5)
+}
+
+function shiftHint(day: WorkScheduleDay): string {
+  if (day.shiftStartTime === null || day.shiftEndTime === null) return 'ยังไม่มีกะ'
+  return `${formatTime(day.shiftStartTime)} - ${formatTime(day.shiftEndTime)}`
+}
+
 const th =
   'border-b border-slate-200 bg-slate-50 px-2 py-2.5 text-center text-[0.675rem] font-semibold tracking-wider text-slate-500 whitespace-nowrap'
 
@@ -208,7 +218,7 @@ export function WorkSchedulePage() {
                     {emp.days.slice(0, dayCount).map((day) => (
                       <td
                         key={day.date}
-                        title={`${formatDate(day.date)} · ${STATUS_LABEL[day.status]}${day.label ? ` (${day.label})` : ''}`}
+                        title={`${formatDate(day.date)} · ${STATUS_LABEL[day.status]}${day.label ? ` (${day.label})` : ''} · ${shiftHint(day)}`}
                         className={`border-b border-l border-slate-200 px-1 py-2 text-center tabular-nums ${STATUS_CELL[day.status]}`}
                       >
                         {cellText(day)}

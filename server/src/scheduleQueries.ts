@@ -89,6 +89,8 @@ export async function buildMonthScheduleForAllEmployees(
       status: d.status,
       label: d.label,
       shiftCode: d.shiftId === null ? null : (shiftCodeById.get(d.shiftId) ?? null),
+      shiftStartTime: d.shiftStartTime,
+      shiftEndTime: d.shiftEndTime,
     }))
     schedules.push({
       employeeId: Number(row.id),

@@ -273,34 +273,36 @@ export function EmployeeListPage() {
           <p className={subtitle}>ข้อมูลประวัติและสถานะการจ้างงาน</p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
-          <DropdownMenuButton
-            label={exporting || exportingFinance ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
-            icon={<Download size={16} />}
-            disabled={exporting || exportingFinance}
-            items={[
-              {
-                label: 'พนักงานทั่วไป (EMP-IMP)',
-                description: 'พนักงานทุกคน ตามเทมเพลตข้อมูลพนักงานมาตรฐาน',
-                onClick: () => void handleExport('standard'),
-              },
-              {
-                label: 'พนักงานรายวันชั่วคราว (TEMP-EMP-IMP)',
-                description: 'เฉพาะพนักงานประเภท “ชั่วคราว” ตามเทมเพลตพนักงานรายวันชั่วคราว',
-                onClick: () => void handleExport('temp_worker'),
-              },
-              // เฉพาะฝ่ายเงินเดือน/ผู้ดูแลระบบ — ข้อมูลบัญชีธนาคาร/ภาษี/ประกันสังคม
-              // ของพนักงานทุกคนในไฟล์เดียว ไม่ใช่สิ่งที่ HR ทั่วไปควรดึงออกมาได้
-              ...(canWritePayroll
-                ? [
-                    {
-                      label: 'ข้อมูลการเงินพนักงาน (EMP-FIN-IMP)',
-                      description: 'ค่าจ้าง ช่องทางจ่ายเงิน ธนาคาร ประกันสังคม ภาษี ของพนักงานทุกคน',
-                      onClick: () => void handleExportFinance(),
-                    },
-                  ]
-                : []),
-            ]}
-          />
+          {canWrite && (
+            <DropdownMenuButton
+              label={exporting || exportingFinance ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
+              icon={<Download size={16} />}
+              disabled={exporting || exportingFinance}
+              items={[
+                {
+                  label: 'พนักงานทั่วไป (EMP-IMP)',
+                  description: 'พนักงานทุกคน ตามเทมเพลตข้อมูลพนักงานมาตรฐาน',
+                  onClick: () => void handleExport('standard'),
+                },
+                {
+                  label: 'พนักงานรายวันชั่วคราว (TEMP-EMP-IMP)',
+                  description: 'เฉพาะพนักงานประเภท “ชั่วคราว” ตามเทมเพลตพนักงานรายวันชั่วคราว',
+                  onClick: () => void handleExport('temp_worker'),
+                },
+                // เฉพาะฝ่ายเงินเดือน/ผู้ดูแลระบบ — ข้อมูลบัญชีธนาคาร/ภาษี/ประกันสังคม
+                // ของพนักงานทุกคนในไฟล์เดียว ไม่ใช่สิ่งที่ HR ทั่วไปควรดึงออกมาได้
+                ...(canWritePayroll
+                  ? [
+                      {
+                        label: 'ข้อมูลการเงินพนักงาน (EMP-FIN-IMP)',
+                        description: 'ค่าจ้าง ช่องทางจ่ายเงิน ธนาคาร ประกันสังคม ภาษี ของพนักงานทุกคน',
+                        onClick: () => void handleExportFinance(),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          )}
           {canWrite && (
             <Link className={button()} to="/employees/import">
               <Upload size={16} />

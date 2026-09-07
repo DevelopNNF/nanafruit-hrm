@@ -2770,6 +2770,10 @@ export type WorkScheduleDay = {
   status: CalendarDayStatus
   label: string | null
   shiftCode: string | null
+  /** Wall-clock 'HH:MM:SS', same as master_shifts' own columns. Null exactly
+   *  when shiftCode is null. */
+  shiftStartTime: string | null
+  shiftEndTime: string | null
 }
 
 export type EmployeeWorkSchedule = {
