@@ -19,7 +19,7 @@ import {
 } from '@hrm/shared'
 import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
-import { fail, handleUnexpected } from '../http.js'
+import { fail, handleUnexpected, parseOptionalPositiveIntArray } from '../http.js'
 import { recordAudit } from '../audit.js'
 import { findEmployeeById } from '../employeeQueries.js'
 import { findActiveLocations } from '../locationQueries.js'
@@ -40,7 +40,7 @@ import {
   resolvePayrollPeriodStatus,
 } from '../attendancePunchConfirmQueries.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
-import { resolveSupervisorScope } from '../supervisorScope.js'
+import { narrowToScope, resolveSupervisorScope } from '../supervisorScope.js'
 
 export const attendanceRouter = Router()
 
@@ -380,8 +380,8 @@ attendanceRouter.get('/attendance', canReadAdmin, async (req: Request, res: Resp
 // change, an approved leave, or now, confirming which raw punch belongs to
 // it), not by editing the report row itself.
 attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res: Response) => {
-  const employeeId = parseOptionalId(req.query['employeeId'])
-  if (employeeId === undefined) return fail(res, 400, 'employeeId must be a positive integer')
+  const employeeIds = parseOptionalPositiveIntArray(req.query['employeeId'])
+  if (employeeIds === undefined) return fail(res, 400, 'employeeId must be a positive integer')
 
   const departmentId = parseOptionalId(req.query['departmentId'])
   if (departmentId === undefined) return fail(res, 400, 'departmentId must be a positive integer')
@@ -426,10 +426,11 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
       return res.json(body)
     }
 
+    const scopedEmployeeIds = narrowToScope(scope, employeeIds ?? undefined)
+
     const result = await listAttendanceDaily(
       {
-        ...(employeeId !== null && { employeeId }),
-        ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
+        ...(scopedEmployeeIds !== undefined && { employeeIds: scopedEmployeeIds }),
         ...(departmentId !== null && { departmentId }),
         ...(fromDate !== null && { fromDate }),
         ...(toDate !== null && { toDate }),
@@ -455,8 +456,8 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
 // route table reads filter-then-export, but registered independently since
 // it answers with a file, not an AttendanceDailyListResponse.
 attendanceRouter.get('/attendance/daily/export', canReadAdmin, async (req: Request, res: Response) => {
-  const employeeId = parseOptionalId(req.query['employeeId'])
-  if (employeeId === undefined) return fail(res, 400, 'employeeId must be a positive integer')
+  const employeeIds = parseOptionalPositiveIntArray(req.query['employeeId'])
+  if (employeeIds === undefined) return fail(res, 400, 'employeeId must be a positive integer')
 
   const departmentId = parseOptionalId(req.query['departmentId'])
   if (departmentId === undefined) return fail(res, 400, 'departmentId must be a positive integer')
@@ -487,9 +488,10 @@ attendanceRouter.get('/attendance/daily/export', canReadAdmin, async (req: Reque
     const scope = await resolveSupervisorScope(auth)
     if (scope.kind === 'none') return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ดูรายงานนี้', 'FORBIDDEN')
 
+    const scopedEmployeeIds = narrowToScope(scope, employeeIds ?? undefined)
+
     const buffer = await buildAttendanceReportWorkbook({
-      ...(employeeId !== null && { employeeId }),
-      ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
+      ...(scopedEmployeeIds !== undefined && { employeeIds: scopedEmployeeIds }),
       ...(departmentId !== null && { departmentId }),
       ...(fromDate !== null && { fromDate }),
       ...(toDate !== null && { toDate }),

@@ -7,7 +7,7 @@ import { Router } from 'express'
 import type { Request, Response } from 'express'
 import { ROLES, type OvertimeReportResponse } from '@hrm/shared'
 import { requireRole } from '../auth/middleware.js'
-import { fail, handleUnexpected } from '../http.js'
+import { fail, handleUnexpected, parseOptionalPositiveIntArray } from '../http.js'
 import { buildOvertimeReport } from '../overtimeReportQueries.js'
 
 export const overtimeReportRouter = Router()
@@ -48,6 +48,9 @@ overtimeReportRouter.get('/overtime-report', canReadAdmin, async (req: Request, 
   const employeeId = parsePositiveInt(req.query['employeeId'])
   if (employeeId === null) return fail(res, 400, 'employeeId must be a positive integer')
 
+  const employeeIds = parseOptionalPositiveIntArray(req.query['employeeIds'])
+  if (employeeIds === undefined) return fail(res, 400, 'employeeIds must be a positive integer')
+
   const departmentId = parsePositiveInt(req.query['departmentId'])
   if (departmentId === null) return fail(res, 400, 'departmentId must be a positive integer')
 
@@ -56,6 +59,7 @@ overtimeReportRouter.get('/overtime-report', canReadAdmin, async (req: Request, 
       fromDate,
       toDate,
       ...(employeeId !== undefined ? { employeeId } : {}),
+      ...(employeeIds !== null ? { employeeIds } : {}),
       ...(departmentId !== undefined ? { departmentId } : {}),
     })
     const body: OvertimeReportResponse = report

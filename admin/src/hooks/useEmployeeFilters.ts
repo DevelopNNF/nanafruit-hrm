@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import {
   EMPLOYMENT_TYPES,
   type Department,
@@ -53,6 +53,13 @@ export type EmployeeFilterBarProps = {
   canWritePayroll: boolean
   fetching: boolean
   onSubmit: (e: FormEvent) => void
+  /** Extra, page-owned fields (e.g. a report's date range and its own
+   *  status filter) rendered inside the same grid as the standard ones, so
+   *  a page needs only one filter panel and one ค้นหา button instead of a
+   *  separate box per field group. The hook itself never sets this — a page
+   *  passes it by overriding the prop after spreading barProps, the same
+   *  way it already overrides `fetching`. */
+  extraFields?: ReactNode
 }
 
 /** Owns every "which employees" filter field (department / job / employment

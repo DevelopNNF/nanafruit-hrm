@@ -57,3 +57,16 @@ export function scopeAllows(scope: SupervisorScope, employeeId: number): boolean
   if (scope.kind === 'team') return scope.employeeIds.includes(employeeId)
   return false
 }
+
+/** Intersects a client-requested employee-id filter (e.g. from the admin
+ *  filter UI) with the scope, the same way scopeAllows checks one id — so a
+ *  report/list can't be widened past what the caller is actually allowed to
+ *  see. `ids` undefined means "the client asked for no restriction"; the
+ *  result is what to pass as the query's own employeeIds filter, still
+ *  undefined when neither side restricts anything. */
+export function narrowToScope(scope: SupervisorScope, ids: number[] | undefined): number[] | undefined {
+  if (scope.kind !== 'team') return ids
+  if (ids === undefined) return scope.employeeIds
+  const scopeIds = new Set(scope.employeeIds)
+  return ids.filter((id) => scopeIds.has(id))
+}

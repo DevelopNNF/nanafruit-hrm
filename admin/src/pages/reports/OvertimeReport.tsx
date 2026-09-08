@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import {
-  OVERTIME_WEEKLY_CAP_MINUTES,
-  type Department,
-  type OvertimeReportResponse,
-} from '@hrm/shared'
+import { OVERTIME_WEEKLY_CAP_MINUTES, type OvertimeReportResponse } from '@hrm/shared'
 import { fetchOvertimeReport } from '../../api/overtimeReport'
-import { listDepartments } from '../../api/departments'
+import { resolveEmployeeIds } from '../../api/employees'
+import { useCanWritePayroll } from '../../auth/meContext'
+import { EmployeeFilterBar, filterFieldLabel, filterFieldRow } from '../../components/EmployeeFilterBar'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
+import { useEmployeeFilters } from '../../hooks/useEmployeeFilters'
 import {
   DAY_STATUS_LABEL,
   formatBaht,
@@ -22,7 +21,6 @@ import {
   cardEmpty,
   eyebrow,
   fieldControl,
-  fieldLabel,
   muted,
   pageHead,
   subtitle,
@@ -85,43 +83,61 @@ function downloadCsv(filename: string, rows: (string | number | null)[][]): void
 }
 
 export function OvertimeReport() {
+  const canWritePayroll = useCanWritePayroll()
   const initial = useMemo(() => defaultRange(), [])
   const [fromDate, setFromDate] = useState(initial.from)
   const [toDate, setToDate] = useState(initial.to)
-  const [departmentId, setDepartmentId] = useState<number | ''>('')
-  const [departments, setDepartments] = useState<Department[]>([])
   const [tab, setTab] = useState<TabValue>('employee')
   const [state, setState] = useState<State>({ phase: 'loading' })
+  // True while a report request is in flight — only used to disable the
+  // employee filter bar's own ค้นหา button while a fetch is running.
+  const [fetching, setFetching] = useState(true)
 
-  useEffect(() => {
-    const controller = new AbortController()
-    listDepartments(controller.signal)
-      .then(setDepartments)
-      .catch(() => {
-        // A missing department list only costs one filter; the report itself
-        // still works, so this stays silent rather than blocking the page.
-      })
-    return () => controller.abort()
-  }, [])
+  const employeeFilters = useEmployeeFilters({
+    // 'all' rather than 'Active' — a past period's OT can belong to an
+    // employee who has since left, and hiding those by default would make
+    // the report look incomplete.
+    defaultStatus: 'all',
+    canWritePayroll,
+    onApply: () => setFetching(true),
+  })
+
+  function handleFromDateChange(value: string) {
+    setFetching(true)
+    setFromDate(value)
+  }
+
+  function handleToDateChange(value: string) {
+    setFetching(true)
+    setToDate(value)
+  }
 
   // No reset to 'loading' when the filters change: the previous table stays up
   // until the new one lands rather than flashing blank, same as the
   // attendance report.
   useEffect(() => {
     const controller = new AbortController()
+    const hasEmployeeFilter = Object.keys(employeeFilters.filter).length > 0
 
-    fetchOvertimeReport(
-      { fromDate, toDate, ...(departmentId !== '' && { departmentId }) },
-      controller.signal
-    )
-      .then((report) => setState({ phase: 'ok', report }))
+    // Two calls, not one: the OT report has no join of its own to filter by
+    // department/job/etc., so those are resolved to employee ids against
+    // /employees/search first (skipped entirely when unset).
+    Promise.resolve(hasEmployeeFilter ? resolveEmployeeIds(employeeFilters.filter, controller.signal) : undefined)
+      .then((employeeIds) =>
+        fetchOvertimeReport({ fromDate, toDate, ...(employeeIds !== undefined && { employeeIds }) }, controller.signal)
+      )
+      .then((report) => {
+        setState({ phase: 'ok', report })
+        setFetching(false)
+      })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({ phase: 'error', message: err instanceof Error ? err.message : 'request failed' })
+        setFetching(false)
       })
 
     return () => controller.abort()
-  }, [fromDate, toDate, departmentId])
+  }, [fromDate, toDate, employeeFilters.filter])
 
   const report = state.phase === 'ok' ? state.report : null
   const summary = report?.summary ?? null
@@ -171,59 +187,52 @@ export function OvertimeReport() {
             ชั่วโมงล่วงเวลาที่อนุมัติแล้วและลงเวลาจริง แยกตามหมวดเรทค่าจ้าง
           </p>
         </div>
-        {summary && (
-          <div className="rounded-lg border border-navy/20 bg-navy/7 px-3 py-2 text-xs whitespace-nowrap text-navy">
-            <span className="font-medium">ประมวลผลล่าสุด</span> {formatStamp(summary.lastComputedAt)}
-          </div>
-        )}
-      </header>
-
-      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
-        <label className={fieldLabel}>
-          <span>ตั้งแต่วันที่</span>
-          <input
-            type="date"
-            className={fieldControl}
-            value={fromDate}
-            max={toDate}
-            onChange={(e) => setFromDate(e.target.value)}
-          />
-        </label>
-        <label className={fieldLabel}>
-          <span>ถึงวันที่</span>
-          <input
-            type="date"
-            className={fieldControl}
-            value={toDate}
-            min={fromDate}
-            onChange={(e) => setToDate(e.target.value)}
-          />
-        </label>
-        <label className={fieldLabel}>
-          <span>แผนก</span>
-          <select
-            className={fieldControl}
-            value={departmentId}
-            onChange={(e) => setDepartmentId(e.target.value === '' ? '' : Number(e.target.value))}
-          >
-            <option value="">ทุกแผนก</option>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.deptName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="flex items-end">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {summary && (
+            <div className="rounded-lg border border-navy/20 bg-navy/7 px-3 py-2 text-xs whitespace-nowrap text-navy">
+              <span className="font-medium">ประมวลผลล่าสุด</span> {formatStamp(summary.lastComputedAt)}
+            </div>
+          )}
           <button
             type="button"
-            className={`${button('default')} w-full`}
+            className={button('default')}
             disabled={report === null || report.byEmployee.length === 0}
             onClick={exportCsv}
           >
             ดาวน์โหลด CSV
           </button>
         </div>
+      </header>
+
+      <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <EmployeeFilterBar
+          {...employeeFilters.barProps}
+          fetching={fetching}
+          extraFields={
+            <>
+              <label className={filterFieldRow}>
+                <span className={filterFieldLabel}>ตั้งแต่วันที่ :</span>
+                <input
+                  type="date"
+                  className={`${fieldControl} w-full`}
+                  value={fromDate}
+                  max={toDate}
+                  onChange={(e) => handleFromDateChange(e.target.value)}
+                />
+              </label>
+              <label className={filterFieldRow}>
+                <span className={filterFieldLabel}>ถึงวันที่ :</span>
+                <input
+                  type="date"
+                  className={`${fieldControl} w-full`}
+                  value={toDate}
+                  min={fromDate}
+                  onChange={(e) => handleToDateChange(e.target.value)}
+                />
+              </label>
+            </>
+          }
+        />
       </div>
 
       {summary && (

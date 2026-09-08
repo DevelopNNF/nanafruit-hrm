@@ -74,6 +74,24 @@ export async function searchEmployees(
   return unwrap<EmployeeSearchResponse>(res)
 }
 
+/** Comfortably covers this company's headcount — searchEmployees is
+ *  paginated for on-screen display, but a resource with no join of its own
+ *  to run this filter against (a request list, an attendance/OT report)
+ *  needs every matching id, not one page of them. */
+const MAX_RESOLVED_EMPLOYEE_IDS = 5000
+
+/** Resolves an EmployeeSearchFilter to the ids of every matching employee —
+ *  for pages that scope another resource by the same "which employees"
+ *  filter as EmployeeListPage but have no server-side join to run it
+ *  against directly (requests, attendance/OT reports). Skips the request
+ *  entirely when the filter is empty, since an unfiltered scope is exactly
+ *  "don't restrict by employee id" — the caller should omit employeeIds
+ *  rather than ask this to resolve the entire employee list. */
+export async function resolveEmployeeIds(filter: EmployeeSearchFilter, signal?: AbortSignal): Promise<number[]> {
+  const { employees } = await searchEmployees(filter, { page: 1, pageSize: MAX_RESOLVED_EMPLOYEE_IDS }, signal)
+  return employees.map((e) => e.id)
+}
+
 export async function getEmployee(id: number, signal?: AbortSignal): Promise<Employee> {
   const res = await apiFetch(`/api/employees/${id}`, { signal })
   const body = await unwrap<EmployeeResponse>(res)

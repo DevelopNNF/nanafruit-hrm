@@ -36,6 +36,12 @@ export type OvertimeReportFilter = {
   fromDate: string
   toDate: string
   employeeId?: number
+  /** Restricts to these employee ids — how the admin filter UI's department/
+   *  job/employment-type/etc. selections narrow the report, resolved
+   *  client-side against /employees/search since this report has no join of
+   *  its own to run that filter against directly. Absent means no
+   *  restriction. */
+  employeeIds?: number[]
   departmentId?: number
 }
 
@@ -195,6 +201,10 @@ export async function buildOvertimeReport(
   if (filter.employeeId !== undefined) {
     params.push(filter.employeeId)
     conditions.push(`d.employee_id = $${params.length}`)
+  }
+  if (filter.employeeIds && filter.employeeIds.length > 0) {
+    params.push(filter.employeeIds)
+    conditions.push(`d.employee_id = ANY($${params.length})`)
   }
   if (filter.departmentId !== undefined) {
     params.push(filter.departmentId)

@@ -5,6 +5,10 @@ export type AttendanceDailyQuery = {
   fromDate?: string
   toDate?: string
   employeeId?: number
+  /** Restricts to these employee ids — how the shared employee filter bar's
+   *  department/job/employment-type/etc. selections narrow this report,
+   *  resolved client-side against /employees/search. */
+  employeeIds?: number[]
   departmentId?: number
   status?: AttendanceDailyFilter
   workLocation?: WorkLocation
@@ -17,6 +21,7 @@ function buildParams(query: AttendanceDailyQuery): URLSearchParams {
   if (query.fromDate) params.set('fromDate', query.fromDate)
   if (query.toDate) params.set('toDate', query.toDate)
   if (query.employeeId !== undefined) params.set('employeeId', String(query.employeeId))
+  query.employeeIds?.forEach((id) => params.append('employeeId', String(id)))
   if (query.departmentId !== undefined) params.set('departmentId', String(query.departmentId))
   if (query.status) params.set('status', query.status)
   if (query.workLocation) params.set('workLocation', query.workLocation)

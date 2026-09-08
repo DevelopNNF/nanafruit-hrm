@@ -45,7 +45,7 @@ export function PendingApprovalsSummary() {
     return (
       <div className={`${SUMMARY_GRID} mb-5`}>
         {CARDS.map((c) => (
-          <div key={c.key} className="h-[8.5rem] rounded-lg border border-dashed border-slate-200 bg-slate-50" />
+          <div key={c.key} className="h-34 rounded-lg border border-dashed border-slate-200 bg-slate-50" />
         ))}
       </div>
     )

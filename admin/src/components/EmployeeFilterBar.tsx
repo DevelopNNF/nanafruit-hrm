@@ -3,6 +3,12 @@ import { type EmployeeFilterBarProps } from '../hooks/useEmployeeFilters'
 import { TreeSelect } from './TreeSelect'
 import { button, fieldControl } from '../styles'
 
+/** The label/control row style every field in this grid uses — exported so
+ *  a page's own `extraFields` (a report's date range, its own status
+ *  filter, …) can match it instead of guessing at the same classes. */
+export const filterFieldRow = 'flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600'
+export const filterFieldLabel = 'w-28 shrink-0 text-right'
+
 /** The "which employees" filter grid shared by every page that lists or
  *  scopes work by employee (employee registry, requests, attendance/OT
  *  reports) — paired with useEmployeeFilters, which owns the state this
@@ -14,10 +20,12 @@ export function EmployeeFilterBar({
   canWritePayroll,
   fetching,
   onSubmit,
+  extraFields,
 }: EmployeeFilterBarProps) {
   return (
     <>
       <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
+        {extraFields}
         <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
           <span className="w-28 shrink-0 text-right">แผนก :</span>
           <TreeSelect
@@ -88,7 +96,7 @@ export function EmployeeFilterBar({
           </select>
         </label>
         <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
-          <span className="w-28 shrink-0 text-right">สถานะ :</span>
+          <span className="w-28 shrink-0 text-right">สถานะการทำงาน :</span>
           <select
             className={`${fieldControl} w-full`}
             value={values.statusFilter}

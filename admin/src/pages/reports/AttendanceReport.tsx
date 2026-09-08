@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Pencil } from 'lucide-react'
 import {
   ATTENDANCE_DAILY_FILTERS,
-  WORK_LOCATIONS,
   attendanceBadges,
   formatWorkMinutes,
   type AttendanceCandidatePunch,
@@ -10,15 +9,15 @@ import {
   type AttendanceDailyItem,
   type AttendanceDailySummary,
   type AttendanceEventType,
-  type Department,
-  type WorkLocation,
 } from '@hrm/shared'
 import { exportAttendanceDaily, listAttendanceDaily } from '../../api/attendanceDaily'
 import { confirmAttendancePunch, fetchCandidatePunches } from '../../api/attendancePunchConfirm'
-import { listDepartments } from '../../api/departments'
-import { useCanWrite } from '../../auth/meContext'
+import { resolveEmployeeIds } from '../../api/employees'
+import { useCanWrite, useCanWritePayroll } from '../../auth/meContext'
+import { EmployeeFilterBar, filterFieldLabel, filterFieldRow } from '../../components/EmployeeFilterBar'
 import { Pagination } from '../../components/Pagination'
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover'
+import { useEmployeeFilters } from '../../hooks/useEmployeeFilters'
 import { notify } from '../../notifications/notify'
 import {
   alert,
@@ -29,7 +28,6 @@ import {
   cardEmpty,
   eyebrow,
   fieldControl,
-  fieldLabel,
   muted,
   pageHead,
   subtitle,
@@ -44,15 +42,6 @@ type State =
  *  explicitly anyway so a server-side change can't silently desync the
  *  page-count math in <Pagination>. */
 const DEFAULT_PAGE_SIZE = 50
-
-type Filters = {
-  fromDate: string
-  toDate: string
-  departmentId: number | ''
-  status: AttendanceDailyFilter | ''
-  workLocation: WorkLocation | ''
-  search: string
-}
 
 const FILTER_LABEL: Record<AttendanceDailyFilter, string> = {
   present: 'ปกติ',
@@ -355,45 +344,54 @@ function PunchConfirmPopover({
 
 export function AttendanceDailyListPage() {
   const canConfirmPunch = useCanWrite()
+  const canWritePayroll = useCanWritePayroll()
   const initial = useMemo(() => defaultRange(), [])
-  const initialFilters: Filters = {
-    fromDate: initial.from,
-    toDate: initial.to,
-    departmentId: '',
-    status: '',
-    workLocation: '',
-    search: '',
-  }
-  // `draft` tracks the form fields as the user edits them; `applied` is what
-  // was last submitted and is the only thing the fetch effect depends on —
-  // so changing a filter no longer fires a request until ค้นหา is pressed.
-  const [draft, setDraft] = useState<Filters>(initialFilters)
-  const [applied, setApplied] = useState<Filters>(initialFilters)
-  // Bumped on every ค้นหา submit so the fetch effect below always re-runs —
-  // `applied`/`page` alone don't change (React bails on the setState) when
-  // the user resubmits the same filters already applied on page 1, which
-  // otherwise left `fetching` stuck true with no request in flight.
-  const [searchToken, setSearchToken] = useState(0)
+  // Every field here — date range, this report's own attendance-status
+  // filter, and (via useEmployeeFilters) department/job/employment type/
+  // work location/employee status — applies as soon as it changes; only
+  // the free-text search inside EmployeeFilterBar needs an explicit ค้นหา,
+  // same as everywhere else that filter bar is used.
+  const [fromDate, setFromDate] = useState(initial.from)
+  const [toDate, setToDate] = useState(initial.to)
+  const [status, setStatus] = useState<AttendanceDailyFilter | ''>('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
-  const [departments, setDepartments] = useState<Department[]>([])
   const [state, setState] = useState<State>({ phase: 'loading' })
   // True while a search/page request is in flight — set by the action that
-  // triggers it (handleSearch, the pagination buttons) and cleared once the
-  // fetch effect below settles, so the effect itself never sets it directly.
+  // triggers it and cleared once the fetch effect below settles, so the
+  // effect itself never sets it directly.
   const [fetching, setFetching] = useState(true)
   const [exporting, setExporting] = useState(false)
 
-  useEffect(() => {
-    const controller = new AbortController()
-    listDepartments(controller.signal)
-      .then(setDepartments)
-      .catch(() => {
-        // A missing department list only costs one filter; the report itself
-        // still works, so this stays silent rather than blocking the page.
-      })
-    return () => controller.abort()
-  }, [])
+  const employeeFilters = useEmployeeFilters({
+    // 'all' rather than 'Active' here — attendance rows can belong to an
+    // employee who has since left, and hiding those by default would make
+    // a past period look incomplete.
+    defaultStatus: 'all',
+    canWritePayroll,
+    onApply: () => {
+      setFetching(true)
+      setPage(1)
+    },
+  })
+
+  function handleFromDateChange(value: string) {
+    setFetching(true)
+    setPage(1)
+    setFromDate(value)
+  }
+
+  function handleToDateChange(value: string) {
+    setFetching(true)
+    setPage(1)
+    setToDate(value)
+  }
+
+  function handleStatusChange(value: AttendanceDailyFilter | '') {
+    setFetching(true)
+    setPage(1)
+    setStatus(value)
+  }
 
   // No reset to 'loading' when the page/filters change: the previous table
   // stays up until the new one lands, rather than flashing blank — same
@@ -401,21 +399,26 @@ export function AttendanceDailyListPage() {
   // lighter-weight indicator instead.
   useEffect(() => {
     const controller = new AbortController()
+    const hasEmployeeFilter = Object.keys(employeeFilters.filter).length > 0
 
-    listAttendanceDaily(
-      {
-        fromDate: applied.fromDate,
-        toDate: applied.toDate,
-        ...(applied.departmentId !== '' && { departmentId: applied.departmentId }),
-        ...(applied.status !== '' && { status: applied.status }),
-        ...(applied.workLocation !== '' && { workLocation: applied.workLocation }),
-        ...(applied.search.trim() !== '' && { search: applied.search.trim() }),
-      },
-      { page, pageSize },
-      controller.signal
-    )
+    // Two calls, not one: attendance_daily has no join of its own to filter
+    // by department/job/etc., so those are resolved to employee ids against
+    // /employees/search first (skipped entirely when unset, since resolving
+    // "everyone" would be a pointless full scan).
+    Promise.resolve(hasEmployeeFilter ? resolveEmployeeIds(employeeFilters.filter, controller.signal) : undefined)
+      .then((employeeIds) =>
+        listAttendanceDaily(
+          {
+            fromDate,
+            toDate,
+            ...(status !== '' && { status }),
+            ...(employeeIds !== undefined && { employeeIds }),
+          },
+          { page, pageSize },
+          controller.signal
+        )
+      )
       .then((body) => {
-        console.log(body.days)
         setState({ phase: 'ok', days: body.days, summary: body.summary })
         setFetching(false)
       })
@@ -426,17 +429,9 @@ export function AttendanceDailyListPage() {
       })
 
     return () => controller.abort()
-  }, [applied, page, pageSize, searchToken])
+  }, [fromDate, toDate, status, page, pageSize, employeeFilters.filter])
 
   const summary = state.phase === 'ok' ? state.summary : null
-
-  function handleSearch(e: FormEvent) {
-    e.preventDefault()
-    setFetching(true)
-    setApplied(draft)
-    setPage(1)
-    setSearchToken((t) => t + 1)
-  }
 
   function goToPage(next: number) {
     setFetching(true)
@@ -460,18 +455,18 @@ export function AttendanceDailyListPage() {
   async function handleExport() {
     setExporting(true)
     try {
+      const hasEmployeeFilter = Object.keys(employeeFilters.filter).length > 0
+      const employeeIds = hasEmployeeFilter ? await resolveEmployeeIds(employeeFilters.filter) : undefined
       const blob = await exportAttendanceDaily({
-        fromDate: applied.fromDate,
-        toDate: applied.toDate,
-        ...(applied.departmentId !== '' && { departmentId: applied.departmentId }),
-        ...(applied.status !== '' && { status: applied.status }),
-        ...(applied.workLocation !== '' && { workLocation: applied.workLocation }),
-        ...(applied.search.trim() !== '' && { search: applied.search.trim() }),
+        fromDate,
+        toDate,
+        ...(status !== '' && { status }),
+        ...(employeeIds !== undefined && { employeeIds }),
       })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `attendance-${applied.fromDate}-to-${applied.toDate}.xlsx`
+      link.download = `attendance-${fromDate}-to-${toDate}.xlsx`
       link.click()
       URL.revokeObjectURL(url)
     } catch (err) {
@@ -489,108 +484,68 @@ export function AttendanceDailyListPage() {
           <h1>รายงานการลงเวลา</h1>
           <p className={subtitle}>สรุปการลงเวลารายวัน เทียบกับกะที่พนักงานสังกัด</p>
         </div>
-        {summary && (
-          <div className="rounded-lg border border-navy/20 bg-navy/7 px-3 py-2 text-xs whitespace-nowrap text-navy">
-            <span className="font-medium">ประมวลผลล่าสุด</span> {formatStamp(summary.lastComputedAt)}
-          </div>
-        )}
-      </header>
-
-      <form
-        onSubmit={handleSearch}
-        className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8"
-      >
-        <label className={fieldLabel}>
-          <span>ค้นหา</span>
-          <input
-            type="text"
-            className={fieldControl}
-            placeholder="รหัสพนักงาน, ชื่อ-นามสกุล, ชื่อเล่น"
-            value={draft.search}
-            onChange={(e) => setDraft({ ...draft, search: e.target.value })}
-          />
-        </label>
-        <label className={fieldLabel}>
-          <span>ตั้งแต่วันที่</span>
-          <input
-            type="date"
-            className={fieldControl}
-            value={draft.fromDate}
-            max={draft.toDate}
-            onChange={(e) => setDraft({ ...draft, fromDate: e.target.value })}
-          />
-        </label>
-        <label className={fieldLabel}>
-          <span>ถึงวันที่</span>
-          <input
-            type="date"
-            className={fieldControl}
-            value={draft.toDate}
-            min={draft.fromDate}
-            onChange={(e) => setDraft({ ...draft, toDate: e.target.value })}
-          />
-        </label>
-        <label className={fieldLabel}>
-          <span>แผนก</span>
-          <select
-            className={fieldControl}
-            value={draft.departmentId}
-            onChange={(e) => setDraft({ ...draft, departmentId: e.target.value === '' ? '' : Number(e.target.value) })}
-          >
-            <option value="">ทุกแผนก</option>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.deptName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className={fieldLabel}>
-          <span>สถานะ</span>
-          <select
-            className={fieldControl}
-            value={draft.status}
-            onChange={(e) => setDraft({ ...draft, status: e.target.value as AttendanceDailyFilter | '' })}
-          >
-            <option value="">ทุกสถานะ</option>
-            {ATTENDANCE_DAILY_FILTERS.map((f) => (
-              <option key={f} value={f}>
-                {FILTER_LABEL[f]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className={fieldLabel}>
-          <span>สถานที่ปฏิบัติงาน</span>
-          <select
-            className={fieldControl}
-            value={draft.workLocation}
-            onChange={(e) => setDraft({ ...draft, workLocation: e.target.value as WorkLocation | '' })}
-          >
-            <option value="">ทุกสถานที่</option>
-            {WORK_LOCATIONS.map((loc) => (
-              <option key={loc} value={loc}>
-                {loc}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="flex items-end">
-          <button type="submit" className={`${button('primary')} w-full`} disabled={fetching}>
-            {fetching ? 'กำลังค้นหา…' : 'ค้นหา'}
-          </button>
-        </div>
-        <div className="flex items-end">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {summary && (
+            <div className="rounded-lg border border-navy/20 bg-navy/7 px-3 py-2 text-xs whitespace-nowrap text-navy">
+              <span className="font-medium">ประมวลผลล่าสุด</span> {formatStamp(summary.lastComputedAt)}
+            </div>
+          )}
           <button
             type="button"
-            className={`${button('default')} w-full`}
+            className={button('default')}
             disabled={exporting || state.phase !== 'ok' || state.days.length === 0}
             onClick={handleExport}
           >
             {exporting ? 'กำลังสร้างไฟล์…' : 'ดาวน์โหลด Excel'}
           </button>
         </div>
-      </form>
+      </header>
+
+      <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <EmployeeFilterBar
+          {...employeeFilters.barProps}
+          fetching={fetching}
+          extraFields={
+            <>
+              <label className={filterFieldRow}>
+                <span className={filterFieldLabel}>ตั้งแต่วันที่ :</span>
+                <input
+                  type="date"
+                  className={`${fieldControl} w-full`}
+                  value={fromDate}
+                  max={toDate}
+                  onChange={(e) => handleFromDateChange(e.target.value)}
+                />
+              </label>
+              <label className={filterFieldRow}>
+                <span className={filterFieldLabel}>ถึงวันที่ :</span>
+                <input
+                  type="date"
+                  className={`${fieldControl} w-full`}
+                  value={toDate}
+                  min={fromDate}
+                  onChange={(e) => handleToDateChange(e.target.value)}
+                />
+              </label>
+              <label className={filterFieldRow}>
+                <span className={filterFieldLabel}>สถานะการลงเวลา :</span>
+                <select
+                  className={`${fieldControl} w-full`}
+                  value={status}
+                  onChange={(e) => handleStatusChange(e.target.value as AttendanceDailyFilter | '')}
+                >
+                  <option value="">ทุกสถานะ</option>
+                  {ATTENDANCE_DAILY_FILTERS.map((f) => (
+                    <option key={f} value={f}>
+                      {FILTER_LABEL[f]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          }
+        />
+      </div>
 
       {summary && (
         <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
