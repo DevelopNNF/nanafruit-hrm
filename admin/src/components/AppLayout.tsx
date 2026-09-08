@@ -86,6 +86,7 @@ const NAV: NavItem[] = [
       { to: '/day-off-swap-requests', label: 'คำขอสลับวันหยุด', badgeKey: 'dayOffSwap'},
       { to: '/overtime-requests', label: 'คำขอทำงานล่วงเวลา (OT)', badgeKey: 'overtime'},
       { to: '/overtime-bulk-requests', label: 'ขอ OT แบบกลุ่ม'},
+      { to: '/comp-time-off-requests', label: 'คำขอแปลง OT เป็นวันหยุด'},
       { to: '/off-site-work-requests', label: 'คำขอทำงานนอกสถานที่', badgeKey: 'offSite'},
     ],
   },
