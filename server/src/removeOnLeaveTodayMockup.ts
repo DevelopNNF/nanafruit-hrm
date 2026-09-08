@@ -12,7 +12,7 @@
 
 import 'dotenv/config'
 import { pool } from './db.js'
-import { MOCKUP_OID } from './seedOnLeaveTodayMockup.js'
+import { MOCKUP_OID } from './onLeaveTodayMockupConstants.js'
 
 async function main(): Promise<void> {
   const { rowCount: requestsDeleted } = await pool.query(

@@ -14,9 +14,8 @@
 
 import 'dotenv/config'
 import { pool, withTransaction } from './db.js'
+import { MOCKUP_NAME, MOCKUP_OID } from './onLeaveTodayMockupConstants.js'
 
-export const MOCKUP_OID = 'mockup:on-leave-today'
-const MOCKUP_NAME = 'Mockup Seed Script'
 const MOCK_REASON = '[MOCKUP] ข้อมูลทดสอบสำหรับพรีวิวแดชบอร์ด — ลบได้'
 const MOCK_COUNT = 3
 
