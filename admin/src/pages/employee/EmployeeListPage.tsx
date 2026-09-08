@@ -1,39 +1,22 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Download, Plus, Search, Upload } from 'lucide-react'
-import {
-  EMPLOYEE_STATUSES,
-  EMPLOYMENT_TYPES,
-  WORK_LOCATIONS,
-  type Department,
-  type Employee,
-  type EmployeeStatus,
-  type Job,
-  type PayrollGroup,
-  type WorkLocation,
-} from '@hrm/shared'
+import { Download, Plus, Upload } from 'lucide-react'
+import { type Employee } from '@hrm/shared'
 import {
   exportEmployeeFinance,
   exportEmployees,
   exportTempWorkerEmployees,
   searchEmployees,
 } from '../../api/employees'
-import { listDepartments } from '../../api/departments'
-import { listJobs } from '../../api/jobs'
-import { listPayrollGroups } from '../../api/payrollGroups'
 import { useCanWrite, useCanWritePayroll } from '../../auth/meContext'
 import { notify } from '../../notifications/notify'
 import { DropdownMenuButton } from '../../components/DropdownMenuButton'
+import { EmployeeFilterBar } from '../../components/EmployeeFilterBar'
 import { Pagination } from '../../components/Pagination'
-import { TreeSelect, type TreeSelectOption } from '../../components/TreeSelect'
-import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, fieldControl, muted, pageHead, subtitle } from '../../styles'
+import { useEmployeeFilters } from '../../hooks/useEmployeeFilters'
+import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
 
 type ExportKind = 'standard' | 'temp_worker'
-
-/** The payroll-group filter's own value space: a group id, everybody, or the
- *  people no group covers — which during the parallel run with the previous
- *  HRM is the set HR is working through, and the reason this filter exists. */
-type GroupFilter = 'all' | 'none' | number
 
 type State =
   | { phase: 'loading' }
@@ -45,33 +28,6 @@ const DEFAULT_PAGE_SIZE = 50
 
 export function EmployeeListPage() {
   const [state, setState] = useState<State>({ phase: 'loading' })
-  // `query` tracks the search box as the user types; `appliedQuery` is what
-  // was last submitted and is the only one the fetch effect depends on — so
-  // typing no longer fires a request until ค้นหา is pressed (or Enter).
-  const [query, setQuery] = useState('')
-  const [appliedQuery, setAppliedQuery] = useState('')
-  // Bumped on every ค้นหา submit, purely to force the fetch effect below to
-  // re-run: appliedQuery alone doesn't change when the box is empty (or
-  // resubmitted with the same text), and without this the effect never
-  // re-fires — leaving `fetching` stuck true and the button stuck disabled.
-  const [searchNonce, setSearchNonce] = useState(0)
-  const [payrollGroups, setPayrollGroups] = useState<PayrollGroup[]>([])
-  const [groupFilter, setGroupFilter] = useState<GroupFilter>('all')
-  const [departments, setDepartments] = useState<Department[]>([])
-  const [jobs, setJobs] = useState<Job[]>([])
-  // Empty array means "everything" for all three multi-selects below — same
-  // convention DepartmentListPage's own TreeSelect filter uses — rather than
-  // pre-checking every option, so the trigger can show a neutral placeholder
-  // until the user actually narrows something down.
-  const [departmentFilter, setDepartmentFilter] = useState<number[]>([])
-  const [jobFilter, setJobFilter] = useState<number[]>([])
-  // Indices into EMPLOYMENT_TYPES — TreeSelect needs numeric ids, and the enum
-  // itself has none, so the option list is built from the array's indices.
-  const [employmentTypeFilter, setEmploymentTypeFilter] = useState<number[]>([])
-  const [workLocationFilter, setWorkLocationFilter] = useState<'all' | WorkLocation>('all')
-  // Unlike the other filters, 'Active' rather than 'all' is the default here
-  // — HR's day-to-day view of "the employees" is the ones still working.
-  const [statusFilter, setStatusFilter] = useState<'all' | EmployeeStatus>('Active')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   // True while a search/filter/page request is in flight — used to disable
@@ -82,6 +38,18 @@ export function EmployeeListPage() {
   const canWritePayroll = useCanWritePayroll()
   const [exporting, setExporting] = useState(false)
   const [exportingFinance, setExportingFinance] = useState(false)
+
+  const employeeFilters = useEmployeeFilters({
+    // Unlike the other filters, 'Active' rather than 'all' is the default
+    // here — HR's day-to-day view of "the employees" is the ones still
+    // working.
+    defaultStatus: 'Active',
+    canWritePayroll,
+    onApply: () => {
+      setFetching(true)
+      setPage(1)
+    },
+  })
 
   async function handleExport(kind: ExportKind) {
     setExporting(true)
@@ -119,60 +87,13 @@ export function EmployeeListPage() {
     }
   }
 
-  useEffect(() => {
-    const controller = new AbortController()
-    listPayrollGroups(controller.signal)
-      .then(setPayrollGroups)
-      .catch(() => {
-        // Only used to label a filter — not worth failing the whole page over.
-      })
-    listDepartments(controller.signal)
-      .then(setDepartments)
-      .catch(() => {
-        // Only used to label a filter — not worth failing the whole page over.
-      })
-    listJobs(controller.signal)
-      .then(setJobs)
-      .catch(() => {
-        // Only used to label a filter — not worth failing the whole page over.
-      })
-    return () => controller.abort()
-  }, [])
-
-  const departmentTreeOptions: TreeSelectOption[] = useMemo(
-    () => departments.map((d) => ({ id: d.id, label: d.deptName, parentId: d.parentDepartmentId })),
-    [departments]
-  )
-  const jobOptions: TreeSelectOption[] = useMemo(
-    () => jobs.map((j) => ({ id: j.id, label: j.jobTitle, parentId: null })),
-    [jobs]
-  )
-  const employmentTypeOptions: TreeSelectOption[] = useMemo(
-    () => EMPLOYMENT_TYPES.map((type, index) => ({ id: index, label: type, parentId: null })),
-    []
-  )
-
   // No setState({ phase: 'loading' }) at the top: a search/filter/page change
   // just leaves the old table in place until the new one is ready, rather
   // than flashing blank — same reasoning as every other paginated list page.
   useEffect(() => {
     const controller = new AbortController()
 
-    searchEmployees(
-      {
-        ...(appliedQuery.trim() !== '' && { query: appliedQuery.trim() }),
-        ...(groupFilter !== 'all' && { payrollGroupId: groupFilter }),
-        ...(departmentFilter.length > 0 && { departmentIds: departmentFilter }),
-        ...(jobFilter.length > 0 && { jobIds: jobFilter }),
-        ...(employmentTypeFilter.length > 0 && {
-          employmentTypes: employmentTypeFilter.map((index) => EMPLOYMENT_TYPES[index]!),
-        }),
-        ...(workLocationFilter !== 'all' && { workLocation: workLocationFilter }),
-        ...(statusFilter !== 'all' && { status: statusFilter }),
-      },
-      { page, pageSize },
-      controller.signal
-    )
+    searchEmployees(employeeFilters.filter, { page, pageSize }, controller.signal)
       .then((body) => {
         setState({ phase: 'ok', employees: body.employees, total: body.total })
         setFetching(false)
@@ -187,62 +108,7 @@ export function EmployeeListPage() {
       })
 
     return () => controller.abort()
-  }, [
-    appliedQuery,
-    searchNonce,
-    groupFilter,
-    departmentFilter,
-    jobFilter,
-    employmentTypeFilter,
-    workLocationFilter,
-    statusFilter,
-    page,
-    pageSize,
-  ])
-
-  function handleSearchSubmit(e: FormEvent) {
-    e.preventDefault()
-    setFetching(true)
-    setAppliedQuery(query)
-    setSearchNonce((n) => n + 1)
-    setPage(1)
-  }
-
-  function handleGroupFilterChange(value: GroupFilter) {
-    setFetching(true)
-    setGroupFilter(value)
-    setPage(1)
-  }
-
-  function handleDepartmentFilterChange(value: number[]) {
-    setFetching(true)
-    setDepartmentFilter(value)
-    setPage(1)
-  }
-
-  function handleJobFilterChange(value: number[]) {
-    setFetching(true)
-    setJobFilter(value)
-    setPage(1)
-  }
-
-  function handleEmploymentTypeFilterChange(value: number[]) {
-    setFetching(true)
-    setEmploymentTypeFilter(value)
-    setPage(1)
-  }
-
-  function handleWorkLocationFilterChange(value: 'all' | WorkLocation) {
-    setFetching(true)
-    setWorkLocationFilter(value)
-    setPage(1)
-  }
-
-  function handleStatusFilterChange(value: 'all' | EmployeeStatus) {
-    setFetching(true)
-    setStatusFilter(value)
-    setPage(1)
-  }
+  }, [employeeFilters.filter, page, pageSize])
 
   function goToPage(next: number) {
     setFetching(true)
@@ -255,14 +121,7 @@ export function EmployeeListPage() {
     setPage(1)
   }
 
-  const filtering =
-    appliedQuery.trim() !== '' ||
-    groupFilter !== 'all' ||
-    departmentFilter.length > 0 ||
-    jobFilter.length > 0 ||
-    employmentTypeFilter.length > 0 ||
-    workLocationFilter !== 'all' ||
-    statusFilter !== 'Active'
+  const filtering = employeeFilters.filtering
 
   return (
     <>
@@ -345,131 +204,8 @@ export function EmployeeListPage() {
       {state.phase === 'ok' && (state.total > 0 || filtering) && (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3.5">
-            {/* <div className="flex flex-wrap items-center justify-between gap-4">
-              <form onSubmit={handleSearchSubmit} className="flex max-w-108 min-w-0 flex-1 items-center gap-2">
-                <div className="relative flex min-w-0 flex-1 items-center">
-                  <Search size={15} className="pointer-events-none absolute left-2.5 text-slate-500" />
-                  <input
-                    type="search"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="ค้นหา รหัส ชื่อ ชื่อเล่น หรือตำแหน่ง"
-                    aria-label="ค้นหาพนักงาน"
-                    className="w-full rounded-md border border-slate-200 bg-white py-2 pr-3 pl-9 text-[0.825rem] text-slate-900 placeholder:text-slate-500"
-                  />
-                </div>
-                <button type="submit" className={button('default')} disabled={fetching}>
-                  ค้นหา
-                </button>
-              </form>
-              <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
-                {filtering ? `พบ ${state.total} คน` : `ทั้งหมด ${state.total} คน`}
-              </p>
-            </div> */}
-
-            <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
-              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
-                <span className="w-28 shrink-0 text-right">แผนก :</span>
-                <TreeSelect
-                  mode="multiple"
-                  options={departmentTreeOptions}
-                  value={departmentFilter}
-                  onChange={handleDepartmentFilterChange}
-                  placeholder="ทั้งหมด"
-                  className="w-full"
-                />
-              </label>
-              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
-                <span className="w-28 shrink-0 text-right">ตำแหน่งงาน :</span>
-                <TreeSelect
-                  mode="multiple"
-                  options={jobOptions}
-                  value={jobFilter}
-                  onChange={handleJobFilterChange}
-                  placeholder="ทั้งหมด"
-                  className="w-full"
-                />
-              </label>
-              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
-                <span className="w-28 shrink-0 text-right">ประเภทการจ้าง :</span>
-                <TreeSelect
-                  mode="multiple"
-                  options={employmentTypeOptions}
-                  value={employmentTypeFilter}
-                  onChange={handleEmploymentTypeFilterChange}
-                  placeholder="ทั้งหมด"
-                  className="w-full"
-                />
-              </label>
-              {canWritePayroll &&
-                <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
-                  <span className="w-28 shrink-0 text-right">กลุ่มเงินเดือน :</span>
-                  <select
-                    className={`${fieldControl} w-full`}
-                    value={typeof groupFilter === 'number' ? String(groupFilter) : groupFilter}
-                    onChange={(e) => {
-                      const value = e.target.value
-                      handleGroupFilterChange(value === 'all' || value === 'none' ? value : Number(value))
-                    }}
-                  >
-                    <option value="all">— ทั้งหมด —</option>
-                    <option value="none">ยังไม่อยู่กลุ่มใด</option>
-                    {payrollGroups.map((group) => (
-                      <option key={group.id} value={group.id}>
-                        {group.groupName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              }
-              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
-                <span className="w-28 shrink-0 text-right">สถานที่ปฏิบัติงาน :</span>
-                <select
-                  className={`${fieldControl} w-full`}
-                  value={workLocationFilter}
-                  onChange={(e) => handleWorkLocationFilterChange(e.target.value as 'all' | WorkLocation)}
-                >
-                  <option value="all">ทั้งหมด</option>
-                  {WORK_LOCATIONS.map((location) => (
-                    <option key={location} value={location}>
-                      {location}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
-                <span className="w-28 shrink-0 text-right">สถานะ :</span>
-                <select
-                  className={`${fieldControl} w-full`}
-                  value={statusFilter}
-                  onChange={(e) => handleStatusFilterChange(e.target.value as 'all' | EmployeeStatus)}
-                >
-                  <option value="all">ทั้งหมด</option>
-                  {EMPLOYEE_STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {status}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
-                <span className="w-28 shrink-0 text-right">ค้นหา :</span>
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="ค้นหา รหัส ชื่อ ชื่อเล่น หรือตำแหน่ง"
-                  aria-label="ค้นหาพนักงาน"
-                  className="w-full rounded-md border border-slate-200 bg-white p-2 text-[0.825rem] text-slate-900 placeholder:text-slate-500"
-                />
-              </label>
-            </div>
-            <div className='w-full mt-3 flex justify-center'>
-              <button type="submit" className={button('default')} disabled={fetching} onClick={handleSearchSubmit}>
-                ค้นหา
-              </button>
-            </div>
-            <p className="text-[0.775rem] w-full text-right whitespace-nowrap text-slate-500 tabular-nums">
+            <EmployeeFilterBar {...employeeFilters.barProps} fetching={fetching} />
+            <p className="mt-2 w-full text-right text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
               {filtering ? `พบ ${state.total} คน` : `ทั้งหมด ${state.total} คน`}
             </p>
           </div>
