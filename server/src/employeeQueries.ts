@@ -362,22 +362,23 @@ export async function describeActor(
   return { oid: `employee:${actor.employeeId}`, name: `${employee.title}${employee.firstNameTh} ${employee.lastNameTh}` }
 }
 
-export type EmployeeBulkOtCandidate = {
+export type EmployeeScopeCandidate = {
   id: number
   employeeCode: string
   employeeName: string
   departmentName: string | null
 }
 
-/** Active employees for the Bulk OT Request picker — just enough to render
- *  and search a TransferList row, not the full Employee join (jobTitle,
+/** Active employees within a resolved supervisor scope — just enough to
+ *  render and search a picker row, not the full Employee join (jobTitle,
  *  shift, ... are never shown there). `employeeIds` narrows to a specific
  *  set — a supervisor's own direct reports; null means every active
- *  employee, HR/Admin's 'all' scope. */
-export async function listActiveEmployeesForBulkOt(
+ *  employee, HR/Admin's 'all' scope. Shared by the Bulk OT Request picker
+ *  and the admin-initiated time-correction request picker. */
+export async function listActiveEmployeesInScope(
   employeeIds: number[] | null,
   db: Queryable = pool
-): Promise<EmployeeBulkOtCandidate[]> {
+): Promise<EmployeeScopeCandidate[]> {
   const where = employeeIds === null ? '' : 'AND e.id = ANY($1::bigint[])'
   const params = employeeIds === null ? [] : [employeeIds]
   const { rows } = await db.query<{

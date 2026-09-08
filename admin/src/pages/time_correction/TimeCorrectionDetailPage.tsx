@@ -13,7 +13,6 @@ import {
   card,
   eyebrow,
   fieldControl,
-  link,
   muted,
   pageHead,
   spec,
@@ -21,6 +20,7 @@ import {
   specDt,
   subtitle,
 } from '../../styles'
+import { ArrowLeft } from 'lucide-react'
 
 type State =
   | { phase: 'loading' }
@@ -126,13 +126,18 @@ export function TimeCorrectionDetailPage() {
     <>
       <header className={pageHead}>
         <div>
-          <p className={eyebrow}>Time Attendance</p>
+          <p className={eyebrow}>
+            <Link
+              className="inline-flex items-center gap-1.5 text-slate-500 no-underline normal-case tracking-normal hover:text-navy"
+              to="/time-corrections"
+            >
+              <ArrowLeft size={13} />
+              กลับไปรายการคำขอ
+            </Link>
+          </p>
           <h1>รายละเอียดคำขอแก้ไขเวลา</h1>
           <p className={subtitle}>ตรวจสอบและอนุมัติ/ปฏิเสธคำขอแก้ไขเวลาเข้า-ออกงาน</p>
         </div>
-        <Link className={link} to="/time-corrections">
-          ← กลับไปรายการคำขอ
-        </Link>
       </header>
 
       {state.phase === 'loading' && <p className={muted}>กำลังโหลด…</p>}

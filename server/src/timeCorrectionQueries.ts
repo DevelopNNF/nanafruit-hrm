@@ -35,6 +35,7 @@ export type TimeCorrectionRow = {
   decision_reason: string | null
   resulting_event_id: string | null
   created_at: string
+  created_by_name: string | null
 }
 
 export type TimeCorrectionListRow = TimeCorrectionRow & {
@@ -47,7 +48,8 @@ export const SELECT_TIME_CORRECTION = `
          t.requires_supervisor_approval, t.supervisor_employee_id,
          (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
          t.current_stage, t.supervisor_approved_by_name, t.supervisor_approved_at,
-         t.decided_by_name, t.decided_at, t.decision_reason, t.resulting_event_id, t.created_at
+         t.decided_by_name, t.decided_at, t.decision_reason, t.resulting_event_id, t.created_at,
+         t.created_by_name
   FROM time_correction_requests t
   LEFT JOIN employees sup ON sup.id = t.supervisor_employee_id
 `
@@ -58,6 +60,7 @@ export const SELECT_TIME_CORRECTION_LIST = `
          (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
          t.current_stage, t.supervisor_approved_by_name, t.supervisor_approved_at,
          t.decided_by_name, t.decided_at, t.decision_reason, t.resulting_event_id, t.created_at,
+         t.created_by_name,
          e.employee_code, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
   FROM time_correction_requests t
   LEFT JOIN employees sup ON sup.id = t.supervisor_employee_id
@@ -84,6 +87,7 @@ export function rowToTimeCorrection(row: TimeCorrectionRow): TimeCorrectionReque
     decisionReason: row.decision_reason,
     resultingEventId: row.resulting_event_id === null ? null : Number(row.resulting_event_id),
     createdAt: new Date(row.created_at).toISOString(),
+    createdByName: row.created_by_name,
   }
 }
 

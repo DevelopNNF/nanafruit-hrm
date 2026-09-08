@@ -42,7 +42,7 @@ import {
   describeActor,
   findEmployeeById,
   findEmployeeIdByEntraUpn,
-  listActiveEmployeesForBulkOt,
+  listActiveEmployeesInScope,
 } from '../employeeQueries.js'
 import { notify } from '../notifications/dispatch.js'
 import { narrowToScope, resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
@@ -893,7 +893,7 @@ overtimeRequestsRouter.get(
         return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ขอ OT แบบกลุ่ม', 'FORBIDDEN')
       }
 
-      const candidates = await listActiveEmployeesForBulkOt(
+      const candidates = await listActiveEmployeesInScope(
         scope.kind === 'all' ? null : scope.employeeIds
       )
       const { weekStart, weekEnd, minutesByEmployeeId } = await approvedOvertimeMinutesInWeekBulk(

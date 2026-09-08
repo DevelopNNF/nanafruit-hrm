@@ -43,6 +43,7 @@ import { AttendanceDailyListPage } from './pages/reports/AttendanceReport'
 import { OvertimeReport } from './pages/reports/OvertimeReport'
 import { TimeCorrectionListPage } from './pages/time_correction/TimeCorrectionListPage'
 import { TimeCorrectionDetailPage } from './pages/time_correction/TimeCorrectionDetailPage'
+import { AdminTimeCorrectionRequestPage } from './pages/time_correction/AdminTimeCorrectionRequestPage'
 import { LeaveRequestListPage } from './pages/leave_requests/LeaveRequestListPage'
 import { LeaveRequestDetailPage } from './pages/leave_requests/LeaveRequestDetailPage'
 import { OffSiteRequestListPage } from './pages/off_site_requests/OffSiteRequestListPage'
@@ -154,6 +155,7 @@ const router = createBrowserRouter([
         ],
       },
       { path: 'time-corrections', element: <TimeCorrectionListPage /> },
+      { path: 'time-corrections/new', element: <AdminTimeCorrectionRequestPage /> },
       { path: 'time-corrections/:id', element: <TimeCorrectionDetailPage /> },
       { path: 'leave-requests', element: <LeaveRequestListPage /> },
       { path: 'leave-requests/:id', element: <LeaveRequestDetailPage /> },

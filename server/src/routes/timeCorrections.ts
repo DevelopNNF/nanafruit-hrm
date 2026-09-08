@@ -7,7 +7,9 @@ import {
   TIME_CORRECTION_STATUSES,
   type AttendanceEventType,
   type AuthUser,
+  type TimeCorrectionAdminInput,
   type TimeCorrectionDetailResponse,
+  type TimeCorrectionEligibleEmployeesResponse,
   type TimeCorrectionInput,
   type TimeCorrectionListResponse,
   type TimeCorrectionPendingApprovalResponse,
@@ -21,7 +23,12 @@ import { pool, withTransaction } from '../db.js'
 import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
 import { fail, handleUnexpected, parseOptionalPositiveInt, parseOptionalPositiveIntArray } from '../http.js'
-import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
+import {
+  describeActor,
+  findEmployeeById,
+  findEmployeeIdByEntraUpn,
+  listActiveEmployeesInScope,
+} from '../employeeQueries.js'
 import { notify } from '../notifications/dispatch.js'
 import { addDays, getShiftIdForDate, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { resolveMatchWindow } from '../attendanceMatchingQueries.js'
@@ -148,6 +155,24 @@ function parseTimeCorrectionInput(body: unknown): ParseResult<TimeCorrectionInpu
   }
 }
 
+/** Body of POST /time-corrections/admin — same fields as TimeCorrectionInput
+ *  plus the target employeeId, which the client must supply since the caller
+ *  has no employee session of their own. */
+function parseTimeCorrectionAdminInput(body: unknown): ParseResult<TimeCorrectionAdminInput> {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, message: 'body must be a JSON object' }
+  }
+  const raw = body as Record<string, unknown>
+  const employeeIdRaw = raw['employeeId']
+  const employeeId =
+    typeof employeeIdRaw === 'number' && Number.isInteger(employeeIdRaw) && employeeIdRaw > 0 ? employeeIdRaw : null
+  if (employeeId === null) return { ok: false, message: 'employeeId is required and must be a positive integer' }
+
+  const rest = parseTimeCorrectionInput(body)
+  if (!rest.ok) return rest
+  return { ok: true, value: { employeeId, ...rest.value } }
+}
+
 function parseId(value: string | string[] | undefined): number | null {
   if (typeof value !== 'string') return null
   const id = Number(value)
@@ -162,6 +187,77 @@ function parseStatusFilter(value: string | string[] | undefined): ParseResult<Ti
   return { ok: true, value: value as TimeCorrectionStatus }
 }
 
+/** Shared by both creation routes below — the actual insert/audit/notify,
+ *  once the caller has resolved who the request is for, who is filing it,
+ *  and (via supervisorEmployeeId) whose approval chain it follows. */
+async function createTimeCorrection(params: {
+  employeeId: number
+  eventType: AttendanceEventType
+  requestedEventTime: string
+  reason: string
+  supervisorEmployeeId: number | null
+  actor: AuthUser
+  /** Who filed this on the employee's behalf — null for self-service (the
+   *  employee filed their own), set for admin-initiated requests. */
+  createdBy: { oid: string; name: string } | null
+}) {
+  const requiresSupervisorApproval = params.supervisorEmployeeId !== null
+  const currentStage: TimeCorrectionStage = requiresSupervisorApproval ? 'supervisor' : 'hr'
+
+  const request = await withTransaction(async (client) => {
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO time_correction_requests
+         (employee_id, event_type, requested_event_time, reason,
+          requires_supervisor_approval, supervisor_employee_id, current_stage,
+          created_by_oid, created_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        params.employeeId,
+        params.eventType,
+        params.requestedEventTime,
+        params.reason,
+        requiresSupervisorApproval,
+        params.supervisorEmployeeId,
+        currentStage,
+        params.createdBy?.oid ?? null,
+        params.createdBy?.name ?? null,
+      ]
+    )
+    const created = rows[0]
+    if (!created) throw new Error('insert into time_correction_requests returned no row')
+
+    await recordAudit(client, {
+      actor: params.actor,
+      action: 'time_correction.create',
+      entityId: Number(created.id),
+      detail: {
+        eventType: params.eventType,
+        requestedEventTime: params.requestedEventTime,
+        employeeId: params.employeeId,
+      },
+    })
+
+    const { rows: selectRows } = await client.query<TimeCorrectionRow>(
+      `${SELECT_TIME_CORRECTION} WHERE t.id = $1`,
+      [created.id]
+    )
+    const row = selectRows[0]
+    if (!row) throw new Error('re-select of time_correction_requests returned no row')
+    return rowToTimeCorrection(row)
+  })
+
+  void notify({
+    kind: 'created',
+    resource: 'time_correction_request',
+    requestId: request.id,
+    requesterEmployeeId: params.employeeId,
+    supervisorEmployeeId: params.supervisorEmployeeId,
+  })
+
+  return request
+}
+
 timeCorrectionsRouter.post('/time-corrections', async (req: Request, res: Response) => {
   const employeeId = requireEmployeeId(req, res)
   if (employeeId === null) return
@@ -174,58 +270,106 @@ timeCorrectionsRouter.post('/time-corrections', async (req: Request, res: Respon
     const employee = await findEmployeeById(employeeId)
     if (!employee) return fail(res, 404, `no employee with id ${employeeId}`)
 
-    // Snapshotted at submission — see LeaveRequest's fields of the same name
-    // for the full reasoning, which applies unchanged here.
-    const requiresSupervisorApproval = employee.employment.supervisorEmployeeId !== null
-    const supervisorEmployeeId = employee.employment.supervisorEmployeeId
-    const currentStage: TimeCorrectionStage = requiresSupervisorApproval ? 'supervisor' : 'hr'
-
-    const request = await withTransaction(async (client) => {
-      const { rows } = await client.query<{ id: string }>(
-        `INSERT INTO time_correction_requests
-           (employee_id, event_type, requested_event_time, reason,
-            requires_supervisor_approval, supervisor_employee_id, current_stage)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id`,
-        [
-          employeeId,
-          input.eventType,
-          input.requestedEventTime,
-          input.reason,
-          requiresSupervisorApproval,
-          supervisorEmployeeId,
-          currentStage,
-        ]
-      )
-      const created = rows[0]
-      if (!created) throw new Error('insert into time_correction_requests returned no row')
-
-      await recordAudit(client, {
-        actor: { kind: 'employee', employeeId },
-        action: 'time_correction.create',
-        entityId: Number(created.id),
-        detail: { eventType: input.eventType, requestedEventTime: input.requestedEventTime },
-      })
-
-      const { rows: selectRows } = await client.query<TimeCorrectionRow>(
-        `${SELECT_TIME_CORRECTION} WHERE t.id = $1`,
-        [created.id]
-      )
-      const row = selectRows[0]
-      if (!row) throw new Error('re-select of time_correction_requests returned no row')
-      return rowToTimeCorrection(row)
-    })
-
-    void notify({
-      kind: 'created',
-      resource: 'time_correction_request',
-      requestId: request.id,
-      requesterEmployeeId: employeeId,
-      supervisorEmployeeId,
+    const request = await createTimeCorrection({
+      employeeId,
+      eventType: input.eventType,
+      requestedEventTime: input.requestedEventTime,
+      reason: input.reason,
+      // Snapshotted at submission — see LeaveRequest's fields of the same
+      // name for the full reasoning, which applies unchanged here.
+      supervisorEmployeeId: employee.employment.supervisorEmployeeId,
+      actor: { kind: 'employee', employeeId },
+      createdBy: null,
     })
 
     const body: TimeCorrectionResponse = { request }
     res.status(201).json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
+
+/** A supervisor/HR/Admin filing a correction on behalf of one employee from
+ *  admin/ — the Admin-side counterpart to LIFF's self-service POST above.
+ *  Separate endpoint (rather than branching the one above on actor.kind) to
+ *  keep each caller's authorization and approval-chain resolution readable
+ *  on its own, same reasoning as Bulk OT Request's separate `/bulk` route. */
+timeCorrectionsRouter.post('/time-corrections/admin', async (req: Request, res: Response) => {
+  const actor = actorOf(req)
+  if (!actor) return fail(res, 500, 'server misconfigured')
+  if (actor.kind !== 'admin') return fail(res, 403, 'endpoint นี้ใช้ได้เฉพาะบัญชี admin เท่านั้น', 'FORBIDDEN')
+
+  const parsed = parseTimeCorrectionAdminInput(req.body)
+  if (!parsed.ok) return fail(res, 400, parsed.message)
+  const input = parsed.value
+
+  try {
+    const scope = await resolveSupervisorScope(actor)
+    if (scope.kind === 'none') {
+      return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ขอแก้ไขเวลาแทนพนักงาน', 'FORBIDDEN')
+    }
+    // Re-checked against the server-resolved scope, not the client's say-so —
+    // a supervisor's picker is pre-filtered to their own team, but nothing
+    // stops a hand-built request naming someone else's employeeId.
+    if (!scopeAllows(scope, input.employeeId)) {
+      return fail(res, 403, 'พนักงานคนนี้ไม่อยู่ในสิทธิ์ของผู้ขอ', 'FORBIDDEN')
+    }
+
+    const employee = await findEmployeeById(input.employeeId)
+    if (!employee) return fail(res, 404, `no employee with id ${input.employeeId}`)
+
+    // Approval chain follows the FILER's own supervisor, not the target
+    // employee's — same reasoning as Bulk OT Request (overtimeRequests.ts):
+    // filing this on a report's behalf already constitutes the filer's own
+    // approval, so routing it back to them would be a self-approval loop. No
+    // employee record for the filer (a pure HR/Admin account) is the same as
+    // no supervisor: straight to the HR/Admin stage.
+    const callerEmployeeId = await findEmployeeIdByEntraUpn(actor.upn)
+    const callerEmployee = callerEmployeeId !== null ? await findEmployeeById(callerEmployeeId) : null
+    const supervisorEmployeeId = callerEmployee?.employment.supervisorEmployeeId ?? null
+
+    const request = await createTimeCorrection({
+      employeeId: input.employeeId,
+      eventType: input.eventType,
+      requestedEventTime: input.requestedEventTime,
+      reason: input.reason,
+      supervisorEmployeeId,
+      actor,
+      createdBy: { oid: actor.oid, name: actor.name },
+    })
+
+    const body: TimeCorrectionResponse = { request }
+    res.status(201).json(body)
+  } catch (err) {
+    handleUnexpected(res, err)
+  }
+})
+
+// Who an admin-side caller may file an on-behalf-of request for — mirrors
+// GET /overtime-requests/bulk/eligible-employees minus the weekly-cap/date
+// logic, which has no equivalent here. Mounted ahead of GET
+// /time-corrections/:id so 'eligible-employees' is never parsed as an id.
+timeCorrectionsRouter.get('/time-corrections/eligible-employees', async (req: Request, res: Response) => {
+  const auth = actorOf(req)
+  if (!auth) return fail(res, 500, 'server misconfigured')
+
+  try {
+    const scope = await resolveSupervisorScope(auth)
+    if (scope.kind === 'none') {
+      return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ขอแก้ไขเวลาแทนพนักงาน', 'FORBIDDEN')
+    }
+
+    const candidates = await listActiveEmployeesInScope(scope.kind === 'all' ? null : scope.employeeIds)
+    const body: TimeCorrectionEligibleEmployeesResponse = {
+      scope: scope.kind === 'all' ? 'all' : 'team',
+      employees: candidates.map((c) => ({
+        employeeId: c.id,
+        employeeCode: c.employeeCode,
+        employeeName: c.employeeName,
+        departmentName: c.departmentName,
+      })),
+    }
+    res.json(body)
   } catch (err) {
     handleUnexpected(res, err)
   }

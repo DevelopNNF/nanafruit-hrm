@@ -2398,6 +2398,11 @@ export type TimeCorrectionRequest = {
   resultingEventId: number | null
   /** ISO 8601. */
   createdAt: string
+  /** Display name of whoever filed this on the employee's behalf (a
+   *  supervisor, HR or Admin, from admin/) — null when the employee filed it
+   *  themselves, which is every LIFF self-service request. Mirrors
+   *  OvertimeRequest's field of the same name. */
+  createdByName: string | null
 }
 
 /** A request as admin/ sees it: the employee joined in for display, since
@@ -2444,6 +2449,41 @@ export type TimeCorrectionDetailResponse = { request: TimeCorrectionListItem; ca
 /** Body of POST /api/time-corrections/:id/reject — a reason is required
  *  every time, never optional. */
 export type TimeCorrectionRejectRequest = { reason: string }
+
+/** Body of POST /api/time-corrections/admin — a supervisor/HR/Admin filing a
+ *  correction on behalf of one employee from admin/. Unlike
+ *  TimeCorrectionInput, employeeId IS part of the body here since the caller
+ *  has no employee session of their own to derive it from; the server still
+ *  re-checks it against the caller's resolved supervisor scope, never
+ *  trusting the client's say-so alone. */
+export type TimeCorrectionAdminInput = {
+  employeeId: number
+  eventType: AttendanceEventType
+  requestedEventTime: string
+  reason: string
+}
+
+/** One row of GET /api/time-corrections/eligible-employees — same shape as
+ *  OvertimeEligibleEmployee minus the OT-specific weekly-minutes field. */
+export type TimeCorrectionEligibleEmployee = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  departmentName: string | null
+}
+
+/** GET /api/time-corrections/eligible-employees
+ *
+ *  `scope` says why this list is what it is: 'all' for HR/Admin (every
+ *  active employee), 'team' for a supervisor (their own active direct
+ *  reports only, resolved server-side — never trust a client-picked
+ *  employeeId alone). The server answers "neither applies" with 403, not an
+ *  empty 'team' list, so the page can tell "no reports yet" apart from "not
+ *  allowed here" — same reasoning as OvertimeEligibleEmployeesResponse. */
+export type TimeCorrectionEligibleEmployeesResponse = {
+  scope: 'all' | 'team'
+  employees: TimeCorrectionEligibleEmployee[]
+}
 
 /* Shift Change Requests -------------------------------------------------------
  *

@@ -1,8 +1,11 @@
 import type {
+  TimeCorrectionAdminInput,
   TimeCorrectionDetailResponse,
+  TimeCorrectionEligibleEmployeesResponse,
   TimeCorrectionListItem,
   TimeCorrectionListResponse,
   TimeCorrectionPendingApprovalResponse,
+  TimeCorrectionResponse,
   TimeCorrectionStatus,
 } from '@hrm/shared'
 import { apiFetch, jsonHeaders, unwrap } from './client'
@@ -59,4 +62,24 @@ export async function rejectTimeCorrection(
     body: JSON.stringify({ reason }),
   })
   return unwrap<TimeCorrectionDetailResponse>(res)
+}
+
+/** Who the signed-in supervisor/HR/Admin may file an on-behalf-of request
+ *  for — mirrors fetchOvertimeEligibleEmployees. */
+export async function fetchTimeCorrectionEligibleEmployees(
+  signal?: AbortSignal
+): Promise<TimeCorrectionEligibleEmployeesResponse> {
+  const res = await apiFetch('/api/time-corrections/eligible-employees', { signal })
+  return unwrap<TimeCorrectionEligibleEmployeesResponse>(res)
+}
+
+export async function createTimeCorrectionForEmployee(
+  input: TimeCorrectionAdminInput
+): Promise<TimeCorrectionResponse> {
+  const res = await apiFetch('/api/time-corrections/admin', {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  return unwrap<TimeCorrectionResponse>(res)
 }

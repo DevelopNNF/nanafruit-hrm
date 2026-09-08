@@ -7,7 +7,7 @@ import { useCanWritePayroll } from '../../auth/meContext'
 import { EmployeeFilterBar, filterFieldLabel, filterFieldRow } from '../../components/EmployeeFilterBar'
 import { Pagination } from '../../components/Pagination'
 import { useEmployeeFilters } from '../../hooks/useEmployeeFilters'
-import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, fieldControl, muted, pageHead, subtitle } from '../../styles'
+import { alert, alertDetail, alertTitle, badge, button, cardEmpty, eyebrow, fieldControl, muted, pageHead, subtitle } from '../../styles'
 
 type State =
   | { phase: 'loading' }
@@ -144,6 +144,9 @@ export function TimeCorrectionListPage() {
           <h1>คำขอแก้ไขเวลา</h1>
           <p className={subtitle}>คำขอแก้ไข/เพิ่มเวลาเข้า-ออกงานจากพนักงาน รออนุมัติหรือปฏิเสธ</p>
         </div>
+        <button className={button('primary')} type="button" onClick={() => void navigate('/time-corrections/new')}>
+          ขอแก้ไขเวลาแทนพนักงาน
+        </button>
       </header>
 
       <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
