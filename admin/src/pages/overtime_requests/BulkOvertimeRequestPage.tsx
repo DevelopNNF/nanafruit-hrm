@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { computeOvertimeMinutes, type OvertimeBulkCreateOutcome, type OvertimeEligibleEmployee } from '@hrm/shared'
+import { computeOvertimeMinutes, type OvertimeBulkPrecheckOutcome, type OvertimeEligibleEmployee } from '@hrm/shared'
 import { ApiRequestError } from '../../api/client'
 import { createBulkOvertimeRequest, fetchOvertimeEligibleEmployees } from '../../api/overtimeRequests'
 import { DatePicker } from '../../components/DatePicker'
@@ -55,7 +55,11 @@ export function BulkOvertimeRequestPage() {
   const [eligibleState, setEligibleState] = useState<EligibleState>({ phase: 'loading' })
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<number[]>([])
   const [submitting, setSubmitting] = useState(false)
-  const [outcomes, setOutcomes] = useState<OvertimeBulkCreateOutcome[] | null>(null)
+  // Only ever set when the batch was blocked — nothing was created and this
+  // is the pre-check breakdown of who passed/failed, so the admin can fix
+  // the failing ones and resubmit. On success the page navigates away
+  // instead of showing this.
+  const [outcomes, setOutcomes] = useState<OvertimeBulkPrecheckOutcome[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // Re-fetched whenever the date changes: the weekly OT total shown next to
@@ -106,10 +110,10 @@ export function BulkOvertimeRequestPage() {
   function renderOutcomeBadge(employeeId: number) {
     const outcome = outcomeByEmployeeId.get(employeeId)
     if (!outcome) return null
-    if (outcome.kind === 'ok') return <span className={badge('active')}>สำเร็จ</span>
+    if (outcome.kind === 'ok') return <span className={badge('active')}>ผ่านเงื่อนไข</span>
     return (
       <span className={badge('danger')} title={outcome.message}>
-        ข้าม
+        ไม่ผ่านเงื่อนไข
       </span>
     )
   }
@@ -140,18 +144,21 @@ export function BulkOvertimeRequestPage() {
         reason: reason.trim(),
         employeeIds: selectedEmployeeIds,
       })
-      setOutcomes(result.outcomes)
-      const okCount = result.outcomes.filter((o) => o.kind === 'ok').length
-      const skippedCount = result.outcomes.length - okCount
-      if (okCount > 0) {
-        notify.success(
-          `ส่งคำขอ OT สำเร็จ ${okCount} คน`,
-          skippedCount > 0 ? `ข้าม ${skippedCount} คน ดูรายละเอียดด้านล่าง` : undefined
+      if (result.blocked) {
+        // All-or-nothing: nothing was created. Show the full breakdown so
+        // the admin can see exactly who's blocking the batch, fix it
+        // (deselect them or fix their data), and resubmit — selection is
+        // left as-is on purpose.
+        setOutcomes(result.outcomes)
+        const invalidCount = result.outcomes.filter((o) => o.kind === 'invalid').length
+        notify.error(
+          'มีพนักงานไม่ผ่านเงื่อนไข ยังไม่ได้ส่งคำขอ',
+          `${invalidCount} คนติดปัญหา ดูรายละเอียดด้านล่างแล้วแก้ไขก่อนส่งใหม่`
         )
-        navigate(`/overtime-requests/batch/${result.batchId}`)
-      } else {
-        notify.error('ไม่มีคำขอใดสร้างสำเร็จเลย', 'ดูรายละเอียดด้านล่างว่าติดปัญหาอะไร')
+        return
       }
+      notify.success(`ส่งคำขอ OT สำเร็จ ${result.outcomes.length} คน`)
+      navigate(`/overtime-requests/batch/${result.batchId}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'บันทึกไม่สำเร็จ')
     } finally {
@@ -280,15 +287,18 @@ export function BulkOvertimeRequestPage() {
         </form>
       )}
 
-      {outcomes && outcomes.some((o) => o.kind === 'skipped') && (
-        <div className={alert('info')}>
-          <p className={alertTitle()}>บางรายการถูกข้าม</p>
-          <p className={muted}>
+      {outcomes && outcomes.some((o) => o.kind === 'invalid') && (
+        <div className={alert('danger')}>
+          <p className={alertTitle('danger')}>ยังส่งคำขอไม่ได้ — มีพนักงานไม่ผ่านเงื่อนไข</p>
+          <ul className={muted}>
             {outcomes
-              .filter((o): o is Extract<OvertimeBulkCreateOutcome, { kind: 'skipped' }> => o.kind === 'skipped')
-              .map((o) => `${employeeById.get(o.employeeId)?.employeeCode ?? o.employeeId} (${o.message})`)
-              .join(', ')}
-          </p>
+              .filter((o): o is Extract<OvertimeBulkPrecheckOutcome, { kind: 'invalid' }> => o.kind === 'invalid')
+              .map((o) => (
+                <li key={o.employeeId}>
+                  {'• '}{employeeById.get(o.employeeId)?.employeeCode ?? o.employeeId} ({o.message})
+                </li>
+              ))}
+          </ul>
         </div>
       )}
     </>

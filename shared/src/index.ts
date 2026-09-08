@@ -3070,17 +3070,30 @@ export type OvertimeBulkRequestInput = {
   employeeIds: number[]
 }
 
-/** One employee's result from a bulk create. 'skipped' covers every reason
- *  validateOvertimeRequestInput could reject that employee (shift conflict,
- *  already on leave, no overtime group, ...) as well as being outside the
- *  caller's scope — the rest of the batch is created regardless, per employee,
- *  same reasoning as DailyShiftAssignmentOutcome. */
+/** One employee's result once a bulk batch has actually been created —
+ *  every entry here is 'ok' (see OvertimeBulkCreateResponse: this shape is
+ *  only ever returned once every employee has already passed the pre-check
+ *  pass, so nothing gets skipped at this point any more). */
 export type OvertimeBulkCreateOutcome =
   | { employeeId: number; kind: 'ok'; requestId: number }
   | { employeeId: number; kind: 'skipped'; message: string }
 
+/** One employee's result from the pre-check pass — before anything is
+ *  created. 'ok' means this employee's request would be accepted; it does
+ *  NOT mean a request exists yet. Used only when the batch as a whole is
+ *  blocked (see OvertimeBulkCreateResponse) — the rest of the batch is not
+ *  created either, unlike the old per-employee-skip behaviour: one bad
+ *  employee used to silently reduce the batch to whoever passed, which made
+ *  it easy to not notice someone was left out. Now everyone passes or
+ *  nothing is created. */
+export type OvertimeBulkPrecheckOutcome =
+  | { employeeId: number; kind: 'ok' }
+  | { employeeId: number; kind: 'invalid'; message: string }
+
 /** POST /api/overtime-requests/bulk */
-export type OvertimeBulkCreateResponse = { batchId: string; outcomes: OvertimeBulkCreateOutcome[] }
+export type OvertimeBulkCreateResponse =
+  | { blocked: false; batchId: string; outcomes: OvertimeBulkCreateOutcome[] }
+  | { blocked: true; outcomes: OvertimeBulkPrecheckOutcome[] }
 
 /** GET /api/overtime-requests/batch/:batchId — every row created by one bulk
  *  submission, for the batch detail screen. Same list-item shape the queue

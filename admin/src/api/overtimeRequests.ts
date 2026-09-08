@@ -2,7 +2,6 @@ import type {
   OvertimeBatchActionResponse,
   OvertimeBatchDecisionOutcome,
   OvertimeBatchResponse,
-  OvertimeBulkCreateOutcome,
   OvertimeBulkCreateResponse,
   OvertimeBulkRequestInput,
   OvertimeEligibleEmployee,
@@ -86,7 +85,7 @@ export async function fetchOvertimeEligibleEmployees(
 
 export async function createBulkOvertimeRequest(
   input: OvertimeBulkRequestInput
-): Promise<{ batchId: string; outcomes: OvertimeBulkCreateOutcome[] }> {
+): Promise<OvertimeBulkCreateResponse> {
   const res = await apiFetch('/api/overtime-requests/bulk', {
     method: 'POST',
     headers: jsonHeaders,

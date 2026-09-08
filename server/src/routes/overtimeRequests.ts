@@ -18,6 +18,7 @@ import {
   type OvertimeBatchResponse,
   type OvertimeBulkCreateOutcome,
   type OvertimeBulkCreateResponse,
+  type OvertimeBulkPrecheckOutcome,
   type OvertimeBulkRequestInput,
   type OvertimeCompTimeEligibilityResponse,
   type OvertimeEligibleEmployeesResponse,
@@ -323,6 +324,7 @@ type ValidationOutcome =
   | { kind: 'backdated' }
   | { kind: 'before-hire' }
   | { kind: 'on-leave' }
+  | { kind: 'no-shift-assigned'; day: CalendarDay }
   | { kind: 'shift-conflict'; day: CalendarDay }
   | { kind: 'overlap' }
 
@@ -389,6 +391,18 @@ async function validateOvertimeRequestInput(
   // Working overtime on a day already approved as leave is a contradiction:
   // one of the two records is wrong, and this is the cheaper one to stop.
   if (day.status === 'leave') return { kind: 'on-leave' }
+
+  // Payroll prices OT off the shift's own start/end time (to derive the
+  // employee's normal working minutes, which converts a daily/monthly wage
+  // into an hourly one) regardless of what this day's status turns out to
+  // be — a holiday or day-off OT still needs it. buildCalendarDaysForDates
+  // deliberately falls back to 'workday' with shiftId null when no
+  // employee_shift_assignments row covers the date at all (correct for
+  // calendar/leave purposes), but letting that through here means the
+  // request can never be priced — it would silently surface as an
+  // unpriceable_overtime review flag in payroll instead, days or weeks
+  // later with no easy way back to why. Catch it at the source.
+  if (day.shiftId === null) return { kind: 'no-shift-assigned', day }
 
   const conflict = findOvertimeShiftConflict(input.otDate, input.startTime, input.endTime, days)
   if (conflict) return { kind: 'shift-conflict', day: conflict }
@@ -462,6 +476,12 @@ function describeValidationOutcome(outcome: Exclude<ValidationOutcome, { kind: '
   if (outcome.kind === 'on-leave') {
     return { status: 400, message: 'วันที่เลือกเป็นวันลาที่อนุมัติแล้ว ไม่สามารถขอ OT ได้' }
   }
+  if (outcome.kind === 'no-shift-assigned') {
+    return {
+      status: 400,
+      message: `ยังไม่ได้กำหนดกะการทำงานให้พนักงานคนนี้ในวันที่ ${formatThaiDate(outcome.day.date)} จึงยังคำนวณค่า OT ไม่ได้ กรุณากำหนดกะให้พนักงานก่อน`,
+    }
+  }
   if (outcome.kind === 'shift-conflict') {
     const { day } = outcome
     return {
@@ -484,8 +504,20 @@ function validationFail(res: Response, outcome: Exclude<ValidationOutcome, { kin
  * is not any more is not the reviewer's mistake to correct — there is no way
  * to approve it into a consistent state, so each of these says so and points
  * at rejection, which is the only decision still available.
+ *
+ * 'no-shift-assigned' is the one exception: nothing about the request itself
+ * is wrong, a prerequisite (the employee's shift for that date) is just
+ * missing, so this one points at fixing that and retrying rather than
+ * rejecting a request that may well be entirely legitimate.
  */
 function approvalStaleFail(res: Response, outcome: Exclude<ValidationOutcome, { kind: 'ok' }>): void {
+  if (outcome.kind === 'no-shift-assigned') {
+    return fail(
+      res,
+      409,
+      `ยังไม่ได้กำหนดกะการทำงานให้พนักงานคนนี้ในวันที่ ${formatThaiDate(outcome.day.date)} จึงยังคำนวณค่า OT ไม่ได้ กรุณากำหนดกะให้พนักงานก่อน แล้วลองอนุมัติอีกครั้ง`
+    )
+  }
   if (outcome.kind === 'shift-conflict') {
     const { day } = outcome
     return fail(
@@ -889,11 +921,14 @@ overtimeRequestsRouter.get(
   }
 )
 
-// One row inserted per employeeId, each in its own SAVEPOINT so a shift
-// conflict or stale scope on one employee can't roll back an otherwise-
-// successful batch — same pattern as
-// POST /employees/shift-assignments/daily-bulk. Every accepted employee
-// shares one batch_id.
+// All-or-nothing: every employeeId is validated first, against a plain pool
+// query (nothing written yet), and only if every one of them passes does a
+// second pass actually insert the rows — one shared batch_id, all in one
+// transaction. A single failing employee used to just get silently skipped
+// while the rest of the batch went through; that made it easy for whoever
+// submitted the batch to not notice someone was left out. Now the whole
+// batch is blocked and the caller sees exactly who's failing and why, fixes
+// it (deselect them, or fix their data), and resubmits.
 overtimeRequestsRouter.post('/overtime-requests/bulk', async (req: Request, res: Response) => {
   const actor = actorOf(req)
   if (!actor || actor.kind !== 'admin') return fail(res, 500, 'server misconfigured')
@@ -906,6 +941,57 @@ overtimeRequestsRouter.post('/overtime-requests/bulk', async (req: Request, res:
     const scope = await resolveSupervisorScope(actor)
     if (scope.kind === 'none') {
       return fail(res, 403, 'บัญชีนี้ไม่มีสิทธิ์ขอ OT แบบกลุ่ม', 'FORBIDDEN')
+    }
+
+    // Pass 1: validate every employee against live data, nothing written
+    // yet. Keeps each passing employee's snapshot so pass 2 doesn't have to
+    // validate a second time.
+    const precheckOutcomes: OvertimeBulkPrecheckOutcome[] = []
+    const passingSnapshots = new Map<number, OvertimeSnapshot>()
+    for (const employeeId of input.employeeIds) {
+      // Re-checked against the server-resolved scope, not the client's
+      // say-so: a supervisor's picker is pre-filtered to their own team, but
+      // nothing stops a hand-built request naming someone else's.
+      if (!scopeAllows(scope, employeeId)) {
+        precheckOutcomes.push({
+          employeeId,
+          kind: 'invalid',
+          message: 'พนักงานคนนี้ไม่อยู่ในสิทธิ์ของผู้ขอ',
+        })
+        continue
+      }
+
+      const outcome = await validateOvertimeRequestInput(
+        employeeId,
+        {
+          otDate: input.otDate,
+          startTime: input.startTime,
+          endTime: input.endTime,
+          reason: input.reason,
+          // A Bulk OT Request is filed by a supervisor/HR/Admin on behalf of
+          // several employees at once — comp-time is a per-employee choice
+          // each employee makes for themselves on their own request, not
+          // something a filer can decide for them, so bulk rows are always
+          // money.
+          compTimeRequested: false,
+        },
+        null
+      )
+      if (outcome.kind !== 'ok') {
+        precheckOutcomes.push({
+          employeeId,
+          kind: 'invalid',
+          message: describeValidationOutcome(outcome).message,
+        })
+        continue
+      }
+      passingSnapshots.set(employeeId, outcome.snapshot)
+      precheckOutcomes.push({ employeeId, kind: 'ok' })
+    }
+
+    if (precheckOutcomes.some((o) => o.kind === 'invalid')) {
+      const body: OvertimeBulkCreateResponse = { blocked: true, outcomes: precheckOutcomes }
+      return res.json(body)
     }
 
     const batchId = randomUUID()
@@ -923,117 +1009,73 @@ overtimeRequestsRouter.post('/overtime-requests/bulk', async (req: Request, res:
     const batchRequiresSupervisorApproval = batchSupervisorEmployeeId !== null
     const batchCurrentStage: OvertimeRequestStage = batchRequiresSupervisorApproval ? 'supervisor' : 'hr'
 
+    // Pass 2: every employee already passed pass 1, so this is now expected
+    // to succeed for all of them. No per-row SAVEPOINT any more — if
+    // anything here does fail (a genuine race between the two passes, or an
+    // unexpected DB error), the whole transaction rolls back rather than
+    // silently creating a partial batch.
     const outcomes = await withTransaction(async (client) => {
       const results: OvertimeBulkCreateOutcome[] = []
       for (const employeeId of input.employeeIds) {
-        await client.query('SAVEPOINT bulk_overtime_request')
-        try {
-          // Re-checked against the server-resolved scope, not the client's
-          // say-so: a supervisor's picker is pre-filtered to their own team,
-          // but nothing stops a hand-built request naming someone else's.
-          if (!scopeAllows(scope, employeeId)) {
-            results.push({
-              employeeId,
-              kind: 'skipped',
-              message: 'พนักงานคนนี้ไม่อยู่ในสิทธิ์ของผู้ขอ',
-            })
-            await client.query('RELEASE SAVEPOINT bulk_overtime_request')
-            continue
-          }
+        const snapshot = passingSnapshots.get(employeeId)
+        if (!snapshot) throw new Error(`no snapshot recorded for employee ${employeeId}`)
 
-          const outcome = await validateOvertimeRequestInput(
+        const { rows } = await client.query<{ id: string }>(
+          `INSERT INTO overtime_requests
+             (employee_id, ot_date, start_time, end_time, requested_minutes,
+              day_status, day_label, shift_id, shift_start_time, shift_end_time,
+              overtime_group_id, reason, batch_id, created_by_oid, created_by_name,
+              requires_supervisor_approval, supervisor_employee_id, current_stage)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+           RETURNING id`,
+          [
             employeeId,
-            {
-              otDate: input.otDate,
-              startTime: input.startTime,
-              endTime: input.endTime,
-              reason: input.reason,
-              // A Bulk OT Request is filed by a supervisor/HR/Admin on behalf
-              // of several employees at once — comp-time is a per-employee
-              // choice each employee makes for themselves on their own
-              // request, not something a filer can decide for them, so bulk
-              // rows are always money.
-              compTimeRequested: false,
-            },
-            null,
-            client
-          )
-          if (outcome.kind !== 'ok') {
-            results.push({
-              employeeId,
-              kind: 'skipped',
-              message: describeValidationOutcome(outcome).message,
-            })
-            await client.query('RELEASE SAVEPOINT bulk_overtime_request')
-            continue
-          }
-          const snapshot = outcome.snapshot
+            input.otDate,
+            input.startTime,
+            input.endTime,
+            snapshot.requestedMinutes,
+            snapshot.dayStatus,
+            snapshot.dayLabel,
+            snapshot.shiftId,
+            snapshot.shiftStartTime,
+            snapshot.shiftEndTime,
+            snapshot.overtimeGroupId,
+            input.reason,
+            batchId,
+            actor.oid,
+            actor.name,
+            // The batch-level resolution from above, not
+            // snapshot.requiresSupervisorApproval/supervisorEmployeeId —
+            // those are this employee's own supervisor, which is the wrong
+            // chain for a request filed on their behalf. See this route's
+            // comment above the batch resolution.
+            batchRequiresSupervisorApproval,
+            batchSupervisorEmployeeId,
+            batchCurrentStage,
+          ]
+        )
+        const created = rows[0]
+        if (!created) throw new Error('insert into overtime_requests returned no row')
 
-          const { rows } = await client.query<{ id: string }>(
-            `INSERT INTO overtime_requests
-               (employee_id, ot_date, start_time, end_time, requested_minutes,
-                day_status, day_label, shift_id, shift_start_time, shift_end_time,
-                overtime_group_id, reason, batch_id, created_by_oid, created_by_name,
-                requires_supervisor_approval, supervisor_employee_id, current_stage)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-             RETURNING id`,
-            [
-              employeeId,
-              input.otDate,
-              input.startTime,
-              input.endTime,
-              snapshot.requestedMinutes,
-              snapshot.dayStatus,
-              snapshot.dayLabel,
-              snapshot.shiftId,
-              snapshot.shiftStartTime,
-              snapshot.shiftEndTime,
-              snapshot.overtimeGroupId,
-              input.reason,
-              batchId,
-              actor.oid,
-              actor.name,
-              // The batch-level resolution from above, not
-              // snapshot.requiresSupervisorApproval/supervisorEmployeeId —
-              // those are this employee's own supervisor, which is the wrong
-              // chain for a request filed on their behalf. See this route's
-              // comment above the batch resolution.
-              batchRequiresSupervisorApproval,
-              batchSupervisorEmployeeId,
-              batchCurrentStage,
-            ]
-          )
-          const created = rows[0]
-          if (!created) throw new Error('insert into overtime_requests returned no row')
-
-          await recordAudit(client, {
-            actor,
-            action: 'overtime_request.bulk_create',
-            entityId: Number(created.id),
-            detail: {
-              employeeId,
-              otDate: input.otDate,
-              startTime: input.startTime,
-              endTime: input.endTime,
-              batchId,
-            },
-          })
-
-          results.push({ employeeId, kind: 'ok', requestId: Number(created.id) })
-          await client.query('RELEASE SAVEPOINT bulk_overtime_request')
-        } catch (err) {
-          await client.query('ROLLBACK TO SAVEPOINT bulk_overtime_request')
-          results.push({
+        await recordAudit(client, {
+          actor,
+          action: 'overtime_request.bulk_create',
+          entityId: Number(created.id),
+          detail: {
             employeeId,
-            kind: 'skipped',
-            message: err instanceof Error ? err.message : 'unexpected error',
-          })
-        }
+            otDate: input.otDate,
+            startTime: input.startTime,
+            endTime: input.endTime,
+            batchId,
+          },
+        })
+
+        results.push({ employeeId, kind: 'ok', requestId: Number(created.id) })
       }
       return results
     })
 
-    const body: OvertimeBulkCreateResponse = { batchId, outcomes }
+    const body: OvertimeBulkCreateResponse = { blocked: false, batchId, outcomes }
     res.status(201).json(body)
   } catch (err) {
     handleUnexpected(res, err)
@@ -1252,6 +1294,16 @@ overtimeRequestsRouter.post(
           { checkBackdate: false }
         )
         if (outcome.kind !== 'ok') return { kind: 'stale' as const, outcome }
+        // Only the shift-reference fields, re-frozen from the live
+        // revalidation above — never requestedMinutes/overtimeGroupId/the
+        // supervisor-routing fields, which describe what was requested and
+        // approved and must stay exactly as filed. shiftId etc. describe
+        // nothing anyone decided, just which shift applies on this date for
+        // payroll's wage-rate calculation; leaving them at their
+        // submission-time value (possibly null, if no shift existed yet when
+        // this was filed) is how request 131's OT went unpriced even after
+        // the employee's shift was assigned before this approval step ran.
+        const snapshot = outcome.snapshot
 
         if (approverKind === 'supervisor') {
           // Forwarding approval only — the request stays pending, now
@@ -1260,9 +1312,19 @@ overtimeRequestsRouter.post(
           await client.query(
             `UPDATE overtime_requests
              SET current_stage = 'hr', supervisor_approved_by_oid = $2,
-                 supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
+                 supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now(),
+                 day_status = $4, day_label = $5, shift_id = $6, shift_start_time = $7, shift_end_time = $8
              WHERE id = $1`,
-            [id, actorInfo.oid, actorInfo.name]
+            [
+              id,
+              actorInfo.oid,
+              actorInfo.name,
+              snapshot.dayStatus,
+              snapshot.dayLabel,
+              snapshot.shiftId,
+              snapshot.shiftStartTime,
+              snapshot.shiftEndTime,
+            ]
           )
 
           await recordAudit(client, {
@@ -1284,9 +1346,19 @@ overtimeRequestsRouter.post(
         await client.query(
           `UPDATE overtime_requests
            SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
-               decided_at = now(), updated_at = now()
+               decided_at = now(), updated_at = now(),
+               day_status = $4, day_label = $5, shift_id = $6, shift_start_time = $7, shift_end_time = $8
            WHERE id = $1`,
-          [id, actorInfo.oid, actorInfo.name]
+          [
+            id,
+            actorInfo.oid,
+            actorInfo.name,
+            snapshot.dayStatus,
+            snapshot.dayLabel,
+            snapshot.shiftId,
+            snapshot.shiftStartTime,
+            snapshot.shiftEndTime,
+          ]
         )
 
         await recordAudit(client, {
@@ -1615,14 +1687,29 @@ overtimeRequestsRouter.post(
               await client.query('RELEASE SAVEPOINT batch_overtime_approve')
               continue
             }
+            // Only the shift-reference fields, re-frozen from the live
+            // revalidation above — see the single-approve route's comment on
+            // its own `snapshot` for why these five and not the rest of the
+            // snapshot.
+            const snapshot = outcome.snapshot
 
             if (approverKind === 'supervisor') {
               await client.query(
                 `UPDATE overtime_requests
                  SET current_stage = 'hr', supervisor_approved_by_oid = $2,
-                     supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now()
+                     supervisor_approved_by_name = $3, supervisor_approved_at = now(), updated_at = now(),
+                     day_status = $4, day_label = $5, shift_id = $6, shift_start_time = $7, shift_end_time = $8
                  WHERE id = $1`,
-                [id, actor.oid, actor.name]
+                [
+                  id,
+                  actor.oid,
+                  actor.name,
+                  snapshot.dayStatus,
+                  snapshot.dayLabel,
+                  snapshot.shiftId,
+                  snapshot.shiftStartTime,
+                  snapshot.shiftEndTime,
+                ]
               )
 
               await recordAudit(client, {
@@ -1640,9 +1727,19 @@ overtimeRequestsRouter.post(
             await client.query(
               `UPDATE overtime_requests
                SET status = 'approved', current_stage = NULL, decided_by_oid = $2, decided_by_name = $3,
-                   decided_at = now(), updated_at = now()
+                   decided_at = now(), updated_at = now(),
+                   day_status = $4, day_label = $5, shift_id = $6, shift_start_time = $7, shift_end_time = $8
                WHERE id = $1`,
-              [id, actor.oid, actor.name]
+              [
+                id,
+                actor.oid,
+                actor.name,
+                snapshot.dayStatus,
+                snapshot.dayLabel,
+                snapshot.shiftId,
+                snapshot.shiftStartTime,
+                snapshot.shiftEndTime,
+              ]
             )
 
             await recordAudit(client, {
