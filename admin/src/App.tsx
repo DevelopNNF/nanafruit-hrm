@@ -54,6 +54,8 @@ import { BulkOvertimeRequestPage } from './pages/overtime_requests/BulkOvertimeR
 import { OvertimeRequestBatchDetailPage } from './pages/overtime_requests/OvertimeRequestBatchDetailPage'
 import { DayOffSwapRequestListPage } from './pages/day_off_swap_requests/DayOffSwapRequestListPage'
 import { DayOffSwapRequestDetailPage } from './pages/day_off_swap_requests/DayOffSwapRequestDetailPage'
+import { CompTimeOffRequestListPage } from './pages/comp_time_off_requests/CompTimeOffRequestListPage'
+import { CompTimeOffRequestDetailPage } from './pages/comp_time_off_requests/CompTimeOffRequestDetailPage'
 import { HealthPage } from './pages/HealthPage'
 
 /**
@@ -160,6 +162,8 @@ const router = createBrowserRouter([
       { path: 'overtime-requests/:id', element: <OvertimeRequestDetailPage /> },
       { path: 'day-off-swap-requests', element: <DayOffSwapRequestListPage /> },
       { path: 'day-off-swap-requests/:id', element: <DayOffSwapRequestDetailPage /> },
+      { path: 'comp-time-off-requests', element: <CompTimeOffRequestListPage /> },
+      { path: 'comp-time-off-requests/:id', element: <CompTimeOffRequestDetailPage /> },
       {
         element: <RequireRole role={['HRM.Admin', 'HRM.HR']} />,
         children: [
