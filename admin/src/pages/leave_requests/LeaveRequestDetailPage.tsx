@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { LeaveRequestListItem } from '@hrm/shared'
 import { approveLeaveRequest, getLeaveRequest, rejectLeaveRequest } from '../../api/leaveRequests'
+import { useRefreshPendingApprovals } from '../../context/pendingApprovalsContext'
 import { notify } from '../../notifications/notify'
 import {
   alert,
@@ -81,6 +82,7 @@ export function LeaveRequestDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const refreshPendingApprovals = useRefreshPendingApprovals()
 
   useEffect(() => {
     const requestId = Number(id)
@@ -107,6 +109,7 @@ export function LeaveRequestDetailPage() {
     try {
       const { request, canDecide } = await approveLeaveRequest(state.request.id)
       setState({ phase: 'ok', request, canDecide })
+      refreshPendingApprovals()
       notify.success(
         request.status === 'pending' ? 'ส่งต่อให้ HR/Admin แล้ว' : 'อนุมัติคำขอแล้ว',
         request.status === 'pending' ? undefined : 'บันทึกลงในสิทธิ์วันลาของพนักงานแล้ว'
@@ -132,6 +135,7 @@ export function LeaveRequestDetailPage() {
       const { request, canDecide } = await rejectLeaveRequest(state.request.id, rejectReason)
       setState({ phase: 'ok', request, canDecide })
       setRejecting(false)
+      refreshPendingApprovals()
       notify.success('ปฏิเสธคำขอแล้ว')
     } catch (err) {
       notify.error('ปฏิเสธไม่สำเร็จ', err instanceof Error ? err.message : undefined)

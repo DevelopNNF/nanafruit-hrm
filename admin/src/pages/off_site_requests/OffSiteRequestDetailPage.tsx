@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { OffSiteWorkRequestListItem } from '@hrm/shared'
 import { approveOffSiteWorkRequest, getOffSiteWorkRequest, rejectOffSiteWorkRequest } from '../../api/offSiteRequests'
+import { useRefreshPendingApprovals } from '../../context/pendingApprovalsContext'
 import { notify } from '../../notifications/notify'
 import {
   alert,
@@ -76,6 +77,7 @@ export function OffSiteRequestDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const refreshPendingApprovals = useRefreshPendingApprovals()
 
   useEffect(() => {
     const requestId = Number(id)
@@ -102,6 +104,7 @@ export function OffSiteRequestDetailPage() {
     try {
       const { request, canDecide } = await approveOffSiteWorkRequest(state.request.id)
       setState({ phase: 'ok', request, canDecide })
+      refreshPendingApprovals()
       notify.success(
         request.status === 'pending' ? 'ส่งต่อให้ HR/Admin แล้ว' : 'อนุมัติคำขอแล้ว',
         request.status === 'pending' ? undefined : 'พนักงานลงเวลาที่พิกัดนี้ได้ทันที'
@@ -125,6 +128,7 @@ export function OffSiteRequestDetailPage() {
       const { request, canDecide } = await rejectOffSiteWorkRequest(state.request.id, rejectReason)
       setState({ phase: 'ok', request, canDecide })
       setRejecting(false)
+      refreshPendingApprovals()
       notify.success('ปฏิเสธคำขอแล้ว')
     } catch (err) {
       notify.error('ปฏิเสธไม่สำเร็จ', err instanceof Error ? err.message : undefined)

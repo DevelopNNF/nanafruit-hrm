@@ -6,6 +6,7 @@ import {
   getOvertimeRequestBatch,
   rejectOvertimeRequestBatch,
 } from '../../api/overtimeRequests'
+import { useRefreshPendingApprovals } from '../../context/pendingApprovalsContext'
 import { notify } from '../../notifications/notify'
 import { DAY_STATUS_LABEL, formatOvertimeDate, formatOvertimeHours, hhmm } from '../../overtimeFormat'
 import {
@@ -66,6 +67,7 @@ export function OvertimeRequestBatchDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const refreshPendingApprovals = useRefreshPendingApprovals()
 
   useEffect(() => {
     if (!batchId) return
@@ -110,9 +112,11 @@ export function OvertimeRequestBatchDetailPage() {
           'เปิดคำขอนั้นเพื่อดูรายละเอียด'
         )
       }
+      refreshPendingApprovals()
       await refetch()
     } catch (err) {
       notify.error('อนุมัติไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+      refreshPendingApprovals()
       await refetch()
     } finally {
       setBusy(false)
@@ -130,9 +134,11 @@ export function OvertimeRequestBatchDetailPage() {
       notify.success(`ปฏิเสธแล้ว ${okCount} คำขอ`)
       setRejecting(false)
       setRejectReason('')
+      refreshPendingApprovals()
       await refetch()
     } catch (err) {
       notify.error('ปฏิเสธไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+      refreshPendingApprovals()
       await refetch()
     } finally {
       setBusy(false)

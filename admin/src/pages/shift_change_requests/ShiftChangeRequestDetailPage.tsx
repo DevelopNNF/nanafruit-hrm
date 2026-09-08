@@ -7,6 +7,7 @@ import {
   getShiftChangeRequest,
   rejectShiftChangeRequest,
 } from '../../api/shiftChangeRequests'
+import { useRefreshPendingApprovals } from '../../context/pendingApprovalsContext'
 import { notify } from '../../notifications/notify'
 import {
   alert,
@@ -78,6 +79,7 @@ export function ShiftChangeRequestDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const refreshPendingApprovals = useRefreshPendingApprovals()
 
   useEffect(() => {
     const requestId = Number(id)
@@ -114,6 +116,7 @@ export function ShiftChangeRequestDetailPage() {
     try {
       const { request, canDecide } = await approveShiftChangeRequest(state.request.id)
       setState({ phase: 'ok', request, canDecide })
+      refreshPendingApprovals()
       notify.success(
         request.status === 'pending' ? 'ส่งต่อให้ HR/Admin แล้ว' : 'อนุมัติคำขอแล้ว',
         request.status === 'pending' ? undefined : 'บันทึกการเปลี่ยนกะของพนักงานแล้ว'
@@ -139,6 +142,7 @@ export function ShiftChangeRequestDetailPage() {
       const { request, canDecide } = await rejectShiftChangeRequest(state.request.id, rejectReason)
       setState({ phase: 'ok', request, canDecide })
       setRejecting(false)
+      refreshPendingApprovals()
       notify.success('ปฏิเสธคำขอแล้ว')
     } catch (err) {
       notify.error('ปฏิเสธไม่สำเร็จ', err instanceof Error ? err.message : undefined)

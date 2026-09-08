@@ -15,6 +15,7 @@ import { countOvertimeRequestsPending, listOvertimeRequestsPendingApproval } fro
 import { countShiftChangeRequestsPending, listShiftChangeRequestsPendingApproval } from '../shiftChangeRequestQueries.js'
 import { countDayOffSwapRequestsPending, listDayOffSwapRequestsPendingApproval } from '../dayOffSwapRequestQueries.js'
 import { countTimeCorrectionsPending, listTimeCorrectionsPendingApproval } from '../timeCorrectionQueries.js'
+import { countCompTimeOffRequestsPending, listCompTimeOffRequestsPendingApproval } from '../compTimeOffRequestQueries.js'
 
 export const dashboardRouter = Router()
 
@@ -62,6 +63,7 @@ dashboardRouter.get(
           shiftChange: 0,
           dayOffSwap: 0,
           timeCorrection: 0,
+          compTimeOff: 0,
         }
         return res.json(body)
       }
@@ -71,7 +73,7 @@ dashboardRouter.get(
       // only what's currently waiting on them specifically, which is what
       // each listXRequestsPendingApproval already narrows to
       // (current_stage='supervisor').
-      const [leave, offSite, overtime, shiftChange, dayOffSwap, timeCorrection] =
+      const [leave, offSite, overtime, shiftChange, dayOffSwap, timeCorrection, compTimeOff] =
         scope.kind === 'all'
           ? await Promise.all([
               countLeaveRequestsPending(),
@@ -80,6 +82,7 @@ dashboardRouter.get(
               countShiftChangeRequestsPending(),
               countDayOffSwapRequestsPending(),
               countTimeCorrectionsPending(),
+              countCompTimeOffRequestsPending(),
             ])
           : await Promise.all([
               listLeaveRequestsPendingApproval(scope.supervisorEmployeeId).then((r) => r.length),
@@ -88,6 +91,7 @@ dashboardRouter.get(
               listShiftChangeRequestsPendingApproval(scope.supervisorEmployeeId).then((r) => r.length),
               listDayOffSwapRequestsPendingApproval(scope.supervisorEmployeeId).then((r) => r.length),
               listTimeCorrectionsPendingApproval(scope.supervisorEmployeeId).then((r) => r.length),
+              listCompTimeOffRequestsPendingApproval(scope.supervisorEmployeeId).then((r) => r.length),
             ])
 
       const body: DashboardPendingApprovalsSummaryResponse = {
@@ -98,6 +102,7 @@ dashboardRouter.get(
         shiftChange,
         dayOffSwap,
         timeCorrection,
+        compTimeOff,
       }
       res.json(body)
     } catch (err) {

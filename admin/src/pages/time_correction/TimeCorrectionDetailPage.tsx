@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { TimeCorrectionListItem } from '@hrm/shared'
 import { approveTimeCorrection, getTimeCorrection, rejectTimeCorrection } from '../../api/timeCorrections'
+import { useRefreshPendingApprovals } from '../../context/pendingApprovalsContext'
 import { notify } from '../../notifications/notify'
 import {
   alert,
@@ -56,6 +57,7 @@ export function TimeCorrectionDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const refreshPendingApprovals = useRefreshPendingApprovals()
 
   useEffect(() => {
     const requestId = Number(id)
@@ -82,6 +84,7 @@ export function TimeCorrectionDetailPage() {
     try {
       const { request, canDecide } = await approveTimeCorrection(state.request.id)
       setState({ phase: 'ok', request, canDecide })
+      refreshPendingApprovals()
       notify.success(
         request.status === 'pending' ? 'ส่งต่อให้ HR/Admin แล้ว' : 'อนุมัติคำขอแล้ว',
         request.status === 'pending' ? undefined : 'บันทึกเวลาลงในประวัติการลงเวลาแล้ว'
@@ -107,6 +110,7 @@ export function TimeCorrectionDetailPage() {
       const { request, canDecide } = await rejectTimeCorrection(state.request.id, rejectReason)
       setState({ phase: 'ok', request, canDecide })
       setRejecting(false)
+      refreshPendingApprovals()
       notify.success('ปฏิเสธคำขอแล้ว')
     } catch (err) {
       notify.error('ปฏิเสธไม่สำเร็จ', err instanceof Error ? err.message : undefined)

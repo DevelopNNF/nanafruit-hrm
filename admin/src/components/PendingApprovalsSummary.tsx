@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeftRight,
@@ -10,7 +9,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { DashboardPendingApprovalsSummaryResponse } from '@hrm/shared'
-import { getPendingApprovalsSummary } from '../api/dashboard'
+import { usePendingApprovals } from '../context/pendingApprovalsContext'
 import { alert, alertDetail, alertTitle, card, muted } from '../styles'
 
 // A static class, not fluidGrid(): fluidGrid builds its grid-cols-[...]
@@ -20,11 +19,6 @@ import { alert, alertDetail, alertTitle, card, muted } from '../styles'
 // '11rem' didn't, so this row silently rendered as ungridded stacked blocks).
 // Six fixed cards read better as an explicit column count anyway.
 const SUMMARY_GRID = 'grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6'
-
-type State =
-  | { phase: 'loading' }
-  | { phase: 'ok'; summary: DashboardPendingApprovalsSummaryResponse }
-  | { phase: 'error'; message: string }
 
 const CARDS: {
   key: keyof Omit<DashboardPendingApprovalsSummaryResponse, 'scope'>
@@ -45,23 +39,7 @@ const CARDS: {
  *  every pending request company-wide (see the endpoint's own comment for
  *  why HR/Admin's count ignores stage). */
 export function PendingApprovalsSummary() {
-  const [state, setState] = useState<State>({ phase: 'loading' })
-
-  useEffect(() => {
-    const controller = new AbortController()
-
-    getPendingApprovalsSummary(controller.signal)
-      .then((summary) => setState({ phase: 'ok', summary }))
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return
-        setState({
-          phase: 'error',
-          message: err instanceof Error ? err.message : 'request failed',
-        })
-      })
-
-    return () => controller.abort()
-  }, [])
+  const state = usePendingApprovals()
 
   if (state.phase === 'loading') {
     return (

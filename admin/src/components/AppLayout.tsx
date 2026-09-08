@@ -15,9 +15,10 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import type { Role } from '@hrm/shared'
+import type { DashboardPendingApprovalsSummaryResponse, Role } from '@hrm/shared'
 import { useMe } from '../auth/meContext'
 import { getSignedInAccount } from '../auth/msal'
+import { usePendingApprovals } from '../context/pendingApprovalsContext'
 import { button } from '../styles'
 
 /** Entra's role strings are the contract with Entra; these are for people. */
@@ -28,9 +29,25 @@ const ROLE_LABELS: Record<Role, string> = {
   'HRM.Viewer': 'ผู้ดูข้อมูล',
 }
 
+/** Which pending-approvals-summary field a nav link's count badge reads.
+ *  compTimeOff has no key here — it has no link of its own yet (see
+ *  shared's DashboardPendingApprovalsSummaryResponse comment) — it only
+ *  contributes to its group's badgeKeys total below. */
+type BadgeKey = keyof Omit<DashboardPendingApprovalsSummaryResponse, 'scope'>
+
 type NavItem =
-  | { type: 'link'; to: string; label: string; icon: LucideIcon, role?: Role[] | null }
-  | { type: 'group'; label: string; icon: LucideIcon;role?: Role[] | null; children: { to: string; label: string; role?: Role[] | null}[] }
+  | { type: 'link'; to: string; label: string; icon: LucideIcon, role?: Role[] | null; badgeKey?: BadgeKey }
+  | {
+      type: 'group'
+      label: string
+      icon: LucideIcon
+      role?: Role[] | null
+      /** Summed for the badge shown on the group's own header, next to the
+       *  chevron — independent of children's badgeKey so a type with no page
+       *  yet (compTimeOff) can still count toward it. */
+      badgeKeys?: BadgeKey[]
+      children: { to: string; label: string; role?: Role[] | null; badgeKey?: BadgeKey }[]
+    }
 
 // "Master" is a group rather than a link: it holds no page of its own, only
 // the master-data sub-pages nested under it. Job is the first; more master
@@ -59,24 +76,26 @@ const NAV: NavItem[] = [
     type: 'group',
     label: 'จัดการเวลา',
     icon: Clock,
+    badgeKeys: ['timeCorrection', 'shiftChange', 'dayOffSwap', 'overtime', 'offSite', 'compTimeOff'],
     children: [
       { to: '/schedule', label: 'ตารางการทำงาน'},
       { to: '/attendance', label: 'รายละเอียดการลงเวลา', role: ['HRM.Admin', 'HRM.HR', 'HRM.Payroll']},
       { to: '/employees/shift-assignments/daily', label: 'มอบหมายกะรายวัน'},
-      { to: '/time-corrections', label: 'คำขอแก้ไขเวลา'},
-      { to: '/shift-change-requests', label: 'คำขอเปลี่ยนกะ'},
-      { to: '/day-off-swap-requests', label: 'คำขอสลับวันหยุด'},
-      { to: '/overtime-requests', label: 'คำขอทำงานล่วงเวลา (OT)'},
+      { to: '/time-corrections', label: 'คำขอแก้ไขเวลา', badgeKey: 'timeCorrection'},
+      { to: '/shift-change-requests', label: 'คำขอเปลี่ยนกะ', badgeKey: 'shiftChange'},
+      { to: '/day-off-swap-requests', label: 'คำขอสลับวันหยุด', badgeKey: 'dayOffSwap'},
+      { to: '/overtime-requests', label: 'คำขอทำงานล่วงเวลา (OT)', badgeKey: 'overtime'},
       { to: '/overtime-bulk-requests', label: 'ขอ OT แบบกลุ่ม'},
-      { to: '/off-site-work-requests', label: 'คำขอทำงานนอกสถานที่'},
+      { to: '/off-site-work-requests', label: 'คำขอทำงานนอกสถานที่', badgeKey: 'offSite'},
     ],
   },
   {
     type: 'group',
     label: 'การลา',
     icon: Clock,
+    badgeKeys: ['leave'],
     children: [
-      { to: '/leave-requests', label: 'คำขอลา'},
+      { to: '/leave-requests', label: 'คำขอลา', badgeKey: 'leave'},
       { to: '/leave-balances/bulk-grant', label: 'ออกสิทธิ์วันลา', role: ['HRM.Admin', 'HRM.HR']},
       { to: '/leave-balances/carry-over', label: 'ยกยอดวันลา', role: ['HRM.Admin', 'HRM.HR']},
     ],
@@ -111,6 +130,25 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
       : 'text-shell-fg-dim hover:bg-white/6 hover:text-shell-fg',
   ].join(' ')
 
+/** A pending-count pill for a nav link or group header. Hidden at zero so a
+ *  fully caught-up menu looks exactly like it did before badges existed. No
+ *  margin of its own — a plain link places it with `className="ml-auto"`
+ *  since it's the row's only trailing element, while a group header (which
+ *  also has a chevron to push right) wraps it in its own `ml-auto` span
+ *  instead so the pair stays pushed right even when the badge is hidden. */
+function NavBadge({ count, className = '' }: { count: number; className?: string }) {
+  if (count <= 0) return null
+  return (
+    <span
+      className={`grid h-[1.15rem] min-w-[1.15rem] flex-none place-items-center rounded-full
+        bg-red-500 px-1 text-[0.65rem] font-semibold leading-none text-white tabular-nums
+        ${className}`}
+    >
+      {count > 99 ? '99+' : count}
+    </span>
+  )
+}
+
 /** First letters of the first two words — the avatar stand-in. Thai names have
  *  no case, so this is a glyph, not an acronym. */
 function initials(name: string): string {
@@ -125,12 +163,21 @@ export function AppLayout() {
   const { instance } = useMsal()
   const me = useMe()
   const location = useLocation()
+  const pendingApprovals = usePendingApprovals()
 
   // MeProvider has already turned "no roles" into its own screen, so anyone
   // rendering here holds at least one.
   const roles = me.kind === 'admin' ? me.roles : []
   const name = me.kind === 'admin' ? me.name : ''
   const upn = me.kind === 'admin' ? me.upn : ''
+
+  // Zero everywhere while the summary is loading/erroring, rather than a
+  // loading state of their own — badges appearing a beat after the rest of
+  // the menu reads as "caught up, then a request came in", not as a glitch.
+  const counts = pendingApprovals.phase === 'ok' ? pendingApprovals.summary : null
+  const badgeCount = (key?: BadgeKey) => (key && counts ? counts[key] : 0)
+  const badgeSum = (keys?: BadgeKey[]) =>
+    keys && counts ? keys.reduce((sum, key) => sum + counts[key], 0) : 0
 
   // Open by default whenever the current page is one of its children, so a
   // hard refresh on /master/jobs doesn't land on a collapsed group hiding the
@@ -241,6 +288,7 @@ export function AppLayout() {
               <NavLink key={item.to} to={item.to} className={navLinkClass}>
                 <item.icon size={17} className="flex-none opacity-90" />
                 <span>{item.label}</span>
+                <NavBadge count={badgeCount(item.badgeKey)} className="ml-auto" />
               </NavLink>
             ) : (
               <div key={item.label} className="flex flex-none flex-col">
@@ -253,12 +301,15 @@ export function AppLayout() {
                 >
                   <item.icon size={17} className="flex-none opacity-90" />
                   <span>{item.label}</span>
-                  <ChevronDown
-                    size={15}
-                    className={`ml-auto flex-none transition-transform ${
-                      openGroups.has(item.label) ? 'rotate-180' : ''
-                    }`}
-                  />
+                  <span className="ml-auto flex flex-none items-center gap-1.5">
+                    <NavBadge count={badgeSum(item.badgeKeys)} />
+                    <ChevronDown
+                      size={15}
+                      className={`flex-none transition-transform ${
+                        openGroups.has(item.label) ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </span>
                 </button>
                 {openGroups.has(item.label) && (
                   <div className="ml-3.5 flex flex-col gap-0.5 border-l border-white/10 py-0.5 pl-2.5">
@@ -266,6 +317,7 @@ export function AppLayout() {
                       child.role && !child.role.some((role) => roles.includes(role)) ? null :
                       <NavLink key={child.to} to={child.to} className={navLinkClass}>
                         <span>{child.label}</span>
+                        <NavBadge count={badgeCount(child.badgeKey)} className="ml-auto" />
                       </NavLink>
                     ))}
                   </div>

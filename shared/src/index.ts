@@ -3543,7 +3543,12 @@ export type DashboardOnLeaveTodayResponse = { employees: DashboardOnLeaveTodayIt
  *  list: 'team' counts only what's waiting on this caller as supervisor
  *  (current_stage='supervisor'); 'all' (HR/Admin) counts every pending
  *  request regardless of stage, since HR/Admin may decide at either one;
- *  'none' (not anyone's supervisor) is all zeros. */
+ *  'none' (not anyone's supervisor) is all zeros.
+ *
+ *  Also the source for admin/'s nav-bar badges (AppLayout's NAV), not just
+ *  this dashboard — compTimeOff is counted here even though it has no admin/
+ *  page or nav item of its own yet, so it only ever surfaces bundled into
+ *  the "จัดการเวลา" group badge total until that page exists. */
 export type DashboardPendingApprovalsSummaryResponse = {
   scope: 'all' | 'team' | 'none'
   leave: number
@@ -3552,6 +3557,7 @@ export type DashboardPendingApprovalsSummaryResponse = {
   shiftChange: number
   dayOffSwap: number
   timeCorrection: number
+  compTimeOff: number
 }
 
 /* Health ------------------------------------------------------------------ */

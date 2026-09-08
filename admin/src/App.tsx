@@ -5,6 +5,7 @@ import {
   useParams,
 } from 'react-router-dom'
 import { AppLayout, RequireRole } from './components/AppLayout'
+import { PendingApprovalsProvider } from './context/PendingApprovalsProvider'
 import { DashboardPage } from './pages/DashboardPage'
 import { EmployeeListPage } from './pages/employee/EmployeeListPage'
 import { EmployeeFormPage } from './pages/employee/EmployeeFormPage'
@@ -125,7 +126,11 @@ function KeyedFinanceItemForm() {
 const router = createBrowserRouter([
   {
     path: '/',
-    element: <AppLayout />,
+    element: (
+      <PendingApprovalsProvider>
+        <AppLayout />
+      </PendingApprovalsProvider>
+    ),
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },

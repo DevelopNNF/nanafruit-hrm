@@ -6,6 +6,7 @@ import {
   getOvertimeRequest,
   rejectOvertimeRequest,
 } from '../../api/overtimeRequests'
+import { useRefreshPendingApprovals } from '../../context/pendingApprovalsContext'
 import { notify } from '../../notifications/notify'
 import { fetchOvertimeWeeklyCap } from '../../api/overtimeReport'
 import {
@@ -79,6 +80,7 @@ export function OvertimeRequestDetailPage() {
   const [rejecting, setRejecting] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [weeklyCap, setWeeklyCap] = useState<WeeklyCap | null>(null)
+  const refreshPendingApprovals = useRefreshPendingApprovals()
 
   useEffect(() => {
     const requestId = Number(id)
@@ -116,6 +118,7 @@ export function OvertimeRequestDetailPage() {
     try {
       const { request, canDecide } = await approveOvertimeRequest(state.request.id)
       setState({ phase: 'ok', request, canDecide })
+      refreshPendingApprovals()
       notify.success(
         request.status === 'pending' ? 'ส่งต่อให้ HR/Admin แล้ว' : 'อนุมัติคำขอแล้ว',
         request.status === 'pending' ? undefined : 'บันทึกการทำงานล่วงเวลาของพนักงานแล้ว'
@@ -142,6 +145,7 @@ export function OvertimeRequestDetailPage() {
       const { request, canDecide } = await rejectOvertimeRequest(state.request.id, rejectReason)
       setState({ phase: 'ok', request, canDecide })
       setRejecting(false)
+      refreshPendingApprovals()
       notify.success('ปฏิเสธคำขอแล้ว')
     } catch (err) {
       notify.error('ปฏิเสธไม่สำเร็จ', err instanceof Error ? err.message : undefined)

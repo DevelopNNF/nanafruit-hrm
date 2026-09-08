@@ -177,6 +177,15 @@ export async function listCompTimeOffRequests(
   }
 }
 
+/** Company-wide pending count, same shape as countLeaveRequestsPending —
+ *  used by the dashboard summary/nav badges, not scoped to one supervisor. */
+export async function countCompTimeOffRequestsPending(db: Queryable = pool): Promise<number> {
+  const { rows } = await db.query<{ total: string }>(
+    `SELECT count(*) AS total FROM comp_time_off_requests WHERE status = 'pending'`
+  )
+  return Number(rows[0]?.total ?? 0)
+}
+
 /** A supervisor's inbox, same shape as listLeaveRequestsPendingApproval —
  *  supervisorEmployeeId = null gives HR/Admin's company-wide overview of
  *  every request currently waiting on any supervisor. */
