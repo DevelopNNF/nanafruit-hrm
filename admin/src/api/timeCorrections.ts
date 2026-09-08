@@ -10,12 +10,16 @@ import { apiFetch, jsonHeaders, unwrap } from './client'
 export async function listTimeCorrections(
   status?: TimeCorrectionStatus,
   pagination: { page?: number; pageSize?: number } = {},
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** Restricts to these employee ids — how the shared employee filter bar's
+   *  department/job/employment-type/etc. selections narrow this list. */
+  employeeIds?: number[]
 ): Promise<TimeCorrectionListResponse> {
   const params = new URLSearchParams()
   if (status) params.set('status', status)
   if (pagination.page !== undefined) params.set('page', String(pagination.page))
   if (pagination.pageSize !== undefined) params.set('pageSize', String(pagination.pageSize))
+  employeeIds?.forEach((id) => params.append('employeeId', String(id)))
   const qs = params.toString()
   const res = await apiFetch(`/api/time-corrections${qs ? `?${qs}` : ''}`, { signal })
   return unwrap<TimeCorrectionListResponse>(res)

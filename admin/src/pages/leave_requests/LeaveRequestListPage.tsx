@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { LeaveRequestListItem, LeaveRequestStage, LeaveRequestStatus } from '@hrm/shared'
 import { listLeaveRequests, listLeaveRequestsPendingApproval } from '../../api/leaveRequests'
+import { resolveEmployeeIds } from '../../api/employees'
+import { useCanWritePayroll } from '../../auth/meContext'
+import { EmployeeFilterBar, filterFieldLabel, filterFieldRow } from '../../components/EmployeeFilterBar'
 import { Pagination } from '../../components/Pagination'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
-import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
+import { useEmployeeFilters } from '../../hooks/useEmployeeFilters'
+import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, fieldControl, muted, pageHead, subtitle } from '../../styles'
 
 type State =
   | { phase: 'loading' }
@@ -69,31 +72,51 @@ function formatDateRange(request: LeaveRequestListItem): string {
 }
 
 export function LeaveRequestListPage() {
-  const [tab, setTab] = useState<TabValue>('pending')
+  const canWritePayroll = useCanWritePayroll()
+  const [tab, setTab] = useState<TabValue>('all')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [state, setState] = useState<State>({ phase: 'loading' })
-  // True while a tab/page/page-size request is in flight — mirrors
-  // AttendanceDailyListPage's `fetching`, used to disable <Pagination>
-  // rather than resetting `state` to 'loading'.
+  // True while a tab/page/page-size/employee-filter request is in flight —
+  // mirrors AttendanceDailyListPage's `fetching`, used to disable
+  // <Pagination> rather than resetting `state` to 'loading'.
   const [fetching, setFetching] = useState(true)
   const navigate = useNavigate()
+
+  const employeeFilters = useEmployeeFilters({
+    // Requests can belong to an employee who has since left, so 'all'
+    // rather than 'Active' — same reasoning as the attendance/OT reports.
+    defaultStatus: 'all',
+    canWritePayroll,
+    onApply: () => {
+      setFetching(true)
+      setPage(1)
+    },
+  })
 
   // No setState({ phase: 'loading' }) at the top: switching tabs leaves the
   // old table in place until the new one is ready, rather than flashing
   // blank — same reasoning as TimeCorrectionListPage's filter effect.
   useEffect(() => {
     const controller = new AbortController()
+    const hasEmployeeFilter = Object.keys(employeeFilters.filter).length > 0
 
-    const fetchRequests =
-      tab === 'mine'
-        ? listLeaveRequestsPendingApproval(controller.signal).then((requests) => ({
-            requests,
-            total: requests.length,
-          }))
-        : listLeaveRequests(tab === 'all' ? undefined : tab, { page, pageSize }, controller.signal)
-
-    fetchRequests
+    // Two calls, not one, when there's an employee filter to apply: this
+    // list has no join of its own for department/job/etc., so those are
+    // resolved to employee ids against /employees/search first.
+    Promise.resolve(hasEmployeeFilter ? resolveEmployeeIds(employeeFilters.filter, controller.signal) : undefined)
+      .then((employeeIds) =>
+        tab === 'mine'
+          ? listLeaveRequestsPendingApproval(controller.signal).then((requests) => {
+              // The 'mine' inbox has no server-side employee filter of its
+              // own (it's already scoped to "my team" and stays unpaginated),
+              // so the same filter is applied client-side here instead.
+              const filtered =
+                employeeIds !== undefined ? requests.filter((r) => employeeIds.includes(r.employeeId)) : requests
+              return { requests: filtered, total: filtered.length }
+            })
+          : listLeaveRequests(tab === 'all' ? undefined : tab, { page, pageSize }, controller.signal, employeeIds)
+      )
       .then((body) => {
         setState({ phase: 'ok', requests: body.requests, total: body.total })
         setFetching(false)
@@ -108,7 +131,7 @@ export function LeaveRequestListPage() {
       })
 
     return () => controller.abort()
-  }, [tab, page, pageSize])
+  }, [tab, page, pageSize, employeeFilters.filter])
 
   function handleTabChange(next: string) {
     setFetching(true)
@@ -137,110 +160,121 @@ export function LeaveRequestListPage() {
         </div>
       </header>
 
-      <Tabs value={tab} onValueChange={handleTabChange}>
-        <TabsList>
-          {TABS.map((t) => (
-            <TabsTrigger key={t.value} value={t.value}>
-              {t.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <EmployeeFilterBar
+          {...employeeFilters.barProps}
+          fetching={fetching}
+          extraFields={
+            <label className={filterFieldRow}>
+              <span className={filterFieldLabel}>สถานะคำขอ :</span>
+              <select
+                className={`${fieldControl} w-full`}
+                value={tab}
+                onChange={(e) => handleTabChange(e.target.value)}
+              >
+                {TABS.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          }
+        />
+      </div>
 
-        <TabsContent value={tab}>
-          {state.phase === 'loading' && <p className={muted}>กำลังโหลด…</p>}
+      {state.phase === 'loading' && <p className={muted}>กำลังโหลด…</p>}
 
-          {state.phase === 'error' && (
-            <div className={alert('danger')}>
-              <p className={alertTitle('danger')}>โหลดข้อมูลไม่สำเร็จ</p>
-              <p className={alertDetail}>{state.message}</p>
-            </div>
-          )}
+      {state.phase === 'error' && (
+        <div className={alert('danger')}>
+          <p className={alertTitle('danger')}>โหลดข้อมูลไม่สำเร็จ</p>
+          <p className={alertDetail}>{state.message}</p>
+        </div>
+      )}
 
-          {state.phase === 'ok' && state.requests.length === 0 && (
-            <div className={`rounded-lg border border-slate-200 bg-white shadow-sm ${cardEmpty}`}>
-              <p className="mb-1.5 font-semibold text-slate-900">ไม่พบคำขอในหมวดนี้</p>
-              <p className={muted}>ลองเปลี่ยนแท็บด้านบน</p>
-            </div>
-          )}
+      {state.phase === 'ok' && state.requests.length === 0 && (
+        <div className={`rounded-lg border border-slate-200 bg-white shadow-sm ${cardEmpty}`}>
+          <p className="mb-1.5 font-semibold text-slate-900">ไม่พบคำขอในหมวดนี้</p>
+          <p className={muted}>ลองเปลี่ยนตัวกรองด้านบน</p>
+        </div>
+      )}
 
-          {state.phase === 'ok' && state.requests.length > 0 && (
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-              <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
-                <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">{state.total} รายการ</p>
-              </div>
+      {state.phase === 'ok' && state.requests.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3.5">
+            <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">{state.total} รายการ</p>
+          </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
-                  <thead>
-                    <tr>
-                      {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภทการลา', 'ช่วงวันที่', 'จำนวนวัน', 'เหตุผล', 'สถานะ', 'ขั้นตอน'].map(
-                        (h) => (
-                          <th
-                            key={h}
-                            className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
-                          >
-                            {h}
-                          </th>
-                        )
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {state.requests.map((request, index) => (
-                      <tr
-                        key={request.id}
-                        onClick={() => void navigate(`/leave-requests/${request.id}`)}
-                        className="cursor-pointer hover:bg-slate-50"
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[0.825rem] [&_tbody_tr:last-child_td]:border-b-0">
+              <thead>
+                <tr>
+                  {['#', 'รหัสพนักงาน', 'ชื่อพนักงาน', 'ประเภทการลา', 'ช่วงวันที่', 'จำนวนวัน', 'เหตุผล', 'สถานะ', 'ขั้นตอน'].map(
+                    (h) => (
+                      <th
+                        key={h}
+                        className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[0.675rem] font-semibold tracking-wider text-slate-500 uppercase whitespace-nowrap"
                       >
-                        <td className="w-12 border-b border-slate-200 px-4 py-2.5 align-middle text-slate-500">
-                          {index + 1}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-medium text-slate-900">
-                          {request.employeeCode}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                          {request.employeeName}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                          {request.leaveTypeName}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
-                          {formatDateRange(request)}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600 tabular-nums">
-                          {request.totalDays}
-                        </td>
-                        <td className="max-w-64 truncate border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
-                          {request.reason ?? '—'}
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
-                          <span className={badge(statusBadgeTone(request.status))}>{STATUS_LABEL[request.status]}</span>
-                        </td>
-                        <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
-                          {request.status === 'pending' && request.currentStage
-                            ? STAGE_LABEL[request.currentStage]
-                            : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        {h}
+                      </th>
+                    )
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {state.requests.map((request, index) => (
+                  <tr
+                    key={request.id}
+                    onClick={() => void navigate(`/leave-requests/${request.id}`)}
+                    className="cursor-pointer hover:bg-slate-50"
+                  >
+                    <td className="w-12 border-b border-slate-200 px-4 py-2.5 align-middle text-slate-500">
+                      {index + 1}
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle font-medium text-slate-900">
+                      {request.employeeCode}
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                      {request.employeeName}
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                      {request.leaveTypeName}
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600 tabular-nums">
+                      {formatDateRange(request)}
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600 tabular-nums">
+                      {request.totalDays}
+                    </td>
+                    <td className="max-w-64 truncate border-b border-slate-200 px-4 py-2.5 align-middle text-slate-600">
+                      {request.reason ?? '—'}
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle">
+                      <span className={badge(statusBadgeTone(request.status))}>{STATUS_LABEL[request.status]}</span>
+                    </td>
+                    <td className="border-b border-slate-200 px-4 py-2.5 align-middle whitespace-nowrap text-slate-600">
+                      {request.status === 'pending' && request.currentStage
+                        ? STAGE_LABEL[request.currentStage]
+                        : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-              {tab !== 'mine' && (
-                <Pagination
-                  page={page}
-                  pageSize={pageSize}
-                  totalItems={state.total}
-                  onPageChange={goToPage}
-                  onPageSizeChange={handlePageSizeChange}
-                  disabled={fetching}
-                />
-              )}
-            </div>
+          {tab !== 'mine' && (
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              totalItems={state.total}
+              onPageChange={goToPage}
+              onPageSizeChange={handlePageSizeChange}
+              disabled={fetching}
+            />
           )}
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
     </>
   )
 }

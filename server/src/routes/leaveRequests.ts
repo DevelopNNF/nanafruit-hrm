@@ -18,12 +18,12 @@ import {
 import { pool, withTransaction } from '../db.js'
 import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
-import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
+import { fail, handleUnexpected, parseOptionalPositiveInt, parseOptionalPositiveIntArray } from '../http.js'
 import { describeActor, findEmployeeById, findEmployeeIdByEntraUpn } from '../employeeQueries.js'
 import { notify } from '../notifications/dispatch.js'
 import { findLeaveTypeById } from '../leaveTypeQueries.js'
 import { listLeaveBalanceSummaries } from '../leaveBalanceQueries.js'
-import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
+import { narrowToScope, resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 import {
   SELECT_LEAVE_REQUEST,
   computeTotalDays,
@@ -475,6 +475,9 @@ leaveRequestsRouter.get('/leave-requests', canReadAdmin, async (req: Request, re
   const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
   if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
 
+  const employeeIds = parseOptionalPositiveIntArray(req.query['employeeId'])
+  if (employeeIds === undefined) return fail(res, 400, 'employeeId must be a positive integer')
+
   const auth = actorOf(req)
   if (!auth) return fail(res, 500, 'server misconfigured')
 
@@ -490,10 +493,12 @@ leaveRequestsRouter.get('/leave-requests', canReadAdmin, async (req: Request, re
       return res.json(body)
     }
 
+    const scopedEmployeeIds = narrowToScope(scope, employeeIds ?? undefined)
+
     const result = await listLeaveRequests(
       {
         status: statusResult.value,
-        ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
+        ...(scopedEmployeeIds !== undefined && { employeeIds: scopedEmployeeIds }),
       },
       { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
     )

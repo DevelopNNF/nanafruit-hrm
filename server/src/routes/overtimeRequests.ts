@@ -36,7 +36,7 @@ import type pg from 'pg'
 import { pool, withTransaction } from '../db.js'
 import { requireRole, requireRoleOrEmployee } from '../auth/middleware.js'
 import { recordAudit } from '../audit.js'
-import { fail, handleUnexpected, parseOptionalPositiveInt } from '../http.js'
+import { fail, handleUnexpected, parseOptionalPositiveInt, parseOptionalPositiveIntArray } from '../http.js'
 import {
   describeActor,
   findEmployeeById,
@@ -44,7 +44,7 @@ import {
   listActiveEmployeesForBulkOt,
 } from '../employeeQueries.js'
 import { notify } from '../notifications/dispatch.js'
-import { resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
+import { narrowToScope, resolveSupervisorScope, scopeAllows } from '../supervisorScope.js'
 import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
 import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
@@ -1053,6 +1053,9 @@ overtimeRequestsRouter.get(
     const pageSize = parseOptionalPositiveInt(req.query['pageSize'])
     if (pageSize === undefined) return fail(res, 400, 'pageSize must be a positive integer')
 
+    const employeeIds = parseOptionalPositiveIntArray(req.query['employeeId'])
+    if (employeeIds === undefined) return fail(res, 400, 'employeeId must be a positive integer')
+
     const auth = actorOf(req)
     if (!auth) return fail(res, 500, 'server misconfigured')
 
@@ -1068,10 +1071,12 @@ overtimeRequestsRouter.get(
         return res.json(body)
       }
 
+      const scopedEmployeeIds = narrowToScope(scope, employeeIds ?? undefined)
+
       const result = await listOvertimeRequests(
         {
           status: statusResult.value,
-          ...(scope.kind === 'team' && { employeeIds: scope.employeeIds }),
+          ...(scopedEmployeeIds !== undefined && { employeeIds: scopedEmployeeIds }),
         },
         { ...(page !== null && { page }), ...(pageSize !== null && { pageSize }) }
       )

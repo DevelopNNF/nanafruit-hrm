@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { ShiftChangeRequestListItem, ShiftChangeRequestStage, ShiftChangeRequestStatus } from '@hrm/shared'
 import { listShiftChangeRequests, listShiftChangeRequestsPendingApproval } from '../../api/shiftChangeRequests'
+import { resolveEmployeeIds } from '../../api/employees'
+import { useCanWritePayroll } from '../../auth/meContext'
+import { EmployeeFilterBar, filterFieldLabel, filterFieldRow } from '../../components/EmployeeFilterBar'
 import { Pagination } from '../../components/Pagination'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
-import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, muted, pageHead, subtitle } from '../../styles'
+import { useEmployeeFilters } from '../../hooks/useEmployeeFilters'
+import { alert, alertDetail, alertTitle, badge, cardEmpty, eyebrow, fieldControl, muted, pageHead, subtitle } from '../../styles'
 
 type State =
   | { phase: 'loading' }
@@ -56,7 +59,8 @@ function formatDate(iso: string): string {
 }
 
 export function ShiftChangeRequestListPage() {
-  const [tab, setTab] = useState<TabValue>('pending')
+  const canWritePayroll = useCanWritePayroll()
+  const [tab, setTab] = useState<TabValue>('all')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [state, setState] = useState<State>({ phase: 'loading' })
@@ -65,21 +69,40 @@ export function ShiftChangeRequestListPage() {
   const [fetching, setFetching] = useState(true)
   const navigate = useNavigate()
 
+  const employeeFilters = useEmployeeFilters({
+    // Requests can belong to an employee who has since left, so 'all'
+    // rather than 'Active' — same reasoning as the attendance/OT reports.
+    defaultStatus: 'all',
+    canWritePayroll,
+    onApply: () => {
+      setFetching(true)
+      setPage(1)
+    },
+  })
+
   // No setState({ phase: 'loading' }) at the top: switching tabs leaves the
   // old table in place until the new one is ready, rather than flashing
   // blank — same reasoning as LeaveRequestListPage's filter effect.
   useEffect(() => {
     const controller = new AbortController()
+    const hasEmployeeFilter = Object.keys(employeeFilters.filter).length > 0
 
-    const fetchRequests =
-      tab === 'mine'
-        ? listShiftChangeRequestsPendingApproval(controller.signal).then((requests) => ({
-            requests,
-            total: requests.length,
-          }))
-        : listShiftChangeRequests(tab === 'all' ? undefined : tab, { page, pageSize }, controller.signal)
-
-    fetchRequests
+    // Two calls, not one, when there's an employee filter to apply: this
+    // list has no join of its own for department/job/etc., so those are
+    // resolved to employee ids against /employees/search first.
+    Promise.resolve(hasEmployeeFilter ? resolveEmployeeIds(employeeFilters.filter, controller.signal) : undefined)
+      .then((employeeIds) =>
+        tab === 'mine'
+          ? listShiftChangeRequestsPendingApproval(controller.signal).then((requests) => {
+              // The 'mine' inbox has no server-side employee filter of its
+              // own (it's already scoped to "my team" and stays unpaginated),
+              // so the same filter is applied client-side here instead.
+              const filtered =
+                employeeIds !== undefined ? requests.filter((r) => employeeIds.includes(r.employeeId)) : requests
+              return { requests: filtered, total: filtered.length }
+            })
+          : listShiftChangeRequests(tab === 'all' ? undefined : tab, { page, pageSize }, controller.signal, employeeIds)
+      )
       .then((body) => {
         setState({ phase: 'ok', requests: body.requests, total: body.total })
         setFetching(false)
@@ -94,7 +117,7 @@ export function ShiftChangeRequestListPage() {
       })
 
     return () => controller.abort()
-  }, [tab, page, pageSize])
+  }, [tab, page, pageSize, employeeFilters.filter])
 
   function handleTabChange(next: string) {
     setFetching(true)
@@ -123,31 +146,44 @@ export function ShiftChangeRequestListPage() {
         </div>
       </header>
 
-      <Tabs value={tab} onValueChange={handleTabChange}>
-        <TabsList>
-          {TABS.map((t) => (
-            <TabsTrigger key={t.value} value={t.value}>
-              {t.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <EmployeeFilterBar
+          {...employeeFilters.barProps}
+          fetching={fetching}
+          extraFields={
+            <label className={filterFieldRow}>
+              <span className={filterFieldLabel}>สถานะคำขอ :</span>
+              <select
+                className={`${fieldControl} w-full`}
+                value={tab}
+                onChange={(e) => handleTabChange(e.target.value)}
+              >
+                {TABS.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          }
+        />
+      </div>
 
-        <TabsContent value={tab}>
-          {state.phase === 'loading' && <p className={muted}>กำลังโหลด…</p>}
+      {state.phase === 'loading' && <p className={muted}>กำลังโหลด…</p>}
 
-          {state.phase === 'error' && (
-            <div className={alert('danger')}>
-              <p className={alertTitle('danger')}>โหลดข้อมูลไม่สำเร็จ</p>
-              <p className={alertDetail}>{state.message}</p>
-            </div>
-          )}
+      {state.phase === 'error' && (
+        <div className={alert('danger')}>
+          <p className={alertTitle('danger')}>โหลดข้อมูลไม่สำเร็จ</p>
+          <p className={alertDetail}>{state.message}</p>
+        </div>
+      )}
 
-          {state.phase === 'ok' && state.requests.length === 0 && (
-            <div className={`rounded-lg border border-slate-200 bg-white shadow-sm ${cardEmpty}`}>
-              <p className="mb-1.5 font-semibold text-slate-900">ไม่พบคำขอในหมวดนี้</p>
-              <p className={muted}>ลองเปลี่ยนแท็บด้านบน</p>
-            </div>
-          )}
+      {state.phase === 'ok' && state.requests.length === 0 && (
+        <div className={`rounded-lg border border-slate-200 bg-white shadow-sm ${cardEmpty}`}>
+          <p className="mb-1.5 font-semibold text-slate-900">ไม่พบคำขอในหมวดนี้</p>
+          <p className={muted}>ลองเปลี่ยนตัวกรองด้านบน</p>
+        </div>
+      )}
 
           {state.phase === 'ok' && state.requests.length > 0 && (
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -225,8 +261,6 @@ export function ShiftChangeRequestListPage() {
               )}
             </div>
           )}
-        </TabsContent>
-      </Tabs>
     </>
   )
 }
