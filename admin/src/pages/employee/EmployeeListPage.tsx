@@ -345,7 +345,7 @@ export function EmployeeListPage() {
       {state.phase === 'ok' && (state.total > 0 || filtering) && (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-4">
+            {/* <div className="flex flex-wrap items-center justify-between gap-4">
               <form onSubmit={handleSearchSubmit} className="flex max-w-108 min-w-0 flex-1 items-center gap-2">
                 <div className="relative flex min-w-0 flex-1 items-center">
                   <Search size={15} className="pointer-events-none absolute left-2.5 text-slate-500" />
@@ -365,7 +365,7 @@ export function EmployeeListPage() {
               <p className="text-[0.775rem] whitespace-nowrap text-slate-500 tabular-nums">
                 {filtering ? `พบ ${state.total} คน` : `ทั้งหมด ${state.total} คน`}
               </p>
-            </div>
+            </div> */}
 
             <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
               <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
@@ -452,7 +452,26 @@ export function EmployeeListPage() {
                   ))}
                 </select>
               </label>
+              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
+                <span className="w-28 shrink-0 text-right">ค้นหา :</span>
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="ค้นหา รหัส ชื่อ ชื่อเล่น หรือตำแหน่ง"
+                  aria-label="ค้นหาพนักงาน"
+                  className="w-full rounded-md border border-slate-200 bg-white p-2 text-[0.825rem] text-slate-900 placeholder:text-slate-500"
+                />
+              </label>
             </div>
+            <div className='w-full mt-3 flex justify-center'>
+              <button type="submit" className={button('default')} disabled={fetching} onClick={handleSearchSubmit}>
+                ค้นหา
+              </button>
+            </div>
+            <p className="text-[0.775rem] w-full text-right whitespace-nowrap text-slate-500 tabular-nums">
+              {filtering ? `พบ ${state.total} คน` : `ทั้งหมด ${state.total} คน`}
+            </p>
           </div>
 
           {state.employees.length === 0 ? (
