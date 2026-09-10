@@ -2694,6 +2694,16 @@ export type DayOffSwapRequest = {
   createdAt: string
   /** ISO 8601. Bumped on every edit while pending. */
   updatedAt: string
+  /** Display name of whoever filed this on the employee's behalf (a
+   *  supervisor, HR or Admin, from admin/'s bulk request) — null when the
+   *  employee filed it themselves, which is every LIFF self-service
+   *  request. Mirrors OvertimeRequest's field of the same name. */
+  createdByName: string | null
+  /** Ties this row to every other request one "ขอสลับวันหยุดแบบกลุ่ม"
+   *  submission created — null for a self-service request or any request
+   *  filed the normal way. See migration 083's comment for why there is no
+   *  batch table to join instead. Mirrors OvertimeRequest.batchId. */
+  batchId: string | null
 }
 
 /** A request as admin/ sees it: the employee joined in for display, same
@@ -2743,6 +2753,94 @@ export type DayOffSwapRequestDetailResponse = { request: DayOffSwapRequestListIt
 /** Body of POST /api/day-off-swap-requests/:id/reject — a reason is required
  *  every time, never optional. */
 export type DayOffSwapRequestRejectRequest = { reason: string }
+
+/* Bulk Day Off Swap Request --------------------------------------------------
+ * A supervisor/HR/Admin filing the same work_date/off_date swap for several
+ * employees at once from admin/ — "ขอสลับวันหยุดแบบกลุ่ม". Every employee
+ * still gets a normal, independent day_off_swap_requests row (see migration
+ * 083's comment for why there is no batch table); these types exist to
+ * create and act on that group of rows as one unit. Mirrors Bulk OT
+ * Request's types of the same shape almost exactly.
+ */
+
+/** One row of the picker on the "ขอสลับวันหยุดแบบกลุ่ม" screen. */
+export type DayOffSwapRequestEligibleEmployee = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  departmentName: string | null
+}
+
+/** GET /api/day-off-swap-requests/eligible-employees
+ *
+ *  `scope` says why this list is what it is: 'all' for HR/Admin (every
+ *  active employee), 'team' for a supervisor (their own active direct
+ *  reports only, resolved server-side — never trust a client-picked
+ *  employeeId alone). The server answers "neither applies" with 403, not an
+ *  empty 'team' list, so the page can tell "no reports yet" apart from "not
+ *  allowed here" — same reasoning as OvertimeEligibleEmployeesResponse. */
+export type DayOffSwapRequestEligibleEmployeesResponse = {
+  scope: 'all' | 'team'
+  employees: DayOffSwapRequestEligibleEmployee[]
+}
+
+/** Body of POST /api/day-off-swap-requests/bulk. Same workDate/offDate/
+ *  reason shape as DayOffSwapRequestInput, applied to every id in
+ *  employeeIds — the "one pair of dates, many employees" the feature asked
+ *  for. Unlike the self-service input, the ≥3-day minimum notice is not
+ *  enforced here — see validateDayOffSwapRequestInput's enforceMinNotice
+ *  parameter in routes/dayOffSwapRequests.ts. */
+export type DayOffSwapRequestBulkInput = {
+  workDate: string
+  offDate: string
+  reason: string
+  employeeIds: number[]
+}
+
+/** One employee's result once a bulk batch has actually been created —
+ *  every entry here is 'ok' (see DayOffSwapRequestBulkCreateResponse: this
+ *  shape is only ever returned once every employee has already passed the
+ *  pre-check pass, so nothing gets skipped at this point any more). */
+export type DayOffSwapRequestBulkCreateOutcome = { employeeId: number; kind: 'ok'; requestId: number }
+
+/** One employee's result from the pre-check pass — before anything is
+ *  created. 'ok' means this employee's request would be accepted; it does
+ *  NOT mean a request exists yet. Used only when the batch as a whole is
+ *  blocked (see DayOffSwapRequestBulkCreateResponse) — all-or-nothing, same
+ *  reasoning as OvertimeBulkPrecheckOutcome. */
+export type DayOffSwapRequestBulkPrecheckOutcome =
+  | { employeeId: number; kind: 'ok' }
+  | { employeeId: number; kind: 'invalid'; message: string }
+
+/** POST /api/day-off-swap-requests/bulk */
+export type DayOffSwapRequestBulkCreateResponse =
+  | { blocked: false; batchId: string; outcomes: DayOffSwapRequestBulkCreateOutcome[] }
+  | { blocked: true; outcomes: DayOffSwapRequestBulkPrecheckOutcome[] }
+
+/** GET /api/day-off-swap-requests/batch/:batchId — every row created by one
+ *  bulk submission, for the batch detail screen. canDecideBatch is
+ *  caller-relative, same reasoning as DayOffSwapRequestDetailResponse.
+ *  canDecide — every pending row in one batch shares the same
+ *  supervisor_employee_id/currentStage (resolved once from the filer, not
+ *  per employee), so one flag for the whole batch is accurate rather than a
+ *  per-row approximation. False when there is nothing pending left to
+ *  decide. */
+export type DayOffSwapRequestBatchResponse = {
+  requests: DayOffSwapRequestListItem[]
+  canDecideBatch: boolean
+}
+
+/** One request's result from a batch-wide approve/reject. 'stale' mirrors
+ *  OvertimeBatchDecisionOutcome's — the request was valid when filed and no
+ *  longer is (the calendar classification or shift changed since), so it is
+ *  left pending for a reviewer to look at individually rather than silently
+ *  decided either way. */
+export type DayOffSwapRequestBatchDecisionOutcome =
+  | { requestId: number; employeeId: number; kind: 'ok' }
+  | { requestId: number; employeeId: number; kind: 'stale'; message: string }
+
+/** POST /api/day-off-swap-requests/batch/:batchId/approve, .../reject */
+export type DayOffSwapRequestBatchActionResponse = { outcomes: DayOffSwapRequestBatchDecisionOutcome[] }
 
 /* Calendar -------------------------------------------------------------- */
 

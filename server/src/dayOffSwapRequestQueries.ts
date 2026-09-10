@@ -43,6 +43,8 @@ export type DayOffSwapRequestRow = {
   decision_reason: string | null
   created_at: string
   updated_at: string
+  created_by_name: string | null
+  batch_id: string | null
 }
 
 export type DayOffSwapRequestListRow = DayOffSwapRequestRow & {
@@ -60,7 +62,7 @@ export const SELECT_DAY_OFF_SWAP_REQUEST = `
          (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
          dosr.current_stage, dosr.supervisor_approved_by_name, dosr.supervisor_approved_at,
          dosr.decided_by_name, dosr.decided_at, dosr.decision_reason,
-         dosr.created_at, dosr.updated_at
+         dosr.created_at, dosr.updated_at, dosr.created_by_name, dosr.batch_id
   FROM day_off_swap_requests dosr
   LEFT JOIN LATERAL (
     SELECT shift_id FROM employee_shift_assignments esa
@@ -81,7 +83,7 @@ export const SELECT_DAY_OFF_SWAP_REQUEST_LIST = `
          (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
          dosr.current_stage, dosr.supervisor_approved_by_name, dosr.supervisor_approved_at,
          dosr.decided_by_name, dosr.decided_at, dosr.decision_reason,
-         dosr.created_at, dosr.updated_at,
+         dosr.created_at, dosr.updated_at, dosr.created_by_name, dosr.batch_id,
          e.employee_code, (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name
   FROM day_off_swap_requests dosr
   LEFT JOIN LATERAL (
@@ -120,6 +122,8 @@ export function rowToDayOffSwapRequest(row: DayOffSwapRequestRow): DayOffSwapReq
     decisionReason: row.decision_reason,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
+    createdByName: row.created_by_name,
+    batchId: row.batch_id,
   }
 }
 
@@ -283,4 +287,17 @@ export async function hasConflictingDayOffSwapRequest(
     [employeeId, workDate, offDate, excludeId]
   )
   return rows[0]?.exists ?? false
+}
+
+/** Every row one "ขอสลับวันหยุดแบบกลุ่ม" (bulk) submission created, for the
+ *  batch detail screen — mirrors listOvertimeRequestsByBatchId. */
+export async function listDayOffSwapRequestsByBatchId(
+  batchId: string,
+  db: Queryable = pool
+): Promise<DayOffSwapRequestListItem[]> {
+  const { rows } = await db.query<DayOffSwapRequestListRow>(
+    `${SELECT_DAY_OFF_SWAP_REQUEST_LIST} WHERE dosr.batch_id = $1 ORDER BY e.employee_code`,
+    [batchId]
+  )
+  return rows.map(rowToDayOffSwapRequestListItem)
 }

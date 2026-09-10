@@ -87,6 +87,7 @@ export type AuditAction =
   | 'day_off_swap_request.create'
   | 'day_off_swap_request.update'
   | 'day_off_swap_request.cancel'
+  | 'day_off_swap_request.bulk_create'
   | 'day_off_swap_request.supervisor_approve'
   | 'day_off_swap_request.approve'
   | 'day_off_swap_request.reject'

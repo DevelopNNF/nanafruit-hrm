@@ -198,6 +198,25 @@ export function DayOffSwapRequestDetailPage() {
             <dt className={specDt}>เหตุผลจากพนักงาน</dt>
             <dd className={specDd}>{state.request.reason}</dd>
 
+            {state.request.createdByName !== null && (
+              <>
+                <dt className={specDt}>ขอแทนโดย</dt>
+                <dd className={specDd}>
+                  {state.request.createdByName}
+                  {state.request.batchId !== null && (
+                    <>
+                      {' '}
+                      (
+                      <Link className={link} to={`/day-off-swap-requests/batch/${state.request.batchId}`}>
+                        ดูคำขอกลุ่มนี้
+                      </Link>
+                      )
+                    </>
+                  )}
+                </dd>
+              </>
+            )}
+
             <dt className={specDt}>ส่งคำขอเมื่อ</dt>
             <dd className={specDd}>{formatDateTime(state.request.createdAt)}</dd>
 

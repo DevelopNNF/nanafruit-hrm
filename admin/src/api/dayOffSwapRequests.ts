@@ -1,5 +1,12 @@
 import type {
+  DayOffSwapRequestBatchActionResponse,
+  DayOffSwapRequestBatchDecisionOutcome,
+  DayOffSwapRequestBatchResponse,
+  DayOffSwapRequestBulkCreateResponse,
+  DayOffSwapRequestBulkInput,
   DayOffSwapRequestDetailResponse,
+  DayOffSwapRequestEligibleEmployee,
+  DayOffSwapRequestEligibleEmployeesResponse,
   DayOffSwapRequestListItem,
   DayOffSwapRequestListResponse,
   DayOffSwapRequestPendingApprovalResponse,
@@ -60,3 +67,56 @@ export async function rejectDayOffSwapRequest(
   })
   return unwrap<DayOffSwapRequestDetailResponse>(res)
 }
+
+/** The "ขอสลับวันหยุดแบบกลุ่ม" picker's employee pool — 'all' active
+ *  employees for HR/Admin, or the caller's own active direct reports for a
+ *  supervisor. Throws (ApiRequestError, 403) if the signed-in account has
+ *  neither. */
+export async function fetchDayOffSwapRequestEligibleEmployees(
+  signal?: AbortSignal
+): Promise<DayOffSwapRequestEligibleEmployeesResponse> {
+  const res = await apiFetch('/api/day-off-swap-requests/eligible-employees', { signal })
+  return unwrap<DayOffSwapRequestEligibleEmployeesResponse>(res)
+}
+
+export async function createBulkDayOffSwapRequest(
+  input: DayOffSwapRequestBulkInput
+): Promise<DayOffSwapRequestBulkCreateResponse> {
+  const res = await apiFetch('/api/day-off-swap-requests/bulk', {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  })
+  return unwrap<DayOffSwapRequestBulkCreateResponse>(res)
+}
+
+export async function getDayOffSwapRequestBatch(
+  batchId: string,
+  signal?: AbortSignal
+): Promise<DayOffSwapRequestBatchResponse> {
+  const res = await apiFetch(`/api/day-off-swap-requests/batch/${batchId}`, { signal })
+  return unwrap<DayOffSwapRequestBatchResponse>(res)
+}
+
+export async function approveDayOffSwapRequestBatch(
+  batchId: string
+): Promise<DayOffSwapRequestBatchDecisionOutcome[]> {
+  const res = await apiFetch(`/api/day-off-swap-requests/batch/${batchId}/approve`, { method: 'POST' })
+  const body = await unwrap<DayOffSwapRequestBatchActionResponse>(res)
+  return body.outcomes
+}
+
+export async function rejectDayOffSwapRequestBatch(
+  batchId: string,
+  reason: string
+): Promise<DayOffSwapRequestBatchDecisionOutcome[]> {
+  const res = await apiFetch(`/api/day-off-swap-requests/batch/${batchId}/reject`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({ reason }),
+  })
+  const body = await unwrap<DayOffSwapRequestBatchActionResponse>(res)
+  return body.outcomes
+}
+
+export type { DayOffSwapRequestEligibleEmployee }
