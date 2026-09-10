@@ -18,6 +18,7 @@ import {
   alertDetail,
   alertTitle,
   badge,
+  button,
   cardEmpty,
   eyebrow,
   fieldControl,
@@ -189,6 +190,9 @@ export function OvertimeRequestListPage() {
           <h1>คำขอทำงานล่วงเวลา</h1>
           <p className={subtitle}>คำขอ OT จากพนักงาน รออนุมัติหรือปฏิเสธ</p>
         </div>
+        <button className={button('primary')} type="button" onClick={() => void navigate('/overtime-requests/bulk-request')}>
+          ขอ OT แบบกลุ่ม
+        </button>
       </header>
 
       <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { computeOvertimeMinutes, type OvertimeBulkPrecheckOutcome, type OvertimeEligibleEmployee } from '@hrm/shared'
 import { ApiRequestError } from '../../api/client'
 import { createBulkOvertimeRequest, fetchOvertimeEligibleEmployees } from '../../api/overtimeRequests'
@@ -22,6 +22,7 @@ import {
   requiredMark,
   subtitle,
 } from '../../styles'
+import { ArrowLeft } from 'lucide-react'
 
 type EligibleState =
   | { phase: 'loading' }
@@ -170,7 +171,15 @@ export function BulkOvertimeRequestPage() {
     <>
       <header className={pageHead}>
         <div>
-          <p className={eyebrow}>Overtime</p>
+          <p className={eyebrow}>
+            <Link
+              className="inline-flex items-center gap-1.5 text-slate-500 no-underline normal-case tracking-normal hover:text-navy"
+              to="/overtime-requests"
+            >
+              <ArrowLeft size={13} />
+              กลับไปรายการคำขอ
+            </Link>
+          </p>
           <h1>ขอ OT แบบกลุ่ม</h1>
           <p className={subtitle}>
             ระบุรายละเอียดการขอ OT ชุดเดียว แล้วเลือกพนักงานที่จะขอให้ — คำขอของแต่ละคนยังต้องผ่านการอนุมัติตามปกติ
