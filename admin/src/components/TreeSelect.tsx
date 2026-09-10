@@ -91,7 +91,7 @@ function hasCheckedDescendant(node: TreeNode, checked: Set<number>): boolean {
 }
 
 const triggerClass =
-  'flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-left text-[0.825rem] text-slate-900 hover:enabled:border-slate-500 disabled:bg-slate-100 disabled:text-slate-900 disabled:opacity-100'
+  'flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-slate-300 bg-white pl-3.5 py-2 text-left text-[0.825rem] text-slate-900 hover:enabled:border-slate-500 disabled:bg-slate-100 disabled:text-slate-900 disabled:opacity-100'
 
 function Row({
   depth,
@@ -301,11 +301,11 @@ export function TreeSelect(props: TreeSelectProps) {
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
-      <div className="relative min-w-0">
+      <div className="relative min-w-0 w-full">
         <PopoverTrigger asChild>
           <button type="button" disabled={disabled || loading} className={cn(triggerClass, className)}>
-            <span className={cn('truncate', triggerEmpty && 'text-slate-400')}>{triggerLabel}</span>
-            <ChevronDown className="size-4 shrink-0 text-slate-400" />
+            <span className={cn('truncate', triggerEmpty && 'text-slate-900')}>{triggerLabel}</span>
+            <ChevronDown className="size-4 shrink-0 text-slate-900" />
           </button>
         </PopoverTrigger>
 

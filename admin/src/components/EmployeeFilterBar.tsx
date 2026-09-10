@@ -70,7 +70,7 @@ export function EmployeeFilterBar({
                 onChange.group(value === 'all' || value === 'none' ? value : Number(value))
               }}
             >
-              <option value="all">— ทั้งหมด —</option>
+              <option value="all">ทั้งหมด</option>
               <option value="none">ยังไม่อยู่กลุ่มใด</option>
               {options.payrollGroups.map((group) => (
                 <option key={group.id} value={group.id}>
