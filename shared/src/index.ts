@@ -3613,6 +3613,36 @@ export type DashboardPendingApprovalsSummaryResponse = {
   compTimeOff: number
 }
 
+/** GET /api/dashboard/attendance-issues — who was absent, or checked in/out
+ *  incomplete, over the rolling window `attendanceDailyJob.ts`'s
+ *  `defaultRange()` already uses for the batch recompute (last 7 days ending
+ *  yesterday, Thailand time). Deliberately not "today": attendance_daily has
+ *  no row for today until tomorrow's batch run, since today's shift hasn't
+ *  finished (see that file's own comment).
+ *
+ *  Scoped by resolveSupervisorScope like every other admin/ request list:
+ *  'team' sees only direct reports, 'all' (HR/Admin) sees everyone, 'none' is
+ *  both lists empty. */
+export type DashboardAttendanceIssueItem = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  /** How many days in [fromDate, toDate] matched. */
+  count: number
+  /** The matching work_dates, most recent first. */
+  dates: string[]
+}
+
+export type DashboardAttendanceIssuesResponse = {
+  scope: 'all' | 'team' | 'none'
+  /** The window covered, 'YYYY-MM-DD' inclusive — surfaced so the UI can say
+   *  which dates this is, rather than implying "today". */
+  fromDate: string
+  toDate: string
+  absent: DashboardAttendanceIssueItem[]
+  incomplete: DashboardAttendanceIssueItem[]
+}
+
 /* Health ------------------------------------------------------------------ */
 
 /** GET /api/health */

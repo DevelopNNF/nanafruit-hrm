@@ -666,3 +666,70 @@ export async function listAttendanceIssuesForDate(
     earlyLeaveMinutes: row.early_leave_minutes,
   }))
 }
+
+/* The dashboard "attendance issues" cards ------------------------------------
+ * Per-employee summary over a date range (the admin dashboard's rolling
+ * window — see dashboard.ts), grouped rather than one row per day like
+ * listAttendanceDaily: the card wants "who, and how many times", not a full
+ * day-by-day table (that's what /report/attendance is for).
+ */
+
+export type AttendanceIssueSummaryItem = {
+  employeeId: number
+  employeeCode: string
+  employeeName: string
+  /** How many days in the range matched `status`. */
+  count: number
+  /** The matching work_dates, most recent first. Bounded by the range the
+   *  caller passed in (the dashboard uses a 7-day window), so this never
+   *  grows large enough to need its own cap. */
+  dates: string[]
+}
+
+type AttendanceIssueSummaryRow = {
+  employee_id: string
+  employee_code: string
+  employee_name: string
+  count: string
+  dates: string[]
+}
+
+/** Employees with at least one `status` day in [fromDate, toDate], most
+ *  affected first. `employeeIds`, when given, narrows to a supervisor's team
+ *  the same way AttendanceDailyFilterInput.employeeIds does elsewhere in this
+ *  file — the caller resolves scope, this just applies it. */
+export async function listAttendanceIssueSummary(
+  status: 'absent' | 'incomplete',
+  range: { fromDate: string; toDate: string },
+  employeeIds?: number[]
+): Promise<AttendanceIssueSummaryItem[]> {
+  const params: unknown[] = [range.fromDate, range.toDate]
+  let employeeFilter = ''
+  if (employeeIds !== undefined) {
+    params.push(employeeIds)
+    employeeFilter = `AND d.employee_id = ANY($${params.length})`
+  }
+
+  const { rows } = await pool.query<AttendanceIssueSummaryRow>(
+    `SELECT d.employee_id, e.employee_code,
+            (e.title || e.first_name_th || ' ' || e.last_name_th) AS employee_name,
+            count(*) AS count,
+            array_agg(d.work_date::text ORDER BY d.work_date DESC) AS dates
+     FROM attendance_daily d
+     JOIN employees e ON e.id = d.employee_id
+     WHERE d.work_date >= $1::date AND d.work_date <= $2::date
+       AND ${FILTER_SQL[status]}
+       ${employeeFilter}
+     GROUP BY d.employee_id, e.employee_code, e.title, e.first_name_th, e.last_name_th
+     ORDER BY count(*) DESC, employee_name`,
+    params
+  )
+
+  return rows.map((row) => ({
+    employeeId: Number(row.employee_id),
+    employeeCode: row.employee_code,
+    employeeName: row.employee_name,
+    count: Number(row.count),
+    dates: row.dates,
+  }))
+}

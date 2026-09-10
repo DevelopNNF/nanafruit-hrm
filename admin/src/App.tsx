@@ -215,7 +215,7 @@ const router = createBrowserRouter([
         ],
       },
       {
-        element: <RequireRole role={['HRM.Admin', 'HRM.HR', 'HRM.Payroll']} />,
+        element: <RequireRole role={['HRM.Admin', 'HRM.HR', 'HRM.Payroll', 'HRM.Viewer']} />,
         children: [
           { path: 'report/attendance', element: <AttendanceDailyListPage /> },
           { path: 'report/overtime', element: <OvertimeReport /> },

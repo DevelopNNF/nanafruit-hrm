@@ -3,12 +3,15 @@ import type { Request, Response } from 'express'
 import {
   ROLES,
   type AuthUser,
+  type DashboardAttendanceIssuesResponse,
   type DashboardOnLeaveTodayResponse,
   type DashboardPendingApprovalsSummaryResponse,
 } from '@hrm/shared'
 import { requireRole } from '../auth/middleware.js'
 import { fail, handleUnexpected } from '../http.js'
 import { resolveSupervisorScope } from '../supervisorScope.js'
+import { defaultRange } from '../attendanceDailyJob.js'
+import { listAttendanceIssueSummary } from '../attendanceDailyQueries.js'
 import { countLeaveRequestsPending, listEmployeesOnLeaveToday, listLeaveRequestsPendingApproval } from '../leaveRequestQueries.js'
 import { countOffSiteWorkRequestsPending, listOffSiteWorkRequestsPendingApproval } from '../offSiteRequestQueries.js'
 import { countOvertimeRequestsPending, listOvertimeRequestsPendingApproval } from '../overtimeRequestQueries.js'
@@ -103,6 +106,48 @@ dashboardRouter.get(
         dayOffSwap,
         timeCorrection,
         compTimeOff,
+      }
+      res.json(body)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+dashboardRouter.get(
+  '/dashboard/attendance-issues',
+  canRead,
+  async (req: Request, res: Response) => {
+    const auth = actorOf(req)
+    if (!auth) return fail(res, 500, 'server misconfigured')
+
+    try {
+      const scope = await resolveSupervisorScope(auth)
+      const { fromDate, toDate } = defaultRange()
+
+      if (scope.kind === 'none') {
+        const body: DashboardAttendanceIssuesResponse = {
+          scope: 'none',
+          fromDate,
+          toDate,
+          absent: [],
+          incomplete: [],
+        }
+        return res.json(body)
+      }
+
+      const employeeIds = scope.kind === 'team' ? scope.employeeIds : undefined
+      const [absent, incomplete] = await Promise.all([
+        listAttendanceIssueSummary('absent', { fromDate, toDate }, employeeIds),
+        listAttendanceIssueSummary('incomplete', { fromDate, toDate }, employeeIds),
+      ])
+
+      const body: DashboardAttendanceIssuesResponse = {
+        scope: scope.kind,
+        fromDate,
+        toDate,
+        absent,
+        incomplete,
       }
       res.json(body)
     } catch (err) {

@@ -4,6 +4,7 @@ import { CalendarDays, UserCheck, UserX, Users } from 'lucide-react'
 import { EMPLOYMENT_TYPES, type Employee } from '@hrm/shared'
 import { listEmployees } from '../api/employees'
 import { useMe } from '../auth/meContext'
+import { AttendanceIssuesCards } from '../components/AttendanceIssuesCards'
 import { OnLeaveTodayCard } from '../components/OnLeaveTodayCard'
 import { PendingApprovalsSummary } from '../components/PendingApprovalsSummary'
 import { StatCard } from '../components/StatCard'
@@ -120,6 +121,10 @@ export function DashboardPage() {
 
       <div className="mb-5">
         <OnLeaveTodayCard />
+      </div>
+
+      <div className="mb-5">
+        <AttendanceIssuesCards />
       </div>
 
       {state.phase === 'loading' && (

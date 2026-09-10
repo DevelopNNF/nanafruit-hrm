@@ -114,13 +114,13 @@ const NAV: NavItem[] = [
     type: 'group',
     label: 'รายงาน',
     icon: Files,
-    role: ['HRM.Admin', 'HRM.HR', 'HRM.Payroll'],
+    role: ['HRM.Admin', 'HRM.HR', 'HRM.Payroll', 'HRM.Viewer'],
     children: [
       { to: 'report/attendance', label: 'รายงานการลงเวลา'},
-      { to: 'report/overtime', label: 'รายงาน OT'},
+      { to: 'report/overtime', label: 'รายงาน OT', role: ['HRM.Admin', 'HRM.HR', 'HRM.Payroll']},
     ],
   },
-  { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },
+  // { type: 'link', to: '/health', label: 'สถานะระบบ', icon: Activity },
 ]
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
