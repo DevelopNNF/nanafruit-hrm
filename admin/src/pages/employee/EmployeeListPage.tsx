@@ -5,6 +5,7 @@ import { type Employee } from '@hrm/shared'
 import {
   exportEmployeeFinance,
   exportEmployees,
+  exportProductionTracking,
   exportTempWorkerEmployees,
   searchEmployees,
 } from '../../api/employees'
@@ -38,6 +39,7 @@ export function EmployeeListPage() {
   const canWritePayroll = useCanWritePayroll()
   const [exporting, setExporting] = useState(false)
   const [exportingFinance, setExportingFinance] = useState(false)
+  const [exportingProductionTracking, setExportingProductionTracking] = useState(false)
 
   const employeeFilters = useEmployeeFilters({
     // Unlike the other filters, 'Active' rather than 'all' is the default
@@ -84,6 +86,24 @@ export function EmployeeListPage() {
       notify.error('ส่งออกข้อมูลการเงินไม่สำเร็จ', err instanceof Error ? err.message : undefined)
     } finally {
       setExportingFinance(false)
+    }
+  }
+
+  async function handleExportProductionTracking() {
+    setExportingProductionTracking(true)
+    try {
+      const blob = await exportProductionTracking()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      const today = new Date().toISOString().slice(0, 10)
+      link.download = `production-tracking-${today}.txt`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      notify.error('ส่งออกข้อมูลสำหรับ Production Tracking System ไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+    } finally {
+      setExportingProductionTracking(false)
     }
   }
 
@@ -134,9 +154,11 @@ export function EmployeeListPage() {
         <div className="flex flex-wrap items-center gap-2.5">
           {canWrite && (
             <DropdownMenuButton
-              label={exporting || exportingFinance ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
+              label={
+                exporting || exportingFinance || exportingProductionTracking ? 'กำลังส่งออก…' : 'ส่งออก Excel'
+              }
               icon={<Download size={16} />}
-              disabled={exporting || exportingFinance}
+              disabled={exporting || exportingFinance || exportingProductionTracking}
               items={[
                 {
                   label: 'พนักงานทั่วไป (EMP-IMP)',
@@ -156,6 +178,11 @@ export function EmployeeListPage() {
                         label: 'ข้อมูลการเงินพนักงาน (EMP-FIN-IMP)',
                         description: 'ค่าจ้าง ช่องทางจ่ายเงิน ธนาคาร ประกันสังคม ภาษี ของพนักงานทุกคน',
                         onClick: () => void handleExportFinance(),
+                      },
+                      {
+                        label: 'ข้อมูลสำหรับนำเข้า Production Tracking System',
+                        description: 'รหัสพนักงาน ชื่อ-นามสกุล ประเภทการจ้าง ค่าจ้าง ของพนักงานที่ยังทำงานอยู่ (.txt)',
+                        onClick: () => void handleExportProductionTracking(),
                       },
                     ]
                   : []),

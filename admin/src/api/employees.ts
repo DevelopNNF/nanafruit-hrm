@@ -343,3 +343,11 @@ export function exportEmployeeFinance(signal?: AbortSignal): Promise<Blob> {
 export function downloadEmployeeFinanceImportTemplate(signal?: AbortSignal): Promise<Blob> {
   return fetchWorkbook('/api/employee-finance/export-template', signal)
 }
+
+/** Active employees' code/name/employment type/wage as a .txt file for the
+ *  Production Tracking System's own import — not one of this app's own
+ *  templates. HRM.Payroll/HRM.Admin only — see
+ *  routes/productionTrackingExport.ts. */
+export function exportProductionTracking(signal?: AbortSignal): Promise<Blob> {
+  return fetchWorkbook('/api/employees/export-production-tracking', signal)
+}

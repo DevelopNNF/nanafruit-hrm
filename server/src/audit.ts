@@ -38,6 +38,7 @@ export type AuditAction =
   | 'employee_finance.import_update'
   | 'employee_finance.export'
   | 'employee_finance.export_template'
+  | 'employee.export_production_tracking'
   | 'job.create'
   | 'job.update'
   | 'department.create'
