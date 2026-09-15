@@ -17,6 +17,7 @@ import { useCanWrite, useCanWritePayroll } from '../../auth/meContext'
 import { EmployeeFilterBar, filterFieldLabel, filterFieldRow } from '../../components/EmployeeFilterBar'
 import { Pagination } from '../../components/Pagination'
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover'
+import { TreeSelect, type TreeSelectOption } from '../../components/TreeSelect'
 import { useEmployeeFilters } from '../../hooks/useEmployeeFilters'
 import { notify } from '../../notifications/notify'
 import {
@@ -353,7 +354,14 @@ export function AttendanceDailyListPage() {
   // same as everywhere else that filter bar is used.
   const [fromDate, setFromDate] = useState(initial.from)
   const [toDate, setToDate] = useState(initial.to)
-  const [status, setStatus] = useState<AttendanceDailyFilter | ''>('')
+  // Indices into ATTENDANCE_DAILY_FILTERS — TreeSelect needs numeric ids,
+  // same trick useEmployeeFilters uses for employmentTypeFilter.
+  const [statusFilter, setStatusFilter] = useState<number[]>([])
+  const status = useMemo(() => statusFilter.map((i) => ATTENDANCE_DAILY_FILTERS[i]!), [statusFilter])
+  const statusOptions: TreeSelectOption[] = useMemo(
+    () => ATTENDANCE_DAILY_FILTERS.map((f, index) => ({ id: index, label: FILTER_LABEL[f], parentId: null })),
+    []
+  )
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [state, setState] = useState<State>({ phase: 'loading' })
@@ -387,10 +395,10 @@ export function AttendanceDailyListPage() {
     setToDate(value)
   }
 
-  function handleStatusChange(value: AttendanceDailyFilter | '') {
+  function handleStatusChange(value: number[]) {
     setFetching(true)
     setPage(1)
-    setStatus(value)
+    setStatusFilter(value)
   }
 
   // No reset to 'loading' when the page/filters change: the previous table
@@ -411,7 +419,7 @@ export function AttendanceDailyListPage() {
           {
             fromDate,
             toDate,
-            ...(status !== '' && { status }),
+            ...(status.length > 0 && { status }),
             ...(employeeIds !== undefined && { employeeIds }),
           },
           { page, pageSize },
@@ -460,7 +468,7 @@ export function AttendanceDailyListPage() {
       const blob = await exportAttendanceDaily({
         fromDate,
         toDate,
-        ...(status !== '' && { status }),
+        ...(status.length > 0 && { status }),
         ...(employeeIds !== undefined && { employeeIds }),
       })
       const url = URL.createObjectURL(blob)
@@ -529,18 +537,14 @@ export function AttendanceDailyListPage() {
               </label>
               <label className={filterFieldRow}>
                 <span className={filterFieldLabel}>สถานะการลงเวลา :</span>
-                <select
-                  className={`${fieldControl} w-full`}
-                  value={status}
-                  onChange={(e) => handleStatusChange(e.target.value as AttendanceDailyFilter | '')}
-                >
-                  <option value="">ทุกสถานะ</option>
-                  {ATTENDANCE_DAILY_FILTERS.map((f) => (
-                    <option key={f} value={f}>
-                      {FILTER_LABEL[f]}
-                    </option>
-                  ))}
-                </select>
+                <TreeSelect
+                  mode="multiple"
+                  options={statusOptions}
+                  value={statusFilter}
+                  onChange={handleStatusChange}
+                  placeholder="ทุกสถานะ"
+                  className="w-full"
+                />
               </label>
             </>
           }

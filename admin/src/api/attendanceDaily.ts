@@ -10,7 +10,7 @@ export type AttendanceDailyQuery = {
    *  resolved client-side against /employees/search. */
   employeeIds?: number[]
   departmentId?: number
-  status?: AttendanceDailyFilter
+  status?: AttendanceDailyFilter[]
   workLocation?: WorkLocation
   /** Matched against employee code, full name, and nickname. */
   search?: string
@@ -23,7 +23,7 @@ function buildParams(query: AttendanceDailyQuery): URLSearchParams {
   if (query.employeeId !== undefined) params.set('employeeId', String(query.employeeId))
   query.employeeIds?.forEach((id) => params.append('employeeId', String(id)))
   if (query.departmentId !== undefined) params.set('departmentId', String(query.departmentId))
-  if (query.status) params.set('status', query.status)
+  query.status?.forEach((s) => params.append('status', s))
   if (query.workLocation) params.set('workLocation', query.workLocation)
   if (query.search) params.set('search', query.search)
   return params

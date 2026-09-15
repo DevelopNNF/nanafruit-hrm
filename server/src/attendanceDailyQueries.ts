@@ -378,7 +378,8 @@ export type AttendanceDailyFilterInput = {
    *  filter is given. Absent means no restriction. */
   employeeIds?: number[]
   departmentId?: number
-  status?: AttendanceDailyFilter
+  /** Any-of match — a day counts when it satisfies at least one of these. */
+  status?: AttendanceDailyFilter[]
   workLocation?: WorkLocation
   /** Matched against employee_code, the Thai full name, and nickname — same
    *  fields as searchEmployees' query, minus the English name and job title
@@ -421,8 +422,8 @@ function buildAttendanceDailyConditions(filter: AttendanceDailyFilterInput): {
     params.push(filter.workLocation)
     conditions.push(`ed.work_location = $${params.length}`)
   }
-  if (filter.status !== undefined) {
-    conditions.push(FILTER_SQL[filter.status])
+  if (filter.status !== undefined && filter.status.length > 0) {
+    conditions.push(`(${filter.status.map((s) => FILTER_SQL[s]).join(' OR ')})`)
   }
   const search = filter.search?.trim()
   if (search) {

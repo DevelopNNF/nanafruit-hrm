@@ -8,7 +8,6 @@ import {
   WORK_LOCATIONS,
   type AttendanceCandidatePunchesResponse,
   type AttendanceClockResponse,
-  type AttendanceDailyFilter,
   type AttendanceDailyListResponse,
   type AttendanceEventType,
   type AttendanceListResponse,
@@ -19,7 +18,7 @@ import {
 } from '@hrm/shared'
 import { pool, withTransaction } from '../db.js'
 import { requireRole } from '../auth/middleware.js'
-import { fail, handleUnexpected, parseOptionalPositiveIntArray } from '../http.js'
+import { fail, handleUnexpected, parseOptionalEnumArray, parseOptionalPositiveIntArray } from '../http.js'
 import { recordAudit } from '../audit.js'
 import { findEmployeeById } from '../employeeQueries.js'
 import { findActiveLocations } from '../locationQueries.js'
@@ -392,10 +391,8 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
   const toDate = parseOptionalDate(req.query['toDate'])
   if (toDate === undefined) return fail(res, 400, 'toDate must be YYYY-MM-DD')
 
-  const statusRaw = req.query['status']
-  if (statusRaw !== undefined && (typeof statusRaw !== 'string' || !ATTENDANCE_DAILY_FILTERS.includes(statusRaw as AttendanceDailyFilter))) {
-    return fail(res, 400, `status must be one of: ${ATTENDANCE_DAILY_FILTERS.join(', ')}`)
-  }
+  const status = parseOptionalEnumArray(req.query['status'], ATTENDANCE_DAILY_FILTERS)
+  if (status === undefined) return fail(res, 400, `status must be one of: ${ATTENDANCE_DAILY_FILTERS.join(', ')}`)
 
   const workLocation = parseOptionalWorkLocation(req.query['workLocation'])
   if (workLocation === undefined) {
@@ -434,7 +431,7 @@ attendanceRouter.get('/attendance/daily', canReadAdmin, async (req: Request, res
         ...(departmentId !== null && { departmentId }),
         ...(fromDate !== null && { fromDate }),
         ...(toDate !== null && { toDate }),
-        ...(statusRaw !== undefined && { status: statusRaw as AttendanceDailyFilter }),
+        ...(status !== null && status.length > 0 && { status }),
         ...(workLocation !== null && { workLocation }),
         ...(search !== undefined && search !== '' && { search }),
       },
@@ -468,10 +465,8 @@ attendanceRouter.get('/attendance/daily/export', canReadAdmin, async (req: Reque
   const toDate = parseOptionalDate(req.query['toDate'])
   if (toDate === undefined) return fail(res, 400, 'toDate must be YYYY-MM-DD')
 
-  const statusRaw = req.query['status']
-  if (statusRaw !== undefined && (typeof statusRaw !== 'string' || !ATTENDANCE_DAILY_FILTERS.includes(statusRaw as AttendanceDailyFilter))) {
-    return fail(res, 400, `status must be one of: ${ATTENDANCE_DAILY_FILTERS.join(', ')}`)
-  }
+  const status = parseOptionalEnumArray(req.query['status'], ATTENDANCE_DAILY_FILTERS)
+  if (status === undefined) return fail(res, 400, `status must be one of: ${ATTENDANCE_DAILY_FILTERS.join(', ')}`)
 
   const workLocation = parseOptionalWorkLocation(req.query['workLocation'])
   if (workLocation === undefined) {
@@ -495,7 +490,7 @@ attendanceRouter.get('/attendance/daily/export', canReadAdmin, async (req: Reque
       ...(departmentId !== null && { departmentId }),
       ...(fromDate !== null && { fromDate }),
       ...(toDate !== null && { toDate }),
-      ...(statusRaw !== undefined && { status: statusRaw as AttendanceDailyFilter }),
+      ...(status !== null && status.length > 0 && { status }),
       ...(workLocation !== null && { workLocation }),
       ...(search !== undefined && search !== '' && { search }),
     })
