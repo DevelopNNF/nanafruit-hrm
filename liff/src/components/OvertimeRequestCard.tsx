@@ -245,7 +245,11 @@ export function OvertimeRequestCard({ onBack }: Props) {
           status: request.status,
           reason: request.reason,
           decisionNote:
-            request.status === 'rejected' ? `เหตุผลจากผู้อนุมัติ: ${request.decisionReason ?? ''}` : undefined,
+            request.status === 'rejected'
+              ? `เหตุผลจากผู้อนุมัติ: ${request.decisionReason ?? ''}`
+              : request.status === 'revoked'
+                ? `ยกเลิกโดย HR/Admin หลังอนุมัติแล้ว — เหตุผล: ${request.cancellationReason ?? ''}`
+                : undefined,
           // Once a supervisor has already forwarded this to HR (even though
           // status is still 'pending'), it's locked — see LeaveRequestCard's
           // onCancel comment for the full reasoning, which applies to edit

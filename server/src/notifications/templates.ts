@@ -40,6 +40,10 @@ export function cancelledLineText(resource: RequestResourceType, requesterName: 
   return `${requesterName} ยกเลิก${resourceLabel(resource)}ที่รอการอนุมัติจากคุณอยู่แล้ว`
 }
 
+export function adminCancelledLineText(resource: RequestResourceType, reason: string): string {
+  return `${resourceLabel(resource)}ของคุณที่เคยอนุมัติแล้วถูกยกเลิกโดย HR/Admin\nเหตุผล: ${reason}`
+}
+
 export function hrPendingApprovalEmail(
   resource: RequestResourceType,
   requesterName: string,

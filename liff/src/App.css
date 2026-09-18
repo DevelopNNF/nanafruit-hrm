@@ -1079,6 +1079,11 @@
   background: var(--status-cancelled-bg);
 }
 
+.status-pill.revoked {
+  color: var(--status-rejected-fg);
+  background: var(--status-rejected-bg);
+}
+
 /* Request shell ---------------------------------------------------------------
    Shared list/form chrome for every request type — see RequestShell.tsx.
    Feature-specific fields are passed in as children of .request-form. */

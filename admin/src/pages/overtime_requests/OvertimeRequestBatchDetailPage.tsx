@@ -34,6 +34,7 @@ const STATUS_LABEL = {
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
   cancelled: 'ยกเลิกแล้ว',
+  revoked: 'ยกเลิกหลังอนุมัติ',
 } as const
 
 const STAGE_LABEL = {
@@ -45,7 +46,7 @@ function statusBadgeTone(
   status: OvertimeRequestListItem['status']
 ): 'pending' | 'active' | 'danger' | 'inactive' {
   if (status === 'approved') return 'active'
-  if (status === 'rejected') return 'danger'
+  if (status === 'rejected' || status === 'revoked') return 'danger'
   if (status === 'cancelled') return 'inactive'
   return 'pending'
 }

@@ -22,6 +22,7 @@ import {
   type OvertimeBulkRequestInput,
   type OvertimeCompTimeEligibilityResponse,
   type OvertimeEligibleEmployeesResponse,
+  type OvertimeRequestAdminCancelRequest,
   type OvertimeRequestDetailResponse,
   type OvertimeRequestInput,
   type OvertimeRequestListResponse,
@@ -50,7 +51,7 @@ import { addDays, toThailandDateString } from '../shiftAssignmentQueries.js'
 import { buildCalendarDaysForDates } from '../calendarQueries.js'
 import { recomputeAttendanceDaily } from '../attendanceDailyQueries.js'
 import { reclassifyAttendanceEvents } from '../attendanceReclassify.js'
-import { postCompTimeAccrualForApprovedRange } from '../compTimeQueries.js'
+import { postCompTimeAccrualForApprovedRange, reverseCompTimeAccrualForRequest } from '../compTimeQueries.js'
 import {
   approvedOvertimeMinutesInWeek,
   approvedOvertimeMinutesInWeekBulk,
@@ -81,6 +82,11 @@ const canReadAdmin = requireRole(...ROLES)
 // passes this gate too — resolveOvertimeApprover still gates what they may
 // actually do once the row is loaded, same as an admin with the wrong role.
 const canDecideAsAdminOrEmployee = requireRoleOrEmployee(...ROLES)
+// Admin-cancelling an ALREADY-approved request is narrower than deciding a
+// pending one: never a supervisor (LIFF or otherwise), and never
+// HRM.Viewer/HRM.Payroll either — only the two roles resolveOvertimeApprover
+// itself treats as 'hr'.
+const canAdminCancel = requireRole('HRM.HR', 'HRM.Admin')
 
 function actorOf(req: Request): AuthUser | null {
   return req.auth ?? null
@@ -121,6 +127,21 @@ async function computeCanDecide(
 ): Promise<boolean> {
   if (!actor || request.status !== 'pending') return false
   return (await resolveOvertimeApprover(actor, request, db)) !== null
+}
+
+/** OvertimeRequestDetailResponse.canAdminCancel — whether the caller may hit
+ *  POST .../admin-cancel on this request right now. Unlike computeCanDecide,
+ *  status must be 'approved' (this is undoing a decision already made, not
+ *  making one), and the caller must be HR/Admin specifically —
+ *  resolveOvertimeApprover's 'hr' kind already means exactly that, since a
+ *  'supervisor' kind is unreachable once status is no longer 'pending'. */
+async function computeCanAdminCancel(
+  actor: AuthUser | null,
+  request: { status: string; currentStage: string | null; supervisorEmployeeId: number | null },
+  db: Queryable
+): Promise<boolean> {
+  if (!actor || request.status !== 'approved') return false
+  return (await resolveOvertimeApprover(actor, request, db)) === 'hr'
 }
 
 /** POST /overtime-requests and its /me, /:id, /:id/cancel siblings are for
@@ -1173,12 +1194,13 @@ overtimeRequestsRouter.get(
       if (!request) return fail(res, 404, `no overtime request with id ${id}`)
 
       const canDecide = await computeCanDecide(auth, request, pool)
+      const canAdminCancel = await computeCanAdminCancel(auth, request, pool)
       const scope = await resolveSupervisorScope(auth)
       if (!scopeAllows(scope, request.employeeId) && !canDecide) {
         return fail(res, 404, `no overtime request with id ${id}`)
       }
 
-      const body: OvertimeRequestDetailResponse = { request, canDecide }
+      const body: OvertimeRequestDetailResponse = { request, canDecide, canAdminCancel }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
@@ -1337,7 +1359,8 @@ overtimeRequestsRouter.post(
           const request = await findOvertimeRequestById(id, client)
           if (!request) throw new Error('re-select of overtime_requests returned no row')
           const canDecide = await computeCanDecide(actor, request, client)
-          return { kind: 'ok' as const, request, canDecide }
+          // Still 'pending' (just forwarded to HR) — never eligible yet.
+          return { kind: 'ok' as const, request, canDecide, canAdminCancel: false }
         }
 
         // HR/Admin's final decision — the ordinary path (current_stage was
@@ -1422,7 +1445,11 @@ overtimeRequestsRouter.post(
 
         const request = await findOvertimeRequestById(id, client)
         if (!request) throw new Error('re-select of overtime_requests returned no row')
-        return { kind: 'ok' as const, request, canDecide: false }
+        // The actor who just made this the final decision is, by definition,
+        // HR/Admin (approverKind === 'hr' is what reached this branch at
+        // all), so they can admin-cancel the very request they just approved.
+        const canAdminCancel = await computeCanAdminCancel(actor, request, client)
+        return { kind: 'ok' as const, request, canDecide: false, canAdminCancel }
       })
 
       if (result.kind === 'not_found') return fail(res, 404, `no overtime request with id ${id}`)
@@ -1449,7 +1476,11 @@ overtimeRequestsRouter.post(
             }
       )
 
-      const body: OvertimeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
+      const body: OvertimeRequestDetailResponse = {
+        request: result.request,
+        canDecide: result.canDecide,
+        canAdminCancel: result.canAdminCancel,
+      }
       res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
@@ -1520,7 +1551,7 @@ overtimeRequestsRouter.post(
 
         const request = await findOvertimeRequestById(id, client)
         if (!request) throw new Error('re-select of overtime_requests returned no row')
-        return { kind: 'ok' as const, request, canDecide: false }
+        return { kind: 'ok' as const, request, canDecide: false, canAdminCancel: false }
       })
 
       if (result.kind === 'not_found') return fail(res, 404, `no overtime request with id ${id}`)
@@ -1535,8 +1566,136 @@ overtimeRequestsRouter.post(
         reason,
       })
 
-      const responseBody: OvertimeRequestDetailResponse = { request: result.request, canDecide: result.canDecide }
+      const responseBody: OvertimeRequestDetailResponse = {
+        request: result.request,
+        canDecide: result.canDecide,
+        canAdminCancel: result.canAdminCancel,
+      }
       res.json(responseBody)
+    } catch (err) {
+      handleUnexpected(res, err)
+    }
+  }
+)
+
+// HR/Admin undoing an approval that already took effect — e.g. the employee
+// filed the request with wrong details and no one caught it before it was
+// approved. Unlike /reject, this only accepts status='approved': a still-
+// pending request has no side effects to undo and should go through /reject
+// instead. Lands on the 'revoked' status, not 'cancelled' — see
+// OVERTIME_REQUEST_STATUSES' comment in shared/src/index.ts for why a
+// distinct status exists rather than reusing 'cancelled' with extra columns.
+overtimeRequestsRouter.post(
+  '/overtime-requests/:id/admin-cancel',
+  canAdminCancel,
+  async (req: Request, res: Response) => {
+    const actor = actorOf(req)
+    if (!actor) return fail(res, 500, 'server misconfigured')
+
+    const id = parseId(req.params['id'])
+    if (id === null) return fail(res, 400, 'id must be a positive integer')
+
+    const body = req.body as Partial<OvertimeRequestAdminCancelRequest> | null
+    const reason = requiredString((body ?? {}) as Record<string, unknown>, 'reason', 1000)
+    if (reason === null) {
+      return fail(res, 400, 'reason is required and must be 1000 characters or fewer')
+    }
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query<{
+          employee_id: string
+          ot_date: string
+          status: string
+          current_stage: string | null
+          supervisor_employee_id: string | null
+        }>(
+          `SELECT employee_id, ot_date, status, current_stage, supervisor_employee_id
+           FROM overtime_requests WHERE id = $1 FOR UPDATE`,
+          [id]
+        )
+        const row = rows[0]
+        if (!row) return { kind: 'not_found' as const }
+        if (row.status !== 'approved') {
+          return { kind: 'conflict' as const, message: 'ยกเลิกได้เฉพาะคำขอที่อนุมัติแล้วเท่านั้น' }
+        }
+
+        const approverKind = await resolveOvertimeApprover(
+          actor,
+          {
+            status: row.status,
+            currentStage: row.current_stage,
+            supervisorEmployeeId:
+              row.supervisor_employee_id === null ? null : Number(row.supervisor_employee_id),
+          },
+          client
+        )
+        // Deliberately requires 'hr' exactly, not just non-null — the
+        // canAdminCancel gate above already keeps a supervisor's LIFF session
+        // out entirely, but status='approved' would make resolveOvertimeApprover's
+        // supervisor branch return null anyway even if it somehow reached here.
+        if (approverKind !== 'hr') return { kind: 'forbidden' as const }
+
+        const actorInfo = await describeActor(actor, client)
+        if (!actorInfo) return { kind: 'forbidden' as const }
+
+        const employeeId = Number(row.employee_id)
+
+        await client.query(
+          `UPDATE overtime_requests
+           SET status = 'revoked', current_stage = NULL,
+               cancelled_by_oid = $2, cancelled_by_name = $3, cancelled_at = now(),
+               cancellation_reason = $4, updated_at = now()
+           WHERE id = $1`,
+          [id, actorInfo.oid, actorInfo.name, reason]
+        )
+
+        // Undoes whatever comp-time-off this request had already accrued —
+        // see reverseCompTimeAccrualForRequest's own comment for why this can
+        // legitimately push the balance negative. A no-op when the request
+        // never posted an accrual in the first place (money-only, or
+        // comp-time requested but never approved into an accrual).
+        await reverseCompTimeAccrualForRequest(id, employeeId, actorInfo.oid, actorInfo.name, reason, client)
+
+        await recordAudit(client, {
+          actor,
+          action: 'overtime_request.admin_cancel',
+          entityId: id,
+          detail: { reason },
+        })
+
+        // Same reclassify-then-recompute sequence as approve — see its own
+        // comments for why both run and in this order. Since
+        // attendanceMatchingQueries.ts only ever reads status='approved'
+        // rows, this request's OT window drops out of attendance_daily on
+        // its own once recomputed; there is nothing else on that side to
+        // undo by hand.
+        await reclassifyAttendanceEvents(employeeId, addDays(row.ot_date, -1), addDays(row.ot_date, 1), client)
+        await recomputeAttendanceDaily(employeeId, addDays(row.ot_date, -1), addDays(row.ot_date, 1), client)
+
+        const request = await findOvertimeRequestById(id, client)
+        if (!request) throw new Error('re-select of overtime_requests returned no row')
+        return { kind: 'ok' as const, request }
+      })
+
+      if (result.kind === 'not_found') return fail(res, 404, `no overtime request with id ${id}`)
+      if (result.kind === 'conflict') return fail(res, 409, result.message)
+      if (result.kind === 'forbidden') return fail(res, 403, 'คุณไม่มีสิทธิ์ยกเลิกคำขอนี้', 'FORBIDDEN')
+
+      void notify({
+        kind: 'admin_cancelled',
+        resource: 'overtime_request',
+        requestId: id,
+        requesterEmployeeId: result.request.employeeId,
+        reason,
+      })
+
+      const body: OvertimeRequestDetailResponse = {
+        request: result.request,
+        canDecide: false,
+        canAdminCancel: false,
+      }
+      res.json(body)
     } catch (err) {
       handleUnexpected(res, err)
     }

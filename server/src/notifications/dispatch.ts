@@ -15,6 +15,7 @@ import { sendLinePush } from './channels/line.js'
 import { sendEmailViaPowerAutomate } from './channels/email.js'
 import { logNotificationAttempt } from './log.js'
 import {
+  adminCancelledLineText,
   attendanceDigestHrEmail,
   attendanceDigestLineText,
   cancelledLineText,
@@ -94,6 +95,16 @@ export async function notify(event: NotificationEvent, db: Queryable = pool): Pr
           eventType,
           event.supervisorEmployeeId,
           cancelledLineText(event.resource, requesterName)
+        )
+        return
+      }
+      case 'admin_cancelled': {
+        const eventType = `${event.resource}.${event.kind}`
+        await dispatchLine(
+          db,
+          eventType,
+          event.requesterEmployeeId,
+          adminCancelledLineText(event.resource, event.reason)
         )
         return
       }

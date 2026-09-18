@@ -64,6 +64,21 @@ export type RequestActionEvent =
        *  no one was actually waiting on this — dispatch.ts skips silently. */
       supervisorEmployeeId: number | null
     }
+  | {
+      /** HR/Admin cancelling a request that was ALREADY approved — distinct
+       *  from 'cancelled' above (an employee withdrawing their own still-
+       *  pending request, which notifies the supervisor who was waiting on
+       *  it). Here the request already took effect, so the employee is who
+       *  needs to know, not a supervisor. Currently only overtime_request
+       *  reaches this — see POST /overtime-requests/:id/admin-cancel — but
+       *  typed against the full RequestResourceType like every other event
+       *  here rather than narrowed to one resource. */
+      kind: 'admin_cancelled'
+      resource: RequestResourceType
+      requestId: number
+      requesterEmployeeId: number
+      reason: string
+    }
 
 /** One supervisor's own team, for the LINE digest — see attendanceDigest.ts,
  *  which groups listAttendanceIssuesForDate's flat list by

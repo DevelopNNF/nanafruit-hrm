@@ -54,6 +54,9 @@ export type OvertimeRequestRow = {
   decided_by_name: string | null
   decided_at: string | null
   decision_reason: string | null
+  cancelled_by_name: string | null
+  cancelled_at: string | null
+  cancellation_reason: string | null
   created_at: string
   updated_at: string
   comp_time_requested: boolean
@@ -78,6 +81,7 @@ export const SELECT_OVERTIME_REQUEST = `
          (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
          otr.current_stage, otr.supervisor_approved_by_name, otr.supervisor_approved_at,
          otr.decided_by_name, otr.decided_at, otr.decision_reason,
+         otr.cancelled_by_name, otr.cancelled_at, otr.cancellation_reason,
          otr.created_at, otr.updated_at,
          otr.comp_time_requested, otr.comp_time_allocated_normal_minutes,
          otr.comp_time_allocated_extra_minutes, otr.comp_time_accrual_minutes,
@@ -98,6 +102,7 @@ export const SELECT_OVERTIME_REQUEST_LIST = `
          (sup.title || sup.first_name_th || ' ' || sup.last_name_th) AS supervisor_employee_name,
          otr.current_stage, otr.supervisor_approved_by_name, otr.supervisor_approved_at,
          otr.decided_by_name, otr.decided_at, otr.decision_reason,
+         otr.cancelled_by_name, otr.cancelled_at, otr.cancellation_reason,
          otr.created_at, otr.updated_at,
          otr.comp_time_requested, otr.comp_time_allocated_normal_minutes,
          otr.comp_time_allocated_extra_minutes, otr.comp_time_accrual_minutes,
@@ -141,6 +146,9 @@ export function rowToOvertimeRequest(row: OvertimeRequestRow): OvertimeRequest {
     decidedByName: row.decided_by_name,
     decidedAt: row.decided_at === null ? null : new Date(row.decided_at).toISOString(),
     decisionReason: row.decision_reason,
+    cancelledByName: row.cancelled_by_name,
+    cancelledAt: row.cancelled_at === null ? null : new Date(row.cancelled_at).toISOString(),
+    cancellationReason: row.cancellation_reason,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
     compTimeRequested: row.comp_time_requested,

@@ -41,26 +41,33 @@ export async function listOvertimeRequestsPendingApproval(
   return body.requests
 }
 
-export async function getOvertimeRequest(
-  id: number,
-  signal?: AbortSignal
-): Promise<{ request: OvertimeRequestListItem; canDecide: boolean }> {
+export async function getOvertimeRequest(id: number, signal?: AbortSignal): Promise<OvertimeRequestDetailResponse> {
   const res = await apiFetch(`/api/overtime-requests/${id}`, { signal })
   return unwrap<OvertimeRequestDetailResponse>(res)
 }
 
-export async function approveOvertimeRequest(
-  id: number
-): Promise<{ request: OvertimeRequestListItem; canDecide: boolean }> {
+export async function approveOvertimeRequest(id: number): Promise<OvertimeRequestDetailResponse> {
   const res = await apiFetch(`/api/overtime-requests/${id}/approve`, { method: 'POST' })
   return unwrap<OvertimeRequestDetailResponse>(res)
 }
 
-export async function rejectOvertimeRequest(
+export async function rejectOvertimeRequest(id: number, reason: string): Promise<OvertimeRequestDetailResponse> {
+  const res = await apiFetch(`/api/overtime-requests/${id}/reject`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({ reason }),
+  })
+  return unwrap<OvertimeRequestDetailResponse>(res)
+}
+
+/** HR/Admin cancelling a request that was already approved — see the
+ *  server route's own comment for why this is a separate endpoint from
+ *  rejectOvertimeRequest rather than one more status it accepts. */
+export async function adminCancelOvertimeRequest(
   id: number,
   reason: string
-): Promise<{ request: OvertimeRequestListItem; canDecide: boolean }> {
-  const res = await apiFetch(`/api/overtime-requests/${id}/reject`, {
+): Promise<OvertimeRequestDetailResponse> {
+  const res = await apiFetch(`/api/overtime-requests/${id}/admin-cancel`, {
     method: 'POST',
     headers: jsonHeaders,
     body: JSON.stringify({ reason }),

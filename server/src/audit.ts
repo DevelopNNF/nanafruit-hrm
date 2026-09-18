@@ -99,6 +99,7 @@ export type AuditAction =
   | 'overtime_request.supervisor_approve'
   | 'overtime_request.approve'
   | 'overtime_request.reject'
+  | 'overtime_request.admin_cancel'
   | 'comp_time_off_request.create'
   | 'comp_time_off_request.update'
   | 'comp_time_off_request.cancel'

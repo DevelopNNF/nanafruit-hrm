@@ -2956,7 +2956,15 @@ export type WorkScheduleResponse = {
  *   findOvertimeShiftConflict.
  */
 
-export const OVERTIME_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
+/** 'revoked' is a fifth state layered on top of the ordinary four —
+ *  HR/Admin cancelling a request that already reached 'approved', via POST
+ *  .../admin-cancel. Deliberately not folded into 'cancelled' (the
+ *  employee's own pre-approval withdrawal): the DB's decision-consistency
+ *  CHECK already says a 'cancelled' row never had a decision recorded on it
+ *  at all, which is backwards for this case — a 'revoked' row keeps
+ *  decidedByName/decidedAt exactly as the approval left them and adds its
+ *  own cancelledByName/cancelledAt/cancellationReason on top. */
+export const OVERTIME_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled', 'revoked'] as const
 export type OvertimeRequestStatus = (typeof OVERTIME_REQUEST_STATUSES)[number]
 
 /** Who needs to act next on a pending request — same shape and same reasons
@@ -3071,6 +3079,14 @@ export type OvertimeRequest = {
   decidedAt: string | null
   /** Required when status is 'rejected', null otherwise. */
   decisionReason: string | null
+  /** Set exactly when status is 'revoked' — see OVERTIME_REQUEST_STATUSES'
+   *  comment for why that is a separate status from 'cancelled' rather than
+   *  a flag on it. */
+  cancelledByName: string | null
+  /** ISO 8601. Null under the same condition as cancelledByName. */
+  cancelledAt: string | null
+  /** Required when cancelledByName is set, null otherwise. */
+  cancellationReason: string | null
   /** ISO 8601. */
   createdAt: string
   /** ISO 8601. Bumped on every edit while pending. */
@@ -3153,12 +3169,25 @@ export type OvertimeRequestPendingApprovalResponse = { requests: OvertimeRequest
 
 /** GET /api/overtime-requests/:id, POST .../approve, POST .../reject.
  *  canDecide is caller-relative — see LeaveRequestDetailResponse's comment,
- *  the same reasoning applies unchanged here. */
-export type OvertimeRequestDetailResponse = { request: OvertimeRequestListItem; canDecide: boolean }
+ *  the same reasoning applies unchanged here. canAdminCancel is a separate
+ *  flag rather than folded into canDecide: it applies to a different status
+ *  ('approved', not 'pending') and a narrower set of callers (HR/Admin only,
+ *  never a supervisor deciding via LIFF). */
+export type OvertimeRequestDetailResponse = {
+  request: OvertimeRequestListItem
+  canDecide: boolean
+  canAdminCancel: boolean
+}
 
 /** Body of POST /api/overtime-requests/:id/reject — a reason is required
  *  every time, never optional. */
 export type OvertimeRequestRejectRequest = { reason: string }
+
+/** Body of POST /api/overtime-requests/:id/admin-cancel — same shape as
+ *  OvertimeRequestRejectRequest, kept as its own type since the two requests
+ *  mean different things (undoing an approval that already took effect, not
+ *  declining one that never did) even though both just carry a reason. */
+export type OvertimeRequestAdminCancelRequest = { reason: string }
 
 /* Bulk OT Request ----------------------------------------------------------
  * A supervisor/HR/Admin filing the same OT window for several employees at

@@ -75,6 +75,7 @@ const TABS: { value: TabValue; label: string }[] = [
   { value: 'approved', label: 'อนุมัติแล้ว' },
   { value: 'rejected', label: 'ปฏิเสธแล้ว' },
   { value: 'cancelled', label: 'ยกเลิกแล้ว' },
+  { value: 'revoked', label: 'ยกเลิกหลังอนุมัติ' },
   { value: 'all', label: 'ทั้งหมด' },
 ]
 
@@ -83,6 +84,7 @@ const STATUS_LABEL: Record<OvertimeRequestStatus, string> = {
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
   cancelled: 'ยกเลิกแล้ว',
+  revoked: 'ยกเลิกหลังอนุมัติ',
 }
 
 const STAGE_LABEL: Record<OvertimeRequestStage, string> = {
@@ -94,7 +96,7 @@ function statusBadgeTone(
   status: OvertimeRequestStatus
 ): 'pending' | 'active' | 'danger' | 'inactive' {
   if (status === 'approved') return 'active'
-  if (status === 'rejected') return 'danger'
+  if (status === 'rejected' || status === 'revoked') return 'danger'
   if (status === 'cancelled') return 'inactive'
   return 'pending'
 }

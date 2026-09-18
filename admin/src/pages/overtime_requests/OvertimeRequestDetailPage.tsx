@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { OvertimeRequestListItem, OvertimeWeeklyCapResponse } from '@hrm/shared'
 import {
+  adminCancelOvertimeRequest,
   approveOvertimeRequest,
   getOvertimeRequest,
   rejectOvertimeRequest,
@@ -36,7 +37,7 @@ import {
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ok'; request: OvertimeRequestListItem; canDecide: boolean }
+  | { phase: 'ok'; request: OvertimeRequestListItem; canDecide: boolean; canAdminCancel: boolean }
   | { phase: 'error'; message: string }
 
 type WeeklyCap = OvertimeWeeklyCapResponse & { wouldExceed: boolean }
@@ -46,6 +47,7 @@ const STATUS_LABEL = {
   approved: 'อนุมัติแล้ว',
   rejected: 'ปฏิเสธแล้ว',
   cancelled: 'ยกเลิกแล้ว',
+  revoked: 'ยกเลิกหลังอนุมัติ',
 } as const
 
 const STAGE_LABEL = {
@@ -57,7 +59,7 @@ function statusBadgeTone(
   status: OvertimeRequestListItem['status']
 ): 'pending' | 'active' | 'danger' | 'inactive' {
   if (status === 'approved') return 'active'
-  if (status === 'rejected') return 'danger'
+  if (status === 'rejected' || status === 'revoked') return 'danger'
   if (status === 'cancelled') return 'inactive'
   return 'pending'
 }
@@ -79,6 +81,8 @@ export function OvertimeRequestDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const [adminCancelling, setAdminCancelling] = useState(false)
+  const [adminCancelReason, setAdminCancelReason] = useState('')
   const [weeklyCap, setWeeklyCap] = useState<WeeklyCap | null>(null)
   const refreshPendingApprovals = useRefreshPendingApprovals()
 
@@ -87,7 +91,7 @@ export function OvertimeRequestDetailPage() {
     const controller = new AbortController()
 
     getOvertimeRequest(requestId, controller.signal)
-      .then(({ request, canDecide }) => setState({ phase: 'ok', request, canDecide }))
+      .then(({ request, canDecide, canAdminCancel }) => setState({ phase: 'ok', request, canDecide, canAdminCancel }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setState({
@@ -116,8 +120,8 @@ export function OvertimeRequestDetailPage() {
 
     setBusy(true)
     try {
-      const { request, canDecide } = await approveOvertimeRequest(state.request.id)
-      setState({ phase: 'ok', request, canDecide })
+      const { request, canDecide, canAdminCancel } = await approveOvertimeRequest(state.request.id)
+      setState({ phase: 'ok', request, canDecide, canAdminCancel })
       refreshPendingApprovals()
       notify.success(
         request.status === 'pending' ? 'ส่งต่อให้ HR/Admin แล้ว' : 'อนุมัติคำขอแล้ว',
@@ -129,7 +133,7 @@ export function OvertimeRequestDetailPage() {
       // gone stale since it was filed — refetch so the page shows the current,
       // authoritative state rather than a stale "pending" view.
       getOvertimeRequest(state.request.id)
-        .then(({ request, canDecide }) => setState({ phase: 'ok', request, canDecide }))
+        .then(({ request, canDecide, canAdminCancel }) => setState({ phase: 'ok', request, canDecide, canAdminCancel }))
         .catch(() => {})
     } finally {
       setBusy(false)
@@ -142,15 +146,43 @@ export function OvertimeRequestDetailPage() {
 
     setBusy(true)
     try {
-      const { request, canDecide } = await rejectOvertimeRequest(state.request.id, rejectReason)
-      setState({ phase: 'ok', request, canDecide })
+      const { request, canDecide, canAdminCancel } = await rejectOvertimeRequest(state.request.id, rejectReason)
+      setState({ phase: 'ok', request, canDecide, canAdminCancel })
       setRejecting(false)
       refreshPendingApprovals()
       notify.success('ปฏิเสธคำขอแล้ว')
     } catch (err) {
       notify.error('ปฏิเสธไม่สำเร็จ', err instanceof Error ? err.message : undefined)
       getOvertimeRequest(state.request.id)
-        .then(({ request, canDecide }) => setState({ phase: 'ok', request, canDecide }))
+        .then(({ request, canDecide, canAdminCancel }) => setState({ phase: 'ok', request, canDecide, canAdminCancel }))
+        .catch(() => {})
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleAdminCancel(event: React.FormEvent) {
+    event.preventDefault()
+    if (state.phase !== 'ok') return
+    if (!confirm('ยกเลิกคำขอ OT ที่อนุมัติแล้วนี้? การยกเลิกนี้จะย้อนกลับยอดวันหยุดสะสม (ถ้ามี) และคำนวณเวลาทำงานใหม่')) {
+      return
+    }
+
+    setBusy(true)
+    try {
+      const { request, canDecide, canAdminCancel } = await adminCancelOvertimeRequest(
+        state.request.id,
+        adminCancelReason
+      )
+      setState({ phase: 'ok', request, canDecide, canAdminCancel })
+      setAdminCancelling(false)
+      setAdminCancelReason('')
+      refreshPendingApprovals()
+      notify.success('ยกเลิกคำขอแล้ว')
+    } catch (err) {
+      notify.error('ยกเลิกไม่สำเร็จ', err instanceof Error ? err.message : undefined)
+      getOvertimeRequest(state.request.id)
+        .then(({ request, canDecide, canAdminCancel }) => setState({ phase: 'ok', request, canDecide, canAdminCancel }))
         .catch(() => {})
     } finally {
       setBusy(false)
@@ -292,6 +324,19 @@ export function OvertimeRequestDetailPage() {
                 )}
               </>
             )}
+
+            {state.request.cancelledByName !== null && (
+              <>
+                <dt className={specDt}>ยกเลิกโดย (หลังอนุมัติ)</dt>
+                <dd className={specDd}>
+                  {state.request.cancelledByName}
+                  {state.request.cancelledAt && ` เมื่อ ${formatDateTime(state.request.cancelledAt)}`}
+                </dd>
+
+                <dt className={specDt}>เหตุผลที่ยกเลิก</dt>
+                <dd className={specDd}>{state.request.cancellationReason}</dd>
+              </>
+            )}
           </dl>
 
           {state.request.status === 'pending' && weeklyCap !== null && (
@@ -365,6 +410,59 @@ export function OvertimeRequestDetailPage() {
                       onClick={() => {
                         setRejecting(false)
                         setRejectReason('')
+                      }}
+                    >
+                      ยกเลิก
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {state.request.status === 'approved' && state.canAdminCancel && (
+            <div className="mt-5 border-t border-slate-200 pt-4">
+              {!adminCancelling ? (
+                <button
+                  type="button"
+                  className={button('danger')}
+                  disabled={busy}
+                  onClick={() => setAdminCancelling(true)}
+                >
+                  ยกเลิกคำขอ
+                </button>
+              ) : (
+                <form onSubmit={(e) => void handleAdminCancel(e)} className="flex flex-col gap-2.5">
+                  <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-600">
+                    เหตุผลที่ยกเลิก (ต้องระบุทุกครั้ง)
+                    <textarea
+                      value={adminCancelReason}
+                      onChange={(e) => setAdminCancelReason(e.target.value)}
+                      required
+                      rows={3}
+                      disabled={busy}
+                      className={fieldControl}
+                    />
+                  </label>
+                  <p className={muted}>
+                    การยกเลิกนี้จะย้อนกลับยอดวันหยุดสะสมที่เคยได้จากคำขอนี้ (ถ้ามี) และคำนวณเวลาทำงาน/OT
+                    ของวันนั้นใหม่
+                  </p>
+                  <div className="flex gap-2.5">
+                    <button
+                      type="submit"
+                      className={button('danger')}
+                      disabled={busy || adminCancelReason.trim() === ''}
+                    >
+                      ยืนยันการยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      className={button('default')}
+                      disabled={busy}
+                      onClick={() => {
+                        setAdminCancelling(false)
+                        setAdminCancelReason('')
                       }}
                     >
                       ยกเลิก

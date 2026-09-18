@@ -338,3 +338,64 @@ export async function postCompTimeAccrualForApprovedRange(
     }
   }
 }
+
+/**
+ * Undoes whatever postCompTimeAccrualForApprovedRange posted for one
+ * overtime_request, called when HR/Admin cancels a request that was already
+ * approved (POST /overtime-requests/:id/admin-cancel). Posts an 'adjustment'
+ * entry of the opposite sign rather than deleting the original 'accrual' row —
+ * same append-only-ledger principle as the rest of this table, so the balance
+ * history still shows both the original accrual and its reversal.
+ *
+ * Grouped by year (from the accrual rows themselves, not derived from the
+ * request's ot_date) purely defensively: an overnight OT block's work date
+ * can differ from ot_date by a day, which only matters on the one night a
+ * year that crosses into January — reading the year the money actually
+ * posted under is exact regardless.
+ *
+ * By design this can push balanceMinutes negative for the year, if the
+ * employee already redeemed the comp-time-off this accrual contributed to —
+ * confirmed as the intended behaviour rather than something to block: the OT
+ * that earned it turned out not to have happened, so the debt is real, and
+ * HR resolves it same as any other negative balance (see the 'adjustment'
+ * entry type this table already supports for manual correction).
+ *
+ * The posted 'adjustment' row leaves source_overtime_request_id NULL — the
+ * source-matches-type CHECK requires that for every adjustment, the same as
+ * every other manual correction on this table — so the request id this
+ * reversal traces back to is only in its reason text, not a queryable column.
+ */
+export async function reverseCompTimeAccrualForRequest(
+  requestId: number,
+  employeeId: number,
+  actorOid: string,
+  actorName: string,
+  reason: string,
+  db: Queryable
+): Promise<void> {
+  const { rows } = await db.query<{ year: number; total_accrued: string }>(
+    `SELECT year, SUM(amount_minutes) AS total_accrued
+     FROM overtime_comp_time_entries
+     WHERE source_overtime_request_id = $1 AND entry_type = 'accrual'
+     GROUP BY year`,
+    [requestId]
+  )
+
+  for (const row of rows) {
+    const totalAccrued = Number(row.total_accrued)
+    if (totalAccrued === 0) continue
+    await db.query(
+      `INSERT INTO overtime_comp_time_entries
+         (employee_id, year, entry_type, amount_minutes, created_by_oid, created_by_name, reason)
+       VALUES ($1, $2, 'adjustment', $3, $4, $5, $6)`,
+      [
+        employeeId,
+        row.year,
+        -totalAccrued,
+        actorOid,
+        actorName,
+        `ย้อนกลับยอดสะสมจากคำขอ OT #${requestId} ที่ถูกยกเลิกหลังอนุมัติ: ${reason}`,
+      ]
+    )
+  }
+}
